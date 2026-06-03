@@ -378,6 +378,34 @@ Live RDP states, active sessions, real-time presence	Firebase Realtime DB / Fire
 Shift scheduling, notifications	Firebase	Real-time availability updates
 Authentication	Firebase Auth	Handles login, roles, tokens cleanly, integrates with both DBs
 
+________________________________________
+Appendix B — Project Charter V2.0 Amendments & Change Log Version 1.1
+
+1. Extended Worker & Multi-Platform Session Model
+• Worker Categories: GlobalSolutions registered workers (full access) and partner workers (linked to a partner entity).
+• Multi-Platform Logging: Sessions now track three environments: GlobalSolutions RDP (Guacamole), Partner Channel Multilog Clients (manually logged), and Third-party platforms (e.g., Handshake, Outlier, Prolific).
+
+2. RDP State Machine & Connectivity Updates
+• Valid RDP States: Offline, Online Free, Assigned, Active, Idle, Unhealthy, Admin Locked, Maintenance.
+• Connection Method: Browser-based RDP via Apache Guacamole confirmed for one-click seamless access.
+• Idle Auto-Disconnect: A configurable idle threshold will transition unresponsive machines via IDLE to AUTO-LOCKED state and forcibly close the connection, notifying the worker and logging the event in the audit trail.
+
+3. Payroll Engine V2.0
+• Variable Percentages: Supports arrangement-specific splits (worker / GlobalSolutions / partner share) with client overrides.
+• Multi-Currency & Adjustments: Enforces base currencies, tracks exchange rates into audit logs, and allows line-item cost additions, fines, and bonuses (with mandatory admin reasoning and approval).
+• Smart Distribution: One-click formatted PDF payslip generation and distribution via Email and (deferred integration) WhatsApp Business API.
+
+4. Quality Scoring Engine V2.0
+• Composite Score Weighting: 50% Technical Knowledge (via integrated MCQ Assessment Engine) + 50% Subjective Indicators (auto-calculated organisation score + 1-5 admin communication score).
+
+5. Worker Support & Governance
+• Tasking Guidance Hub: An admin-managed, version-controlled knowledge base accessible by workers for task guidelines and SOPs.
+• Session Issue Ticketing System: Allows workers to log time-stamped issues tied to specific sessions, which route to admins for triage (Open, Under Review, Resolved) to protect their quality score context.
+
+6. Organisational Intelligence Layer (Leadership Dashboard V2.0)
+• Core Philosophy: "What Does the Data Tell Us?" The leadership dashboard shifts from passive metrics to answering structural questions natively (e.g., lowest reliability trends, costs per session, knowledge gaps) in real-time.
+
 End of document.
-#   W o r k f o r c e - A l l o c a t i o n - P l a t f o r m  
+#   W o r k f o r c e - A l l o c a t i o n - P l a t f o r m 
+ 
  

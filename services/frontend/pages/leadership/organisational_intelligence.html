@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Organisational Intelligence - GlobalSolutions</title>
+</head>
+<body>
+    <header>
+        <h1>Organisational Intelligence Dashboard</h1>
+        <p>What Does the Data Tell Us?</p>
+    </header>
+    <main>
+        <section class="kpi-overview">
+            <div class="kpi-card">
+                <h3>Global Payroll Cost / Verified Hr</h3>
+                <p class="big-number">$12.45</p>
+            </div>
+            <div class="kpi-card">
+                <h3>Highest Idle Disconnects</h3>
+                <p class="big-number">KE / Nigeria Region</p>
+            </div>
+            <div class="kpi-card">
+                <h3>Avg MCQ Knowledge Gap</h3>
+                <p class="big-number">Platform Navigation (42%)</p>
+            </div>
+        </section>
+
+        <section class="detailed-reports">
+            <h2>Data Insights & Trends</h2>
+            <div class="report-module">
+                <h3>Session Reliability Trends</h3>
+                <p>Tracking workers with the lowest session reliability and dropping quality scores over the last 30 days.</p>
+                <!-- D3 or Chart.js visualizations will be mounted here -->
+                <div id="chart-reliability"></div>
+            </div>
+            <div class="report-module">
+                <h3>Partner Breakdown & Revenue Splits</h3>
+                <p>Overview of Multilog vs Handshake vs Outlier vs RDP native sessions and their respective organisational share vs worker share splits.</p>
+                <div id="chart-revenue-splits"></div>
+            </div>
+            <div class="report-module">
+                <h3>Quality Composite Breakdowns</h3>
+                <p>50% MCQ vs 50% Subjective cross-reference. Identifying inconsistencies where Subjective scores drastically outpace Assessment scores.</p>
+                <button>Generate Deep Dive Report</button>
+            </div>
+        </section>
+    </main>
+</body>
+</html>
