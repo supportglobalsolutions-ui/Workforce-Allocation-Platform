@@ -350,33 +350,40 @@ ________________________________________
 └── README.md
 ________________________________________
 11. Delivery Phases (Aligned to Mandate)
-Phase	Window	Primary Output
-Phase 0 — Setup	Days 1–7	Data models confirmed, repository live, environment set up, wireframes, sprint plan
-Phase 1 — MVP Core	Days 8–30	Auth, worker records, RDP board, shift submission, admin approval, claim/release, session logging
-Phase 2 — Payroll Bridge	Days 31–45	Pay rates, session-linked hours, payroll period export, exception flags
-Phase 3 — Quality + Leaderboard	Days 46–60	Assessment module, quality scoring, leaderboard, worker performance dashboard
-Phase 4 — Security Hardening	Days 61–75	Role enforcement audit, environment hardening, backup plan, deployment documentation
-Phase 5 — Leadership Dashboard	Days 76–90	Full org command view, utilisation reporting, export suite, management intelligence
-Phase 6 — Scale Layer	After Day 90	Country pods, multi-currency payroll, API integrations, quality automation, mobile-optimised views
+
+| Phase | Window | Primary Output |
+| :--- | :--- | :--- |
+| **Phase 0 — Setup** | Days 1–7 | Data models confirmed, repository live, environment set up, wireframes, sprint plan |
+| **Phase 1 — MVP Core** | Days 8–30 | Auth, worker records, RDP board, shift submission, admin approval, claim/release, session logging |
+| **Phase 2 — Payroll Bridge** | Days 31–45 | Pay rates, session-linked hours, payroll period export, exception flags |
+| **Phase 3 — Quality + Leaderboard** | Days 46–60 | Assessment module, quality scoring, leaderboard, worker performance dashboard |
+| **Phase 4 — Security Hardening** | Days 61–75 | Role enforcement audit, environment hardening, backup plan, deployment documentation |
+| **Phase 5 — Leadership Dashboard** | Days 76–90 | Full org command view, utilisation reporting, export suite, management intelligence |
+| **Phase 6 — Scale Layer** | After Day 90 | Country pods, multi-currency payroll, API integrations, quality automation, mobile-optimised views |
+
 ________________________________________
 Appendix — New Elements Mapping
-What You Described	What It Becomes in the System
-Workers submit schedules via group chat	Shift Scheduling Module — workers self-submit availability/shifts in advance
-Admin accepts and allocates RDP to a shift	Shift Approval + RDP Assignment Flow — admin reviews, approves, RDP becomes available at shift time
-Who has done the most hours, competitive metrics	Leaderboard + Performance Dashboard — visible to workers, gamified
-Quality rating from training assessments	Quality Score Module — subjective + assessment-data driven score per worker
-Workers see which RDPs are live/dead	Live RDP Status Board — already planned, now confirmed as worker-facing too
-Leadership manages org culture on the platform	Leadership Command Dashboard — full org view
-Payroll integration (currently a workbook)	Payroll Bridge Module — ingests the existing workbook logic
-Handling 100s of workers	Scalable multi-tenant architecture
-Firebase approved for real-time + notifications	Hybrid DB: Firebase (real-time) + PostgreSQL (source of truth)
 
-Revised Database Strategy
-Data	Storage	Why
-Users, workers, payroll records, audit log, sessions history	PostgreSQL	ACID compliance, source of truth, financial accuracy
-Live RDP states, active sessions, real-time presence	Firebase Realtime DB / Firestore	Sub-second push to all browsers without WebSocket complexity
-Shift scheduling, notifications	Firebase	Real-time availability updates
-Authentication	Firebase Auth	Handles login, roles, tokens cleanly, integrates with both DBs
+| What You Described | What It Becomes in the System |
+| :--- | :--- |
+| Workers submit schedules via group chat | **Shift Scheduling Module** — workers self-submit availability/shifts in advance |
+| Admin accepts and allocates RDP to a shift | **Shift Approval + RDP Assignment Flow** — admin reviews, approves, RDP becomes available at shift time |
+| Who has done the most hours, competitive metrics | **Leaderboard + Performance Dashboard** — visible to workers, gamified |
+| Quality rating from training assessments | **Quality Score Module** — subjective + assessment-data driven score per worker |
+| Workers see which RDPs are live/dead | **Live RDP Status Board** — already planned, now confirmed as worker-facing too |
+| Leadership manages org culture on the platform | **Leadership Command Dashboard** — full org view |
+| Payroll integration (currently a workbook) | **Payroll Bridge Module** — ingests the existing workbook logic |
+| Handling 100s of workers | Scalable multi-tenant architecture |
+| Firebase approved for real-time + notifications | Hybrid DB: Firebase (real-time) + PostgreSQL (source of truth) |
+
+### Revised Database Strategy
+
+| Data | Storage | Why |
+| :--- | :--- | :--- |
+| Users, workers, payroll records, audit log, sessions history | **PostgreSQL** | ACID compliance, source of truth, financial accuracy |
+| Live RDP states, active sessions, real-time presence | **Firebase Realtime DB / Firestore** | Sub-second push to all browsers without WebSocket complexity |
+| Shift scheduling, notifications | **Firebase** | Real-time availability updates |
+| Authentication | **Firebase Auth** | Handles login, roles, tokens cleanly, integrates with both DBs |
 
 ________________________________________
 Appendix B — Project Charter V2.0 Amendments & Change Log Version 1.1
@@ -406,6 +413,4 @@ Appendix B — Project Charter V2.0 Amendments & Change Log Version 1.1
 • Core Philosophy: "What Does the Data Tell Us?" The leadership dashboard shifts from passive metrics to answering structural questions natively (e.g., lowest reliability trends, costs per session, knowledge gaps) in real-time.
 
 End of document.
-#   W o r k f o r c e - A l l o c a t i o n - P l a t f o r m 
- 
- 
+# Workforce-Allocation-Platform
