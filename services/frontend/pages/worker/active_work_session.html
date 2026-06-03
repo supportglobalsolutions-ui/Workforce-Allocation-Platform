@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GlobalSolutions - Active Session</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400&amp;family=JetBrains+Mono:wght@400;500&amp;family=Manrope:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed-dim": "#59dcb4",
+                        "error": "#ffb4ab",
+                        "on-tertiary-fixed-variant": "#10503d",
+                        "secondary-fixed-dim": "#e9c349",
+                        "on-surface-variant": "#bbcac2",
+                        "on-secondary-fixed-variant": "#574500",
+                        "primary-container": "#3fc7a0",
+                        "inverse-surface": "#cbe9df",
+                        "surface-container-lowest": "#00110d",
+                        "outline-variant": "#3d4a44",
+                        "on-surface": "#cbe9df",
+                        "on-primary": "#00382a",
+                        "on-tertiary": "#003829",
+                        "tertiary-fixed-dim": "#96d3ba",
+                        "primary": "#61e3bb",
+                        "inverse-on-surface": "#1b352e",
+                        "on-error": "#690005",
+                        "tertiary-fixed": "#b2f0d5",
+                        "on-secondary-container": "#342800",
+                        "background": "#001712",
+                        "inverse-primary": "#006c53",
+                        "on-tertiary-container": "#0b4e3b",
+                        "surface-tint": "#59dcb4",
+                        "surface-bright": "#243e37",
+                        "surface-container-highest": "#1f3a33",
+                        "surface": "#001712",
+                        "tertiary-container": "#82bea5",
+                        "on-primary-container": "#004e3c",
+                        "primary-fixed": "#78f9cf",
+                        "secondary-container": "#af8d11",
+                        "surface-container-high": "#142f28",
+                        "surface-container": "#08241e",
+                        "surface-container-low": "#04201a",
+                        "on-secondary-fixed": "#241a00",
+                        "on-error-container": "#ffdad6",
+                        "surface-variant": "#1f3a33",
+                        "on-primary-fixed-variant": "#00513e",
+                        "secondary-fixed": "#ffe088",
+                        "on-background": "#cbe9df",
+                        "on-primary-fixed": "#002117",
+                        "on-secondary": "#3c2f00",
+                        "outline": "#86948d",
+                        "surface-dim": "#001712",
+                        "tertiary": "#9ddac0",
+                        "error-container": "#93000a",
+                        "secondary": "#e9c349",
+                        "on-tertiary-fixed": "#002116"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-md": "16px",
+                        "margin-mobile": "16px",
+                        "margin-desktop": "40px",
+                        "container-max": "1440px",
+                        "stack-sm": "8px",
+                        "stack-lg": "32px",
+                        "unit": "8px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "data-mono": ["JetBrains Mono"],
+                        "display-lg": ["Manrope"],
+                        "headline-md": ["Manrope"],
+                        "headline-lg-mobile": ["Manrope"],
+                        "headline-lg": ["Manrope"],
+                        "body-md": ["Inter"],
+                        "label-caps": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "data-mono": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .pulse-animation {
+            animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: .5; transform: scale(1.05); }
+        }
+        .glass-panel {
+            background: rgba(10, 36, 30, 0.6);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-background text-on-background min-h-screen flex flex-col font-body-md antialiased selection:bg-primary-container selection:text-on-primary-container">
+<!-- Top Navigation (Shell suppressed as it's an active focused task, but keeping a minimal header for brand) -->
+<header class="sticky top-0 z-50 w-full flex justify-between items-center px-margin-desktop py-4 bg-surface/60 backdrop-blur-2xl border-b border-white/5 shadow-sm">
+<div class="flex items-center gap-4">
+<h1 class="font-headline-md text-headline-md font-bold text-primary">GlobalSolutions</h1>
+<span class="font-label-caps text-label-caps text-on-surface-variant bg-surface-container px-2 py-1 rounded">Active Instance</span>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 text-error font-data-mono text-data-mono bg-error/10 px-3 py-1.5 rounded-full border border-error/20">
+<span class="w-2 h-2 rounded-full bg-error animate-pulse"></span>
+                LIVE SESSION
+            </div>
+</div>
+</header>
+<main class="flex-grow flex flex-col items-center justify-center p-margin-desktop max-w-container-max mx-auto w-full gap-gutter">
+<!-- Hero: Digital Timer -->
+<section class="w-full flex flex-col items-center justify-center mb-stack-lg">
+<h2 class="font-label-caps text-label-caps text-on-surface-variant mb-stack-sm tracking-widest uppercase">Session Duration</h2>
+<div class="font-display-lg text-[80px] leading-none text-primary font-bold tracking-tight" style="font-family: 'JetBrains Mono', monospace;">
+<span id="timerHours">04</span>:<span id="timerMinutes">23</span>:<span id="timerSeconds">17</span>
+</div>
+<div class="mt-4 flex items-center gap-2 text-primary">
+<span class="material-symbols-outlined text-sm" style="font-variation-settings: 'FILL' 1;">sync</span>
+<span class="font-data-mono text-data-mono">Syncing securely</span>
+</div>
+</section>
+<!-- Main Layout: 3 Columns -->
+<div class="w-full grid grid-cols-1 md:grid-cols-3 gap-gutter">
+<!-- Left: Machine Details -->
+<div class="glass-panel rounded-xl p-stack-lg flex flex-col gap-stack-md relative overflow-hidden group">
+<div class="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+<span class="material-symbols-outlined text-[100px] text-primary">dns</span>
+</div>
+<div class="flex items-center gap-3 border-b border-white/5 pb-4 mb-2 z-10">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center text-primary">
+<span class="material-symbols-outlined">terminal</span>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Target Machine</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant">SYS-OPS-092</p>
+</div>
+</div>
+<div class="grid grid-cols-1 gap-4 z-10">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1">IP Address</span>
+<span class="font-data-mono text-data-mono text-on-surface bg-surface-container px-3 py-2 rounded border border-white/5">192.168.104.22</span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1">Operating System</span>
+<span class="font-body-md text-body-md text-on-surface bg-surface-container px-3 py-2 rounded border border-white/5 flex items-center gap-2">
+<img alt="Linux Logo" class="w-4 h-4 rounded-full" data-alt="Minimalist abstract dark green icon representing a Linux operating system logo. Vector style, flat design, high contrast against dark background. Premium tech aesthetic." src="https://lh3.googleusercontent.com/aida/AP1WRLttqhFJU9K9tqA25Ha4OypQ94N23SwxjX648DA3HH9vDPvLaRabTMVuVXfg9VPglnWwjEhoKZTl1LZL6QTvOSSLe9KovGQ7i-ZuXHEtOpkD2eS96CHxt9c_ixJkgP7LjxN-yE9fJC-J9i2wWofmBFPBE5k2thjMdzOLXybrpBZlJgislaUYm420CcQJHpZ3OHPonISiieXEvDcG8Y-UpVhD-l78YGeT53O3WwB8gAez6aiVksY9KxyPyoFe"/>
+                            Ubuntu 22.04 LTS
+                        </span>
+</div>
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1">Region</span>
+<span class="font-body-md text-body-md text-on-surface bg-surface-container px-3 py-2 rounded border border-white/5 flex items-center gap-2">
+<span class="material-symbols-outlined text-sm text-secondary">public</span>
+                            us-east-1 (N. Virginia)
+                        </span>
+</div>
+</div>
+</div>
+<!-- Center: Connection & Heartbeat -->
+<div class="glass-panel rounded-xl p-stack-lg flex flex-col items-center justify-center gap-stack-lg relative overflow-hidden shadow-lg shadow-primary/5">
+<div class="text-center w-full absolute top-6">
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Telemetry</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant">Real-time status</p>
+</div>
+<div class="relative flex items-center justify-center w-48 h-48 mt-12">
+<!-- Outer ring pulse -->
+<div class="absolute inset-0 rounded-full border-2 border-primary/20 pulse-animation" style="animation-duration: 3s;"></div>
+<div class="absolute inset-4 rounded-full border-2 border-primary/40 pulse-animation" style="animation-duration: 2s; animation-delay: 0.5s;"></div>
+<!-- Center Core -->
+<div class="w-24 h-24 rounded-full bg-surface-container-highest border border-primary/50 shadow-[0_0_30px_rgba(97,227,187,0.2)] flex items-center justify-center relative z-10 group cursor-pointer transition-all hover:border-primary">
+<span class="material-symbols-outlined text-primary text-4xl" style="font-variation-settings: 'FILL' 1;">wifi_tethering</span>
+<div class="absolute w-full h-full rounded-full bg-primary/10 animate-ping opacity-20"></div>
+</div>
+</div>
+<div class="w-full grid grid-cols-2 gap-4 mt-auto">
+<div class="bg-surface-container rounded p-3 text-center border border-white/5">
+<span class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Latency</span>
+<span class="font-data-mono text-data-mono text-primary">12ms</span>
+</div>
+<div class="bg-surface-container rounded p-3 text-center border border-white/5">
+<span class="block font-label-caps text-label-caps text-on-surface-variant mb-1">Packet Loss</span>
+<span class="font-data-mono text-data-mono text-primary">0.00%</span>
+</div>
+</div>
+</div>
+<!-- Right: Session Details -->
+<div class="glass-panel rounded-xl p-stack-lg flex flex-col gap-stack-md">
+<div class="flex items-center gap-3 border-b border-white/5 pb-4 mb-2">
+<div class="w-10 h-10 rounded-lg bg-surface-container flex items-center justify-center text-secondary">
+<span class="material-symbols-outlined">assignment</span>
+</div>
+<div>
+<h3 class="font-headline-md text-body-lg font-bold text-on-surface">Session Parameters</h3>
+<p class="font-label-caps text-label-caps text-on-surface-variant">Task ID: TK-8891-A</p>
+</div>
+</div>
+<div class="flex-grow flex flex-col gap-4">
+<div class="flex flex-col">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1">Initiated By</span>
+<div class="flex items-center gap-3 bg-surface-container px-3 py-2 rounded border border-white/5">
+<img alt="Admin Avatar" class="w-6 h-6 rounded-full" data-alt="Minimalist abstract dark green icon representing a user profile avatar. Vector style, flat design, high contrast against dark background. Premium tech aesthetic." src="https://lh3.googleusercontent.com/aida/AP1WRLsWh3l_QOl5QxAfA0rQ-kbbsQnq8vJVQuk-i2sWzx6CPaGRtnsyDoV3AU4VmZjgf6JmR_iL8gqWS3fZm2nzbakTnZHlRhf1sfL3QGgXl7n3R2mnChXHRBJlWjAeg_Ikp0eiG6VsbnR8J8foo4GECAa7_E-S4qjzZ5x7tNxNl_qTa4G8MkqnBM0lYDHDJJ-jVoQJSUrfN9nAPeEFtj_DEsv8LfmvKOob0aciLlOqsIhTFuFrLGaEh-X0L3o"/>
+<span class="font-body-md text-body-md text-on-surface">E. Anderson (Root)</span>
+</div>
+</div>
+<div class="flex flex-col flex-grow">
+<span class="font-label-caps text-label-caps text-on-surface-variant mb-1 flex justify-between items-center">
+                            Activity Notes
+                            <span class="material-symbols-outlined text-[14px] cursor-pointer hover:text-primary">edit</span>
+</span>
+<textarea class="w-full flex-grow bg-surface-container border border-white/5 rounded p-3 font-data-mono text-data-mono text-on-surface-variant focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary resize-none placeholder-outline-variant" placeholder="Enter session notes here...">Applying security patch KB-9091. Verifying database integrity pre-restart. Log files indicate successful backup at 04:00 UTC.</textarea>
+</div>
+</div>
+</div>
+</div>
+<!-- Action Area -->
+<div class="w-full mt-stack-lg flex justify-center">
+<button class="bg-surface-container-highest border border-error/50 text-error font-headline-md text-body-lg font-bold py-4 px-12 rounded-xl flex items-center gap-3 transition-all duration-300 hover:bg-error hover:text-on-error hover:shadow-[0_0_20px_rgba(255,180,171,0.3)] group shadow-lg shadow-background relative overflow-hidden">
+<div class="absolute inset-0 bg-gradient-to-r from-error/0 via-error/10 to-error/0 translate-x-[-100%] group-hover:translate-x-[100%] transition-transform duration-1000"></div>
+<span class="material-symbols-outlined">stop_circle</span>
+                END SESSION
+            </button>
+</div>
+</main>
+<!-- Footer -->
+<footer class="w-full py-6 mt-auto border-t border-white/5 bg-surface-container-lowest">
+<div class="flex flex-col md:flex-row justify-between items-center px-margin-desktop max-w-container-max mx-auto gap-4">
+<span class="font-label-caps text-label-caps text-on-surface-variant">© 2024 GlobalSolutions Enterprise Operations. All rights reserved.</span>
+<div class="flex gap-6 font-label-caps text-label-caps">
+<a class="text-on-surface-variant hover:text-primary transition-colors" href="#">Security</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors" href="#">System Status</a>
+</div>
+</div>
+</footer>
+<script>
+        // Simple timer logic for demonstration
+        let seconds = 17;
+        let minutes = 23;
+        let hours = 4;
+
+        function updateTimer() {
+            seconds++;
+            if (seconds >= 60) {
+                seconds = 0;
+                minutes++;
+                if (minutes >= 60) {
+                    minutes = 0;
+                    hours++;
+                }
+            }
+            
+            document.getElementById('timerSeconds').textContent = seconds.toString().padStart(2, '0');
+            document.getElementById('timerMinutes').textContent = minutes.toString().padStart(2, '0');
+            document.getElementById('timerHours').textContent = hours.toString().padStart(2, '0');
+        }
+
+        setInterval(updateTimer, 1000);
+    </script>
+</body></html>

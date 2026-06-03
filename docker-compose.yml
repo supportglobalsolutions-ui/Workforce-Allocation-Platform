@@ -1,0 +1,21 @@
+version: '3.8'
+services:
+  nginx:
+    image: nginx:stable
+    # ports, volumes and config to be added
+  frontend:
+    # Next.js app
+    image: node:18
+  backend:
+    # FastAPI app
+    image: python:3.11
+  guacamole:
+    # Apache Guacamole
+  guacd:
+    # Guacamole daemon
+  postgres:
+    image: postgres:15
+  uptime-kuma:
+    image: louislam/uptime-kuma
+
+# Note: This is a stub. Fill service definitions and networks before use.

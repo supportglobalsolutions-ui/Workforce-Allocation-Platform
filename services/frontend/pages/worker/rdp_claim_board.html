@@ -1,0 +1,473 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GlobalSolutions - RDP Claim Board</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500;700&amp;family=Manrope:wght@600;700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "primary-fixed-dim": "#59dcb4",
+                        "error": "#ffb4ab",
+                        "on-tertiary-fixed-variant": "#10503d",
+                        "secondary-fixed-dim": "#e9c349",
+                        "on-surface-variant": "#bbcac2",
+                        "on-secondary-fixed-variant": "#574500",
+                        "primary-container": "#3fc7a0",
+                        "inverse-surface": "#cbe9df",
+                        "surface-container-lowest": "#00110d",
+                        "outline-variant": "#3d4a44",
+                        "on-surface": "#cbe9df",
+                        "on-primary": "#00382a",
+                        "on-tertiary": "#003829",
+                        "tertiary-fixed-dim": "#96d3ba",
+                        "primary": "#61e3bb",
+                        "inverse-on-surface": "#1b352e",
+                        "on-error": "#690005",
+                        "tertiary-fixed": "#b2f0d5",
+                        "on-secondary-container": "#342800",
+                        "background": "#001712",
+                        "inverse-primary": "#006c53",
+                        "on-tertiary-container": "#0b4e3b",
+                        "surface-tint": "#59dcb4",
+                        "surface-bright": "#243e37",
+                        "surface-container-highest": "#1f3a33",
+                        "surface": "#001712",
+                        "tertiary-container": "#82bea5",
+                        "on-primary-container": "#004e3c",
+                        "primary-fixed": "#78f9cf",
+                        "secondary-container": "#af8d11",
+                        "surface-container-high": "#142f28",
+                        "surface-container": "#08241e",
+                        "surface-container-low": "#04201a",
+                        "on-secondary-fixed": "#241a00",
+                        "on-error-container": "#ffdad6",
+                        "surface-variant": "#1f3a33",
+                        "on-primary-fixed-variant": "#00513e",
+                        "secondary-fixed": "#ffe088",
+                        "on-background": "#cbe9df",
+                        "on-primary-fixed": "#002117",
+                        "on-secondary": "#3c2f00",
+                        "outline": "#86948d",
+                        "surface-dim": "#001712",
+                        "tertiary": "#9ddac0",
+                        "error-container": "#93000a",
+                        "secondary": "#e9c349",
+                        "on-tertiary-fixed": "#002116"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "gutter": "24px",
+                        "stack-md": "16px",
+                        "margin-mobile": "16px",
+                        "margin-desktop": "40px",
+                        "container-max": "1440px",
+                        "stack-sm": "8px",
+                        "stack-lg": "32px",
+                        "unit": "8px"
+                    },
+                    "fontFamily": {
+                        "body-lg": ["Inter"],
+                        "data-mono": ["JetBrains Mono"],
+                        "display-lg": ["Manrope"],
+                        "headline-md": ["Manrope"],
+                        "headline-lg-mobile": ["Manrope"],
+                        "headline-lg": ["Manrope"],
+                        "body-md": ["Inter"],
+                        "label-caps": ["JetBrains Mono"]
+                    },
+                    "fontSize": {
+                        "body-lg": ["18px", {"lineHeight": "28px", "fontWeight": "400"}],
+                        "data-mono": ["14px", {"lineHeight": "20px", "fontWeight": "400"}],
+                        "display-lg": ["48px", {"lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700"}],
+                        "headline-md": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "headline-lg-mobile": ["24px", {"lineHeight": "32px", "fontWeight": "600"}],
+                        "headline-lg": ["32px", {"lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600"}],
+                        "body-md": ["16px", {"lineHeight": "24px", "fontWeight": "400"}],
+                        "label-caps": ["12px", {"lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500"}]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        body { background-color: theme('colors.background'); color: theme('colors.on-background'); }
+        
+        .glass-panel {
+            background-color: theme('colors.surface');
+            border: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .pulse-green {
+            animation: pulse-green 2s infinite;
+        }
+
+        @keyframes pulse-green {
+            0% { box-shadow: 0 0 0 0 rgba(97, 227, 187, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(97, 227, 187, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(97, 227, 187, 0); }
+        }
+
+        .pulse-red {
+            animation: pulse-red 2s infinite;
+        }
+
+        @keyframes pulse-red {
+            0% { box-shadow: 0 0 0 0 rgba(255, 180, 171, 0.4); }
+            70% { box-shadow: 0 0 0 6px rgba(255, 180, 171, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 180, 171, 0); }
+        }
+        
+        /* Custom Scrollbar for a premium feel */
+        ::-webkit-scrollbar {
+            width: 8px;
+            height: 8px;
+        }
+        ::-webkit-scrollbar-track {
+            background: theme('colors.background'); 
+        }
+        ::-webkit-scrollbar-thumb {
+            background: theme('colors.surface-container-high'); 
+            border-radius: theme('borderRadius.full');
+        }
+        ::-webkit-scrollbar-thumb:hover {
+            background: theme('colors.surface-bright'); 
+        }
+    </style>
+</head>
+<body class="flex h-screen overflow-hidden antialiased font-body-md text-body-md selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar -->
+<nav class="hidden md:flex flex-col h-full border-r border-white/10 shadow-md shadow-primary-dark-green/20 fixed left-0 top-0 w-64 z-40 bg-surface/80 backdrop-blur-xl">
+<div class="p-6">
+<div class="flex items-center gap-3 mb-2">
+<img alt="Executive User Profile Avatar" class="rounded-full w-10 h-10 border border-primary/20" src="https://lh3.googleusercontent.com/aida/AP1WRLu4D8FOrrZOdP8-7tk6MNmPvDGuAFbLsN2oP_LJRJcq_ALDymco9OwncRmPGaLh8rVTMoY3GFgZzZEZuMeO1GXVcYjKFP-mJnnY-kd9pD6lP_euBpn3PriXae2vSQo3ziQoNlWCvNW5RqxyEJPj9HR6S74IIc8t1sY3nPC0tAqDJqzOjC1IWn45u2bZeoyC0QPM5ZkvbSRxALHHSJJBqYjax2rhxDR_MoXqNp0PtZxre4hVEkzab9BkYg2n"/>
+<div>
+<h1 class="font-display-lg text-display-lg font-bold text-secondary text-xl">GlobalSolutions</h1>
+<p class="font-label-caps text-label-caps text-on-surface-variant text-[10px]">Operations Command</p>
+</div>
+</div>
+</div>
+<div class="px-4 mb-6">
+<button class="w-full bg-primary text-on-primary font-label-caps text-label-caps py-3 rounded-lg hover:bg-primary-container transition-colors flex justify-center items-center gap-2">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">add</span>
+                Launch New Instance
+            </button>
+</div>
+<ul class="flex-1 overflow-y-auto px-4 space-y-2">
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+                    Dashboards
+                </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">precision_manufacturing</span>
+                    Operations
+                </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg border-l-4 border-secondary bg-primary-container/20 text-primary font-bold scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined" style="font-variation-settings: 'FILL' 1;">group</span>
+                    Resources
+                </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">payments</span>
+                    Payroll
+                </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">insights</span>
+                    Intelligence
+                </a>
+</li>
+</ul>
+<div class="p-4 border-t border-white/5 mt-auto">
+<ul class="space-y-2">
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">settings</span>
+                        Settings
+                    </a>
+</li>
+<li>
+<a class="flex items-center gap-3 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all scale-98 active:opacity-80 font-label-caps text-label-caps" href="#">
+<span class="material-symbols-outlined">help_outline</span>
+                        Support
+                    </a>
+</li>
+</ul>
+</div>
+</nav>
+<!-- Main Content Area -->
+<main class="flex-1 flex flex-col md:ml-64 w-full h-full bg-background relative">
+<!-- Background Glow Effects -->
+<div class="absolute top-0 left-1/4 w-[800px] h-[400px] bg-primary/5 blur-[120px] rounded-full pointer-events-none"></div>
+<div class="absolute bottom-0 right-1/4 w-[600px] h-[600px] bg-secondary/5 blur-[150px] rounded-full pointer-events-none"></div>
+<!-- TopNavBar -->
+<header class="sticky top-0 z-50 w-full bg-surface/60 backdrop-blur-2xl border-b border-white/5 shadow-sm px-margin-desktop py-4 flex justify-between items-center">
+<div class="flex items-center gap-4">
+<!-- Mobile Menu Toggle (Hidden on Desktop) -->
+<button class="md:hidden text-on-surface-variant hover:text-primary transition-colors">
+<span class="material-symbols-outlined">menu</span>
+</button>
+<h2 class="font-headline-md text-headline-md font-bold text-primary hidden md:block">GlobalSolutions</h2>
+</div>
+<!-- Search Bar (on_left configuration) -->
+<div class="flex-1 max-w-xl mx-8 hidden md:block relative group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors">search</span>
+<input class="w-full bg-surface-container-high border border-outline-variant rounded-lg py-2 pl-10 pr-4 text-on-surface placeholder:text-on-surface-variant focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all font-body-md text-body-md" placeholder="Search resources, IP addresses, or clients..." type="text"/>
+</div>
+<div class="flex items-center gap-6">
+<!-- Trailing Icons -->
+<div class="flex items-center gap-2">
+<button class="p-2 text-on-surface-variant hover:bg-surface-bright/10 rounded-lg transition-all active:opacity-90 relative">
+<span class="material-symbols-outlined">notifications</span>
+<span class="absolute top-2 right-2 w-2 h-2 bg-secondary rounded-full"></span>
+</button>
+<button class="p-2 text-on-surface-variant hover:bg-surface-bright/10 rounded-lg transition-all active:opacity-90">
+<span class="material-symbols-outlined">terminal</span>
+</button>
+<button class="p-2 text-on-surface-variant hover:bg-surface-bright/10 rounded-lg transition-all active:opacity-90">
+<span class="material-symbols-outlined">account_circle</span>
+</button>
+</div>
+<!-- Trailing Primary Action -->
+<button class="hidden lg:flex items-center gap-2 bg-surface-container-high border border-secondary/30 text-secondary hover:bg-secondary/10 px-4 py-2 rounded-lg font-label-caps text-label-caps transition-all">
+                    Command Menu
+                    <span class="text-on-surface-variant text-[10px] ml-2 border border-outline-variant px-1 rounded bg-surface">⌘K</span>
+</button>
+<img alt="User Profile" class="rounded-full w-8 h-8 border border-primary/30 ml-2" src="https://lh3.googleusercontent.com/aida/AP1WRLtwGRG-hEroIz3FipbKuu80rx21_-3gmH9NEQEof0cUKjTugmtNA0_3OoTp_4iFeYTha-C9kjg8TgWBtuURxT4tqsLdO7CRUy88-Q4P3B-yD6H1_aj4qS9bpmmBCACbd-IqgnfB0iv_d0H1bIg1lw9kyf2lTBIz0lk1ZphxcJB1Hk7PbCJ3esSLWJn_AcuxUuqsySSi7evRwzVRrCfQZLPFrpTNj-768AB-ZZDtDi3BicH-ucoD0Z0EYtXE"/>
+</div>
+</header>
+<!-- Dashboard Content -->
+<div class="flex-1 overflow-y-auto p-margin-mobile md:p-margin-desktop z-10 relative">
+<!-- Page Header & Filters -->
+<div class="mb-8 flex flex-col xl:flex-row justify-between items-start xl:items-end gap-6">
+<div>
+<h1 class="font-headline-lg text-headline-lg font-semibold text-on-surface mb-2 tracking-tight">RDP Claim Board</h1>
+<p class="text-on-surface-variant font-body-md text-body-md max-w-2xl">Real-time allocation and health monitoring of global remote desktop protocol resources. Ensure machine availability before committing to client operations.</p>
+</div>
+<!-- Control Bar -->
+<div class="flex flex-wrap items-center gap-4 bg-surface-container-lowest p-2 rounded-xl border border-white/5 w-full xl:w-auto">
+<div class="relative flex-1 min-w-[150px]">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">public</span>
+<select class="w-full bg-transparent border-none text-on-surface py-2 pl-9 pr-8 text-sm focus:ring-0 cursor-pointer appearance-none font-label-caps">
+<option value="all">All Regions</option>
+<option value="na">North America</option>
+<option value="eu">Europe</option>
+<option value="apac">APAC</option>
+</select>
+<span class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm pointer-events-none">expand_more</span>
+</div>
+<div class="w-px h-6 bg-white/10 hidden sm:block"></div>
+<div class="relative flex-1 min-w-[150px]">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">filter_alt</span>
+<select class="w-full bg-transparent border-none text-on-surface py-2 pl-9 pr-8 text-sm focus:ring-0 cursor-pointer appearance-none font-label-caps">
+<option value="all">Status: All</option>
+<option value="available">Available</option>
+<option value="in_use">In Use</option>
+<option value="maintenance">Maintenance</option>
+</select>
+<span class="material-symbols-outlined absolute right-2 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm pointer-events-none">expand_more</span>
+</div>
+<div class="w-px h-6 bg-white/10 hidden sm:block"></div>
+<button class="flex items-center gap-2 px-4 py-2 text-on-surface hover:text-primary transition-colors font-label-caps text-label-caps">
+<span class="material-symbols-outlined text-sm">sort</span>
+                        Sort: Latency
+                    </button>
+</div>
+</div>
+<!-- Bento Grid - Resource Cards -->
+<div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+<!-- Card 1: Available (Green) -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden group hover:border-primary/50 transition-all duration-300">
+<div class="absolute top-0 right-0 w-24 h-24 bg-primary/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+<div class="flex justify-between items-start mb-4 relative z-10">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="w-2.5 h-2.5 rounded-full bg-primary pulse-green"></span>
+<span class="font-label-caps text-label-caps text-primary tracking-wider">AVAILABLE</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface">NYC-RDP-01</h3>
+</div>
+<img alt="United States" class="rounded w-6 h-auto opacity-80" src="https://lh3.googleusercontent.com/aida/AP1WRLsHnYVtqJAtnJIo6jB0rQeGXile4B-Pou9DSdyOXfUYBSHA6BH8_cguM5T8huGoAaVzREn56fAlJpHfdR0PUfs45Ebb7roLL8pa0X447mVtJZk4jrLHkUUekJmB8chcNKd7nQsVhR36yw8emgbtOs4m5wBDQGAQzbeUsEhgm8rHzOP38g95qu7tmlonD8OYOfCjA1UcE-Oe6ro8egTPOttxmwd0Q-roTGXzH5bhir5LBV-W_1ixt5cJKMWG"/>
+</div>
+<div class="space-y-3 mb-6 relative z-10">
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">IP ADDRESS</span>
+<span class="font-data-mono text-data-mono text-on-surface">192.168.1.104</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">LATENCY</span>
+<span class="font-data-mono text-data-mono text-primary">12ms</span>
+</div>
+<div class="flex justify-between items-center pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">UPTIME</span>
+<span class="font-data-mono text-data-mono text-on-surface">99.9%</span>
+</div>
+</div>
+<button class="w-full bg-primary/10 border border-primary text-primary font-label-caps text-label-caps py-3 rounded-lg hover:bg-primary hover:text-on-primary transition-all duration-300 relative z-10">
+                        CLAIM RESOURCE
+                    </button>
+</div>
+<!-- Card 2: In Use (Yellow/Secondary) -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden group border-white/10">
+<div class="absolute top-0 right-0 w-24 h-24 bg-secondary/10 rounded-bl-full -mr-4 -mt-4"></div>
+<div class="flex justify-between items-start mb-4 relative z-10">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="w-2.5 h-2.5 rounded-full bg-secondary"></span>
+<span class="font-label-caps text-label-caps text-secondary tracking-wider">IN USE</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface">LON-RDP-08</h3>
+</div>
+<img alt="United Kingdom" class="rounded w-6 h-auto opacity-80" src="https://lh3.googleusercontent.com/aida/AP1WRLt502d-cheNWGRKxY9PEhn-j6J84JgaQNNFBOhhzsCNPYNqoGfztImWHniB6mNLReL7Q7E83Y_jfXO5H4BBp6fANN8mNWmRVR4bni-VLe7g4lpDfjdeUqT2Hh1yj6au_h0KTobargfcYC7kxDcGwIPzZ3zhn--1I6guHrxLbcErVLRWjAnGXOX1v2gQHjuniwC240jrAQKTXlMr6xfSvpk4G8JtQIv8lakqD6BVAzrSMieIo3IbUQegnlIx"/>
+</div>
+<div class="space-y-3 mb-6 relative z-10">
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">IP ADDRESS</span>
+<span class="font-data-mono text-data-mono text-on-surface">10.0.45.22</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">LATENCY</span>
+<span class="font-data-mono text-data-mono text-secondary">45ms</span>
+</div>
+<div class="flex justify-between items-center pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">CURRENT USER</span>
+<div class="flex items-center gap-2">
+<img alt="JS" class="rounded-full w-4 h-4" src="https://lh3.googleusercontent.com/aida/AP1WRLvAc9Nfnp1b6nxOUOgV97SVYOtMp9Rpo0Aq2Rq7fGp0TmhyxPU9K9Xn8j89qnC_HzbQ41LpEckINgpc-gSvgREsU4snjHrdLLmsVbDb_8JkQ9-3uK6T6PW7y8vBERlzVLLd2bsLVGZAwrMKZHyjzvW2D3tzORbdVPWcd7wKqh2mNWOy6-ywap-7EF_sc9yJGvp_qe_07zcnrfdg9A0hEbQpYBkI-oEUTuUlGIru8sL5Gcxj5drjixDKmI-n"/>
+<span class="font-data-mono text-data-mono text-on-surface">J. Smith</span>
+</div>
+</div>
+</div>
+<button class="w-full bg-surface-container-highest text-on-surface-variant font-label-caps text-label-caps py-3 rounded-lg cursor-not-allowed relative z-10" disabled="">
+                        RESOURCE LOCKED
+                    </button>
+</div>
+<!-- Card 3: Error/Maintenance (Red) -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden group border-error/30">
+<div class="absolute top-0 right-0 w-24 h-24 bg-error/10 rounded-bl-full -mr-4 -mt-4"></div>
+<div class="flex justify-between items-start mb-4 relative z-10">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="w-2.5 h-2.5 rounded-full bg-error pulse-red"></span>
+<span class="font-label-caps text-label-caps text-error tracking-wider">OFFLINE</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface">FRA-RDP-02</h3>
+</div>
+<img alt="Germany" class="rounded w-6 h-auto opacity-80" src="https://lh3.googleusercontent.com/aida/AP1WRLt-2uqv0eAsC0_86-MGMFIg7c00-6qsTvsRj-Ap1R5ptuN6Umn3Gk1uRxhpvTGxxOBNqiWdJd0bF76pCouzsL4PJXHnRcW6LbhpNFX4EbwYjC2wnBJ_Br0_E7lL6S6cQ8jU3DYOmGB_NPtRx-1aXGRy0_Bl7IBV2mM5fst-66Ha2EEmBlZX3SwtDnKFxUguCAe3sinAVdUpYlemb6-AH0_K1SYPLiZGrdj5jf2ZMmxtuLjFBPNM9-SFK0c"/>
+</div>
+<div class="space-y-3 mb-6 relative z-10">
+<div class="flex justify-between items-center border-b border-white/5 pb-2 opacity-50">
+<span class="text-on-surface-variant font-label-caps text-label-caps">IP ADDRESS</span>
+<span class="font-data-mono text-data-mono text-on-surface">192.168.5.88</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-2 opacity-50">
+<span class="text-on-surface-variant font-label-caps text-label-caps">LATENCY</span>
+<span class="font-data-mono text-data-mono text-error">ERR</span>
+</div>
+<div class="flex justify-between items-center pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">DIAGNOSTIC</span>
+<span class="font-data-mono text-data-mono text-error text-xs">Connection Timeout</span>
+</div>
+</div>
+<button class="w-full bg-error/10 border border-error/50 text-error font-label-caps text-label-caps py-3 rounded-lg hover:bg-error/20 transition-all duration-300 relative z-10">
+                        INITIATE REBOOT
+                    </button>
+</div>
+<!-- Card 4: Available (Green) -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden group hover:border-primary/50 transition-all duration-300">
+<div class="absolute top-0 right-0 w-24 h-24 bg-primary/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+<div class="flex justify-between items-start mb-4 relative z-10">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="w-2.5 h-2.5 rounded-full bg-primary pulse-green"></span>
+<span class="font-label-caps text-label-caps text-primary tracking-wider">AVAILABLE</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface">TOK-RDP-14</h3>
+</div>
+<img alt="Japan" class="rounded w-6 h-auto opacity-80" src="https://lh3.googleusercontent.com/aida/AP1WRLt-42O4jtJd6G1NyB2bFI37yp-0Muv2uB6XtECjNHdQY-xraUcd3K-b3-xOo2Lh7w5jrGXOzG7wqytbMuFdl5XL0KbRjK6cepn8u6wQeDxcz1L0KQCEaV9oXj4fbn3hfnbnYm34hbG28bc1otLMEfp0U-QAgtGT6muznSfTwMoaiacZscVwa3pOHkOBNa0hHQ86piPHXRz4HmnO65F0Dk5-8nx5jJ2MRTR7GTYgrQeer9sclClts8pSSPM"/>
+</div>
+<div class="space-y-3 mb-6 relative z-10">
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">IP ADDRESS</span>
+<span class="font-data-mono text-data-mono text-on-surface">172.16.0.4</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">LATENCY</span>
+<span class="font-data-mono text-data-mono text-primary">18ms</span>
+</div>
+<div class="flex justify-between items-center pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">UPTIME</span>
+<span class="font-data-mono text-data-mono text-on-surface">99.5%</span>
+</div>
+</div>
+<button class="w-full bg-primary/10 border border-primary text-primary font-label-caps text-label-caps py-3 rounded-lg hover:bg-primary hover:text-on-primary transition-all duration-300 relative z-10">
+                        CLAIM RESOURCE
+                    </button>
+</div>
+<!-- Card 5: Available (Green) - Low Spec -->
+<div class="glass-panel rounded-xl p-6 relative overflow-hidden group hover:border-primary/50 transition-all duration-300">
+<div class="absolute top-0 right-0 w-24 h-24 bg-primary/10 rounded-bl-full -mr-4 -mt-4 transition-transform group-hover:scale-110"></div>
+<div class="flex justify-between items-start mb-4 relative z-10">
+<div>
+<div class="flex items-center gap-2 mb-1">
+<span class="w-2.5 h-2.5 rounded-full bg-primary pulse-green"></span>
+<span class="font-label-caps text-label-caps text-primary tracking-wider">AVAILABLE</span>
+</div>
+<h3 class="font-headline-md text-headline-md text-on-surface">SYD-RDP-05</h3>
+</div>
+<img alt="Australia" class="rounded w-6 h-auto opacity-80" src="https://lh3.googleusercontent.com/aida/AP1WRLtljZ6XbECUzRD9TtmnQ-wPPNMBn2SeyW5tL7FNIDXcPpn95xlCHzaU29YL-fw9497YLThSTLdR52gAER1auZDvl8q2iJFpaM1q6C5LvBT3GgS7y6AGfljwt1IO0VCrvaGaIE3EKPJBJP-jL5Tpgspl1PmueDdqc3Oe57MClIiEvwWRy3GuZlOHDC-SsOMAMeVb61dQJDr5dCIWSswjj80YposVT7-EpKCpYqNM4UUzt2SSkwRlwrKeN288"/>
+</div>
+<div class="space-y-3 mb-6 relative z-10">
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">IP ADDRESS</span>
+<span class="font-data-mono text-data-mono text-on-surface">10.1.1.55</span>
+</div>
+<div class="flex justify-between items-center border-b border-white/5 pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">LATENCY</span>
+<span class="font-data-mono text-data-mono text-secondary">85ms</span>
+</div>
+<div class="flex justify-between items-center pb-2">
+<span class="text-on-surface-variant font-label-caps text-label-caps">UPTIME</span>
+<span class="font-data-mono text-data-mono text-on-surface">98.2%</span>
+</div>
+</div>
+<button class="w-full bg-primary/10 border border-primary text-primary font-label-caps text-label-caps py-3 rounded-lg hover:bg-primary hover:text-on-primary transition-all duration-300 relative z-10">
+                        CLAIM RESOURCE
+                    </button>
+</div>
+</div>
+<!-- Bottom spacing for Footer -->
+<div class="h-12"></div>
+</div>
+<!-- Footer (Fixed at bottom of scrolling area if content is short, or flows naturally) -->
+<footer class="mt-auto bg-surface-container-lowest border-t border-white/5 py-6 px-margin-desktop w-full flex flex-col md:flex-row justify-between items-center z-20 relative">
+<div class="font-label-caps text-label-caps text-on-surface-variant mb-4 md:mb-0">
+                © 2024 GlobalSolutions Enterprise Operations. All rights reserved.
+            </div>
+<div class="flex gap-6 font-label-caps text-label-caps">
+<a class="text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Security</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Compliance</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">System Status</a>
+<a class="text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Privacy Policy</a>
+</div>
+</footer>
+</main>
+</body></html>
