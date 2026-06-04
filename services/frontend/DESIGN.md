@@ -162,3 +162,48 @@ The design system employs a refined roundedness strategy. A base value of **16px
   - *Tertiary:* Simple text with Gold underline on hover.
 - **Input Fields:** Darker than the card background with a 1px Emerald border that glows (box-shadow) on focus.
 - **Status Indicators:** Small circular dots. "Real-time" status uses a soft pulsing animation for the active state.
+
+---
+
+## Pages Directory
+
+All routes in the GlobalSolutions Platform frontend. Live index: [`/pages`](http://localhost:3000/pages)
+
+### 🌐 Public Routes
+
+| Page | Route | File | Status | Description |
+|------|-------|------|--------|-------------|
+| Landing | `/` | `app/page.tsx` | ✅ Active | Hero entry point with feature cards, sign-in and Worker Portal CTAs, and a "View All Pages" dev link |
+| Login | `/login` | `app/login/page.tsx` | ✅ Active | Role-based auth page with quick-fill buttons for Admin, Worker, and Leadership |
+| Pages Index | `/pages` | `app/pages/page.tsx` | ✅ Active | Live directory of all routes grouped by role — links to every page |
+
+### 🛡️ Admin Routes _(Role: Operations Lead)_
+
+| Page | Route | File | Status | Description |
+|------|-------|------|--------|-------------|
+| Command Center | `/admin/command-center` | `app/admin/command-center/page.tsx` | ✅ Active | Top-level operations hub — live KPI tiles, worker status feed, system alerts, and quick actions |
+| Workers | `/admin/workers` | `app/admin/workers/page.tsx` | ✅ Active | Worker database with search, filter, performance ratings, and per-worker audit trails |
+| RDP Manager | `/admin/rdp` | `app/admin/rdp/page.tsx` | ✅ Active | RDP session board — assign, terminate, and monitor remote desktop connections |
+| Audit Logs | `/admin/audit` | `app/admin/audit/page.tsx` | ✅ Active | Filterable event log — all system actions, login events, and configuration changes |
+| Settings | `/admin/settings` | `app/admin/settings/page.tsx` | ✅ Active | System config — timezone, session limits, RDP gateway URL, notifications, and API keys |
+
+### 👷 Worker Routes _(Role: System Worker)_
+
+| Page | Route | File | Status | Description |
+|------|-------|------|--------|-------------|
+| Worker Portal | `/worker/portal` | `app/worker/portal/page.tsx` | ✅ Active | Personal console — session start/stop, daily task log, earnings snapshot, and RDP launcher |
+| Schedule | `/worker/schedule` | `app/worker/schedule/page.tsx` | ✅ Active | Weekly availability scheduler — workers set and update their shift preferences |
+| Leaderboard | `/worker/leaderboard` | `app/worker/leaderboard/page.tsx` | ✅ Active | Performance ranking by output, earnings, and quality score |
+
+### 👔 Leadership Routes _(Role: Executive C-Suite)_
+
+| Page | Route | File | Status | Description |
+|------|-------|------|--------|-------------|
+| Leadership Dashboard | `/leadership` | `app/leadership/page.tsx` | ✅ Active | C-suite command view — org-wide KPIs, headcount, revenue output, and strategic trend charts |
+| Payroll Bridge | `/leadership/payroll` | `app/leadership/payroll/page.tsx` | ✅ Active | Payroll reconciliation and export — review cycle totals and push to external payment providers |
+
+---
+
+> **Status Key:** ✅ Active = fully implemented shell with UI · 🚧 Shell = route exists, placeholder content · ❌ Empty = not yet created
+>
+> **Adding a new page?** Update the table above, add the route to `app/pages/page.tsx`, and update the route count badge in `app/page.tsx`.

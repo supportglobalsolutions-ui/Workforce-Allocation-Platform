@@ -1,7 +1,7 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import { ShieldCheck, Zap, Globe2, BarChart3, ChevronRight, Lock } from 'lucide-react';
+import { ShieldCheck, Zap, Globe2, BarChart3, ChevronRight, Lock, BookOpen } from 'lucide-react';
 import Link from 'next/link';
 
 export default function LandingPage() {
@@ -76,6 +76,23 @@ export default function LandingPage() {
         >
           <span>Worker Portal</span>
           <ChevronRight size={16} className="text-[#61e3bb]" />
+        </Link>
+      </motion.div>
+
+      {/* Pages directory link */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ delay: 0.6, duration: 0.8 }}
+        className="mt-4 relative z-10"
+      >
+        <Link
+          href="/pages"
+          className="inline-flex items-center gap-2 px-5 py-2.5 rounded-xl border border-white/10 hover:border-[#61e3bb]/30 bg-white/[0.03] hover:bg-[#08241e]/60 text-[#bbcac2] hover:text-[#61e3bb] text-sm font-medium transition-all duration-300 backdrop-blur-md"
+        >
+          <BookOpen size={15} />
+          <span>View All Pages</span>
+          <span className="ml-1 text-[10px] font-mono text-white/30 bg-white/5 px-2 py-0.5 rounded-full border border-white/10">13 routes</span>
         </Link>
       </motion.div>
 
