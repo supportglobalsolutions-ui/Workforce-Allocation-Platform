@@ -6,6 +6,8 @@ export const metadata: Metadata = {
   description: "Workforce Session Allocation Platform",
 };
 
+import Sidebar from "../components/Sidebar";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -13,7 +15,14 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en">
-      <body className="antialiased">{children}</body>
+      <body className="antialiased">
+        <div className="flex min-h-screen bg-[#001712] text-[#cbe9df]">
+          <Sidebar />
+          <main className="flex-1 p-8 overflow-y-auto">
+            {children}
+          </main>
+        </div>
+      </body>
     </html>
   );
 }

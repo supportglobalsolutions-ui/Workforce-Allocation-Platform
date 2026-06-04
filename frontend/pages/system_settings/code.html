@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>System Settings - GlobalSolutions</title>
+<!-- Google Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;family=Manrope:wght@600;700&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary": "#3c2f00",
+                        "secondary": "#e9c349",
+                        "on-tertiary-fixed": "#002116",
+                        "surface": "#001712",
+                        "tertiary-container": "#82bea5",
+                        "outline-variant": "#3d4a44",
+                        "primary-container": "#3fc7a0",
+                        "on-tertiary-fixed-variant": "#10503d",
+                        "on-primary-container": "#004e3c",
+                        "on-error-container": "#ffdad6",
+                        "surface-bright": "#243e37",
+                        "outline": "#86948d",
+                        "surface-container-high": "#142f28",
+                        "on-surface-variant": "#bbcac2",
+                        "surface-dim": "#001712",
+                        "surface-variant": "#1f3a33",
+                        "on-background": "#cbe9df",
+                        "on-primary": "#00382a",
+                        "secondary-fixed-dim": "#e9c349",
+                        "on-primary-fixed": "#002117",
+                        "tertiary": "#9ddac0",
+                        "surface-tint": "#59dcb4",
+                        "on-tertiary-container": "#0b4e3b",
+                        "on-error": "#690005",
+                        "error": "#ffb4ab",
+                        "inverse-primary": "#006c53",
+                        "error-container": "#93000a",
+                        "surface-container": "#08241e",
+                        "background": "#001712",
+                        "surface-container-highest": "#1f3a33",
+                        "primary-fixed": "#78f9cf",
+                        "tertiary-fixed-dim": "#96d3ba",
+                        "tertiary-fixed": "#b2f0d5",
+                        "primary-fixed-dim": "#59dcb4",
+                        "on-surface": "#cbe9df",
+                        "on-secondary-container": "#342800",
+                        "on-tertiary": "#003829",
+                        "on-secondary-fixed-variant": "#574500",
+                        "on-secondary-fixed": "#241a00",
+                        "on-primary-fixed-variant": "#00513e",
+                        "inverse-on-surface": "#1b352e",
+                        "secondary-container": "#af8d11",
+                        "primary": "#61e3bb",
+                        "surface-container-low": "#04201a",
+                        "secondary-fixed": "#ffe088",
+                        "surface-container-lowest": "#00110d",
+                        "inverse-surface": "#cbe9df"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "container-max": "1440px",
+                        "unit": "8px",
+                        "gutter": "24px",
+                        "stack-sm": "8px",
+                        "margin-mobile": "16px",
+                        "margin-desktop": "40px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["JetBrains Mono"],
+                        "headline-lg-mobile": ["Manrope"],
+                        "display-lg": ["Manrope"],
+                        "data-mono": ["JetBrains Mono"],
+                        "headline-lg": ["Manrope"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Manrope"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "data-mono": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .material-symbols-outlined[data-weight="fill"] {
+            font-variation-settings: 'FILL' 1;
+        }
+        
+        /* Glassmorphism Utilities */
+        .glass-panel {
+            background: rgba(8, 36, 30, 0.6); /* surface-container with opacity */
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+        
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: transparent; }
+        ::-webkit-scrollbar-thumb { background: #1f3a33; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #3d4a44; }
+    </style>
+</head>
+<body class="bg-background text-on-surface font-body-md h-screen flex overflow-hidden antialiased selection:bg-primary/30 selection:text-primary">
+<!-- Shared Component: SideNavBar -->
+<aside class="hidden md:flex flex-col h-full fixed left-0 top-0 w-64 bg-surface/80 backdrop-blur-xl border-r border-white/10 shadow-md shadow-primary/5 z-40">
+<div class="p-6">
+<h1 class="font-display-lg text-[24px] font-bold text-secondary leading-none">GlobalSolutions</h1>
+<p class="font-label-caps text-label-caps text-on-surface-variant mt-2 uppercase tracking-widest">Operations Command</p>
+</div>
+<div class="px-4 mt-6 mb-8">
+<button class="w-full bg-primary/10 text-primary border border-primary/20 hover:bg-primary/20 hover:border-primary/40 font-label-caps text-label-caps py-3 px-4 rounded-lg flex items-center justify-center gap-2 transition-all scale-98 active:opacity-80">
+<span class="material-symbols-outlined text-sm">add</span>
+                Launch New Instance
+            </button>
+</div>
+<nav class="flex-1 overflow-y-auto px-4 space-y-2">
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">dashboard</span>
+<span class="font-body-md">Dashboards</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">precision_manufacturing</span>
+<span class="font-body-md">Operations</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">group</span>
+<span class="font-body-md">Resources</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">payments</span>
+<span class="font-body-md">Payroll</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">insights</span>
+<span class="font-body-md">Intelligence</span>
+</a>
+</nav>
+<div class="p-4 border-t border-white/5 space-y-2">
+<!-- Active State: Settings -->
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg border-l-4 border-secondary bg-primary-container/20 text-primary font-bold transition-all scale-98" href="#">
+<span class="material-symbols-outlined" data-weight="fill">settings</span>
+<span class="font-body-md">Settings</span>
+</a>
+<a class="flex items-center gap-4 px-4 py-3 rounded-lg text-on-surface-variant hover:text-primary hover:bg-surface-container-high/50 transition-all" href="#">
+<span class="material-symbols-outlined">help_outline</span>
+<span class="font-body-md">Support</span>
+</a>
+</div>
+</aside>
+<!-- Main Layout Content -->
+<div class="flex-1 flex flex-col md:ml-64 h-full relative">
+<!-- Shared Component: TopNavBar -->
+<header class="sticky top-0 z-50 w-full flex justify-between items-center px-margin-mobile md:px-margin-desktop py-4 bg-surface/60 backdrop-blur-2xl border-b border-white/5 shadow-sm transition-opacity opacity-90 hover:opacity-100">
+<div class="flex items-center gap-4 flex-1">
+<div class="relative w-64 hidden lg:block">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant text-sm">search</span>
+<input class="w-full bg-surface-container-high border border-white/5 rounded-full py-2 pl-10 pr-4 text-on-surface font-body-md text-sm focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all placeholder:text-on-surface-variant/50" placeholder="Search systems..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-bright/10 hover:text-primary transition-all">
+<span class="material-symbols-outlined text-[20px]">notifications</span>
+</button>
+<button class="w-10 h-10 rounded-full flex items-center justify-center text-on-surface-variant hover:bg-surface-bright/10 hover:text-primary transition-all">
+<span class="material-symbols-outlined text-[20px]">terminal</span>
+</button>
+<button class="hidden md:flex items-center justify-center px-4 py-2 bg-surface-container-highest border border-white/10 rounded-lg text-primary font-label-caps text-label-caps hover:border-primary/50 transition-all gap-2">
+                    Command Menu
+                    <kbd class="font-data-mono text-[10px] text-on-surface-variant bg-surface px-1.5 rounded border border-white/10">⌘K</kbd>
+</button>
+<button class="w-10 h-10 rounded-full overflow-hidden border border-white/10 hover:border-primary transition-all">
+<div class="w-full h-full bg-surface-container-high flex items-center justify-center">
+<span class="material-symbols-outlined text-on-surface-variant">account_circle</span>
+</div>
+</button>
+</div>
+</header>
+<!-- Canvas Area -->
+<main class="flex-1 overflow-y-auto px-margin-mobile md:px-margin-desktop py-8">
+<div class="max-w-container-max mx-auto space-y-stack-lg pb-12">
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+<div>
+<h2 class="font-headline-lg text-headline-lg text-on-surface tracking-tight">System Settings</h2>
+<p class="font-body-md text-on-surface-variant mt-1">Manage global configurations, access controls, and environment variables.</p>
+</div>
+<div class="flex gap-3">
+<button class="px-5 py-2.5 rounded-lg border border-secondary text-secondary font-label-caps text-label-caps hover:bg-secondary/10 transition-colors">Discard Changes</button>
+<button class="px-5 py-2.5 rounded-lg bg-primary text-on-primary font-label-caps text-label-caps hover:opacity-90 shadow-[0_0_15px_rgba(97,227,187,0.2)] transition-all">Apply Configuration</button>
+</div>
+</div>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-gutter">
+<!-- Roles & Permissions (Col 8) -->
+<div class="md:col-span-8 glass-panel rounded-xl overflow-hidden flex flex-col">
+<div class="p-6 border-b border-white/5 flex justify-between items-center bg-surface-container/50">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary">admin_panel_settings</span>
+<h3 class="font-headline-md text-[18px] text-on-surface">Roles &amp; Permissions</h3>
+</div>
+<button class="text-primary font-label-caps text-label-caps flex items-center gap-1 hover:underline">
+<span class="material-symbols-outlined text-[16px]">add</span> New Role
+                            </button>
+</div>
+<div class="flex-1 overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="border-b border-white/5 bg-surface-container-highest/20 font-label-caps text-label-caps text-on-surface-variant uppercase tracking-wider">
+<th class="py-4 px-6 font-medium">Role Identifier</th>
+<th class="py-4 px-6 font-medium">Access Level</th>
+<th class="py-4 px-6 font-medium">Users</th>
+<th class="py-4 px-6 font-medium text-right">Status</th>
+</tr>
+</thead>
+<tbody class="font-body-md text-sm divide-y divide-white/5">
+<tr class="hover:bg-surface-container-high/30 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-primary">sys_admin_global</td>
+<td class="py-4 px-6 text-on-surface">Unrestricted Command</td>
+<td class="py-4 px-6 font-data-mono text-on-surface-variant">04</td>
+<td class="py-4 px-6 text-right">
+<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-caps bg-primary/10 text-primary border border-primary/20">
+<span class="w-1.5 h-1.5 rounded-full bg-primary animate-pulse"></span> Active
+                                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-high/30 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-on-surface">op_manager_region_na</td>
+<td class="py-4 px-6 text-on-surface">Regional Read/Write</td>
+<td class="py-4 px-6 font-data-mono text-on-surface-variant">128</td>
+<td class="py-4 px-6 text-right">
+<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-caps bg-primary/10 text-primary border border-primary/20">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span> Active
+                                            </span>
+</td>
+</tr>
+<tr class="hover:bg-surface-container-high/30 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-on-surface">auditor_external</td>
+<td class="py-4 px-6 text-on-surface">Global Read-Only</td>
+<td class="py-4 px-6 font-data-mono text-on-surface-variant">12</td>
+<td class="py-4 px-6 text-right">
+<span class="inline-flex items-center gap-1.5 px-2 py-1 rounded text-[11px] font-label-caps bg-surface-variant text-on-surface-variant border border-white/10">
+<span class="w-1.5 h-1.5 rounded-full bg-outline"></span> Inactive
+                                            </span>
+</td>
+</tr>
+</tbody>
+</table>
+</div>
+</div>
+<!-- Environment Settings (Col 4) -->
+<div class="md:col-span-4 glass-panel rounded-xl overflow-hidden flex flex-col">
+<div class="p-6 border-b border-white/5 bg-surface-container/50">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary">dns</span>
+<h3 class="font-headline-md text-[18px] text-on-surface">Environment</h3>
+</div>
+</div>
+<div class="p-6 space-y-6 flex-1 bg-gradient-to-b from-surface-container-low/50 to-transparent">
+<div class="space-y-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">Current Target</label>
+<div class="relative">
+<select class="w-full appearance-none bg-surface-container border border-white/10 rounded-lg py-3 pl-4 pr-10 text-on-surface font-body-md focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all">
+<option value="prod">Production (us-east-1)</option>
+<option value="staging">Staging (us-west-2)</option>
+<option value="dev">Development Sandbox</option>
+</select>
+<span class="material-symbols-outlined absolute right-3 top-1/2 -translate-y-1/2 text-on-surface-variant pointer-events-none">expand_more</span>
+</div>
+</div>
+<div class="space-y-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">API Endpoint Override</label>
+<input class="w-full bg-surface-container border border-white/10 rounded-lg py-3 px-4 text-on-surface font-data-mono text-sm focus:outline-none focus:border-primary focus:ring-1 focus:ring-primary transition-all" type="text" value="https://api.globalsolutions.ext/v2"/>
+</div>
+<div class="space-y-2">
+<label class="font-label-caps text-label-caps text-on-surface-variant">Logging Level</label>
+<div class="flex bg-surface-container border border-white/10 rounded-lg p-1">
+<button class="flex-1 py-1.5 text-sm font-label-caps rounded-md text-on-surface-variant hover:text-on-surface">INFO</button>
+<button class="flex-1 py-1.5 text-sm font-label-caps rounded-md bg-surface-variant text-on-surface shadow-sm">WARN</button>
+<button class="flex-1 py-1.5 text-sm font-label-caps rounded-md text-error hover:bg-error/10">ERROR</button>
+</div>
+</div>
+</div>
+</div>
+<!-- Feature Toggles (Col 12) -->
+<div class="md:col-span-12 glass-panel rounded-xl overflow-hidden">
+<div class="p-6 border-b border-white/5 bg-surface-container/50">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-secondary">toggle_on</span>
+<h3 class="font-headline-md text-[18px] text-on-surface">Feature Toggles</h3>
+</div>
+</div>
+<div class="grid grid-cols-1 md:grid-cols-3 gap-0 divide-y md:divide-y-0 md:divide-x divide-white/5">
+<!-- Toggle Item -->
+<div class="p-6 flex items-start justify-between gap-4 hover:bg-surface-container-high/20 transition-colors">
+<div>
+<h4 class="font-body-md font-medium text-on-surface">Advanced Analytics Engine</h4>
+<p class="font-body-sm text-sm text-on-surface-variant mt-1">Enable ML-driven predictive forecasting models in Dashboards.</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+<!-- Toggle Item -->
+<div class="p-6 flex items-start justify-between gap-4 hover:bg-surface-container-high/20 transition-colors">
+<div>
+<h4 class="font-body-md font-medium text-on-surface">Beta UI Elements</h4>
+<p class="font-body-sm text-sm text-on-surface-variant mt-1">Opt-in to experimental interface components and layouts.</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+<input class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-on-surface-variant after:border-gray-300 after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary peer-checked:after:bg-white"></div>
+</label>
+</div>
+<!-- Toggle Item -->
+<div class="p-6 flex items-start justify-between gap-4 hover:bg-surface-container-high/20 transition-colors">
+<div>
+<h4 class="font-body-md font-medium text-on-surface">Legacy API Sync</h4>
+<p class="font-body-sm text-sm text-on-surface-variant mt-1">Maintain backwards compatibility with v1.4 data structures.</p>
+</div>
+<label class="relative inline-flex items-center cursor-pointer shrink-0 mt-1">
+<input checked="" class="sr-only peer" type="checkbox" value=""/>
+<div class="w-11 h-6 bg-surface-variant border border-white/10 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary"></div>
+</label>
+</div>
+</div>
+</div>
+</div>
+</div>
+<!-- Shared Component: Footer -->
+<footer class="w-full py-6 mt-auto border-t border-white/5 bg-surface-container-lowest flex flex-col md:flex-row justify-between items-center px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto relative z-10">
+<p class="font-label-caps text-label-caps text-on-surface-variant">© 2024 GlobalSolutions Enterprise Operations. All rights reserved.</p>
+<div class="flex gap-6 mt-4 md:mt-0">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Security</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Compliance</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">System Status</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors opacity-100 hover:opacity-80" href="#">Privacy Policy</a>
+</div>
+</footer>
+</main>
+</div>
+</body></html>

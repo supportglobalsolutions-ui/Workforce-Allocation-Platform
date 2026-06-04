@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+
+<html class="dark" lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>GlobalSolutions - Global Leaderboard</title>
+<!-- Fonts -->
+<link href="https://fonts.googleapis.com" rel="preconnect"/>
+<link crossorigin="" href="https://fonts.gstatic.com" rel="preconnect"/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&amp;family=JetBrains+Mono:wght@400;500&amp;family=Manrope:wght@600;700;800&amp;display=swap" rel="stylesheet"/>
+<!-- Material Symbols -->
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<!-- Tailwind CSS -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- Tailwind Config -->
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    "colors": {
+                        "on-secondary": "#3c2f00",
+                        "secondary": "#e9c349",
+                        "on-tertiary-fixed": "#002116",
+                        "surface": "#001712",
+                        "tertiary-container": "#82bea5",
+                        "outline-variant": "#3d4a44",
+                        "primary-container": "#3fc7a0",
+                        "on-tertiary-fixed-variant": "#10503d",
+                        "on-primary-container": "#004e3c",
+                        "on-error-container": "#ffdad6",
+                        "surface-bright": "#243e37",
+                        "outline": "#86948d",
+                        "surface-container-high": "#142f28",
+                        "on-surface-variant": "#bbcac2",
+                        "surface-dim": "#001712",
+                        "surface-variant": "#1f3a33",
+                        "on-background": "#cbe9df",
+                        "on-primary": "#00382a",
+                        "secondary-fixed-dim": "#e9c349",
+                        "on-primary-fixed": "#002117",
+                        "tertiary": "#9ddac0",
+                        "surface-tint": "#59dcb4",
+                        "on-tertiary-container": "#0b4e3b",
+                        "on-error": "#690005",
+                        "error": "#ffb4ab",
+                        "inverse-primary": "#006c53",
+                        "error-container": "#93000a",
+                        "surface-container": "#08241e",
+                        "background": "#001712",
+                        "surface-container-highest": "#1f3a33",
+                        "primary-fixed": "#78f9cf",
+                        "tertiary-fixed-dim": "#96d3ba",
+                        "tertiary-fixed": "#b2f0d5",
+                        "primary-fixed-dim": "#59dcb4",
+                        "on-surface": "#cbe9df",
+                        "on-secondary-container": "#342800",
+                        "on-tertiary": "#003829",
+                        "on-secondary-fixed-variant": "#574500",
+                        "on-secondary-fixed": "#241a00",
+                        "on-primary-fixed-variant": "#00513e",
+                        "inverse-on-surface": "#1b352e",
+                        "secondary-container": "#af8d11",
+                        "primary": "#61e3bb",
+                        "surface-container-low": "#04201a",
+                        "secondary-fixed": "#ffe088",
+                        "surface-container-lowest": "#00110d",
+                        "inverse-surface": "#cbe9df"
+                    },
+                    "borderRadius": {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    "spacing": {
+                        "stack-md": "16px",
+                        "stack-lg": "32px",
+                        "container-max": "1440px",
+                        "unit": "8px",
+                        "gutter": "24px",
+                        "stack-sm": "8px",
+                        "margin-mobile": "16px",
+                        "margin-desktop": "40px"
+                    },
+                    "fontFamily": {
+                        "label-caps": ["JetBrains Mono"],
+                        "headline-lg-mobile": ["Manrope"],
+                        "display-lg": ["Manrope"],
+                        "data-mono": ["JetBrains Mono"],
+                        "headline-lg": ["Manrope"],
+                        "body-md": ["Inter"],
+                        "body-lg": ["Inter"],
+                        "headline-md": ["Manrope"]
+                    },
+                    "fontSize": {
+                        "label-caps": ["12px", { "lineHeight": "16px", "letterSpacing": "0.08em", "fontWeight": "500" }],
+                        "headline-lg-mobile": ["24px", { "lineHeight": "32px", "fontWeight": "600" }],
+                        "display-lg": ["48px", { "lineHeight": "56px", "letterSpacing": "-0.02em", "fontWeight": "700" }],
+                        "data-mono": ["14px", { "lineHeight": "20px", "fontWeight": "400" }],
+                        "headline-lg": ["32px", { "lineHeight": "40px", "letterSpacing": "-0.01em", "fontWeight": "600" }],
+                        "body-md": ["16px", { "lineHeight": "24px", "fontWeight": "400" }],
+                        "body-lg": ["18px", { "lineHeight": "28px", "fontWeight": "400" }],
+                        "headline-md": ["24px", { "lineHeight": "32px", "fontWeight": "600" }]
+                    }
+                }
+            }
+        }
+    </script>
+<style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 0, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+        .icon-fill {
+            font-variation-settings: 'FILL' 1;
+        }
+        
+        /* Subtle glow animation for #1 rank */
+        @keyframes subtle-pulse {
+            0% { box-shadow: 0 0 0 0 rgba(233, 195, 73, 0.4); }
+            70% { box-shadow: 0 0 0 10px rgba(233, 195, 73, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(233, 195, 73, 0); }
+        }
+        .rank-one-glow {
+            animation: subtle-pulse 3s infinite;
+        }
+    </style>
+</head>
+<body class="bg-background text-on-surface flex min-h-screen overflow-x-hidden selection:bg-primary-container selection:text-on-primary-container">
+<!-- SideNavBar -->
+<aside class="hidden md:flex fixed left-0 top-0 h-full w-64 border-r border-white/10 backdrop-blur-xl bg-surface/80 flex-col shadow-md shadow-primary-dark-green/20 z-40">
+<div class="p-6 pb-2 border-b border-white/5">
+<div class="flex items-center gap-3 mb-6">
+<div class="w-10 h-10 rounded-lg bg-surface-container-high border border-white/10 flex items-center justify-center overflow-hidden">
+<img alt="Executive User Profile Avatar" class="w-full h-full object-cover opacity-80 mix-blend-luminosity" data-alt="A close-up, monochromatic portrait of a sophisticated executive wearing a tailored suit, set against a dark, moody background. The lighting is dramatic and directional, highlighting the contours of the face while maintaining a high-end, corporate aesthetic typical of a premium dashboard avatar. The image has a subtle green-gold tint to match the UI environment." src="https://lh3.googleusercontent.com/aida/AP1WRLuvNu7HK-xcZnQnSWWRv-gf8EyZv3smtCwinqJ6ID_itDZnUjEqxlQwcG-W_Ln-eRrFxyAN6FM8M9DfoELMf1V7K_zVZ4GT8DH9-OYHZ1cYCbwQWRL8AsHpNssOVt6IYt88Olz_4G_eqqOxVqZhoqkWZ8SZb7Gku-bf62q8IDR5KwnRXoPi2m4QUpiFIzt3kCTjxmV0gyV7uMYXf4px0HawW25ZGV9l98LXkpGewHbp6CsHqlOGQ93gNyhU"/>
+</div>
+<div>
+<h1 class="font-headline-md text-headline-md font-bold text-secondary">GlobalSolutions</h1>
+<p class="font-label-caps text-label-caps text-on-surface-variant opacity-70">Operations Command</p>
+</div>
+</div>
+<button class="w-full py-2.5 px-4 bg-primary text-on-primary rounded-lg font-label-caps text-label-caps font-bold hover:bg-primary-fixed transition-all scale-98 active:opacity-80 flex items-center justify-center gap-2">
+<span class="material-symbols-outlined text-[18px]">add</span>
+                Launch New Instance
+            </button>
+</div>
+<nav class="flex-1 overflow-y-auto py-4 px-3 space-y-1">
+<!-- Dashboards -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:text-primary transition-colors">dashboard</span>
+<span class="font-label-caps text-label-caps">Dashboards</span>
+</a>
+<!-- Operations -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:text-primary transition-colors">precision_manufacturing</span>
+<span class="font-label-caps text-label-caps">Operations</span>
+</a>
+<!-- Resources -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:text-primary transition-colors">group</span>
+<span class="font-label-caps text-label-caps">Resources</span>
+</a>
+<!-- Payroll -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[20px] group-hover:text-primary transition-colors">payments</span>
+<span class="font-label-caps text-label-caps">Payroll</span>
+</a>
+<!-- Intelligence (ACTIVE) -->
+<a class="flex items-center gap-3 px-3 py-2.5 rounded-lg border-l-4 border-secondary bg-primary-container/20 text-primary font-bold transition-all scale-98 active:opacity-80" href="#">
+<span class="material-symbols-outlined text-[20px] icon-fill">insights</span>
+<span class="font-label-caps text-label-caps">Intelligence</span>
+</a>
+</nav>
+<div class="p-3 border-t border-white/5 space-y-1">
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">settings</span>
+<span class="font-label-caps text-label-caps">Settings</span>
+</a>
+<a class="flex items-center gap-3 px-3 py-2 rounded-lg text-on-surface-variant hover:text-primary transition-colors duration-200 hover:bg-surface-container-high/50 group" href="#">
+<span class="material-symbols-outlined text-[18px] group-hover:text-primary transition-colors">help_outline</span>
+<span class="font-label-caps text-label-caps">Support</span>
+</a>
+</div>
+</aside>
+<!-- Main Content Wrapper -->
+<div class="flex-1 flex flex-col min-h-screen md:ml-64 relative">
+<!-- Ambient Background Glows -->
+<div class="absolute top-0 left-1/4 w-[500px] h-[500px] bg-primary/5 rounded-full blur-[120px] pointer-events-none"></div>
+<div class="absolute bottom-0 right-0 w-[600px] h-[600px] bg-secondary/5 rounded-full blur-[150px] pointer-events-none"></div>
+<!-- TopNavBar -->
+<header class="sticky top-0 z-30 w-full backdrop-blur-2xl border-b border-white/5 shadow-sm bg-surface/60 flex justify-between items-center px-margin-desktop py-4">
+<div class="flex items-center gap-4">
+<h2 class="font-headline-md text-headline-md font-bold text-primary hidden md:block">GlobalSolutions</h2>
+<!-- Search (on_left configuration) -->
+<div class="relative ml-0 md:ml-8 group">
+<span class="material-symbols-outlined absolute left-3 top-1/2 -translate-y-1/2 text-on-surface-variant group-focus-within:text-primary transition-colors">search</span>
+<input class="w-64 md:w-80 h-10 pl-10 pr-4 rounded-lg bg-surface-container-high border border-white/10 text-on-surface font-body-md text-body-md placeholder:text-on-surface-variant/50 focus:outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/50 transition-all" placeholder="Search operations, resources..." type="text"/>
+</div>
+</div>
+<div class="flex items-center gap-4">
+<div class="flex items-center gap-2 border-r border-white/10 pr-4">
+<button class="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright/10 rounded-lg transition-all active:opacity-90 relative">
+<span class="material-symbols-outlined">notifications</span>
+<span class="absolute top-2 right-2 w-2 h-2 rounded-full bg-secondary"></span>
+</button>
+<button class="p-2 text-on-surface-variant hover:text-on-surface hover:bg-surface-bright/10 rounded-lg transition-all active:opacity-90">
+<span class="material-symbols-outlined">terminal</span>
+</button>
+</div>
+<button class="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-white/10 hover:bg-surface-bright/10 transition-all text-on-surface-variant hover:text-on-surface">
+<span class="material-symbols-outlined">account_circle</span>
+<span class="font-label-caps text-label-caps hidden md:inline-block">Command Menu</span>
+<span class="material-symbols-outlined text-[16px]">arrow_drop_down</span>
+</button>
+</div>
+</header>
+<!-- Main Canvas -->
+<main class="flex-1 p-margin-desktop z-10 w-full max-w-container-max mx-auto">
+<!-- Page Header -->
+<div class="flex flex-col md:flex-row justify-between items-start md:items-center mb-stack-lg gap-4">
+<div>
+<h1 class="font-display-lg text-display-lg font-bold text-on-surface tracking-tight">Global Leaderboard</h1>
+<p class="font-body-lg text-body-lg text-on-surface-variant mt-1">Real-time performance ranking across all operational nodes.</p>
+</div>
+<div class="flex items-center bg-surface-container-high rounded-lg p-1 border border-white/5">
+<button class="px-4 py-1.5 rounded-md font-label-caps text-label-caps text-on-surface-variant hover:text-on-surface transition-colors">Daily</button>
+<button class="px-4 py-1.5 rounded-md font-label-caps text-label-caps bg-surface-variant text-on-surface shadow-sm border border-white/10">Weekly</button>
+<button class="px-4 py-1.5 rounded-md font-label-caps text-label-caps text-on-surface-variant hover:text-on-surface transition-colors">Monthly</button>
+<button class="px-4 py-1.5 rounded-md font-label-caps text-label-caps text-on-surface-variant hover:text-on-surface transition-colors">YTD</button>
+</div>
+</div>
+<!-- Bento Grid Layout -->
+<div class="grid grid-cols-1 md:grid-cols-12 gap-gutter mb-gutter">
+<!-- Top 3 Podium (Hero Card) -->
+<div class="col-span-1 md:col-span-8 bg-surface-container rounded-xl border border-white/5 p-8 relative overflow-hidden backdrop-blur-md">
+<!-- Decorative background element -->
+<div class="absolute -top-24 -right-24 w-64 h-64 bg-secondary/10 rounded-full blur-[80px]"></div>
+<div class="flex justify-between items-center mb-8">
+<h3 class="font-headline-md text-headline-md text-on-surface flex items-center gap-2">
+<span class="material-symbols-outlined text-secondary">workspace_premium</span>
+                            Top Operatives
+                        </h3>
+<div class="font-data-mono text-data-mono text-secondary px-3 py-1 rounded-full bg-secondary/10 border border-secondary/20 flex items-center gap-2">
+<span class="w-2 h-2 rounded-full bg-secondary animate-pulse"></span>
+                            Live Update
+                        </div>
+</div>
+<div class="flex flex-col md:flex-row justify-center items-end gap-6 mt-12">
+<!-- Rank 2 -->
+<div class="flex flex-col items-center w-40 relative group">
+<div class="absolute -top-10 left-1/2 -translate-x-1/2 bg-surface-bright border border-white/10 text-on-surface font-data-mono text-data-mono px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">
+                                Score: 98.4%
+                            </div>
+<div class="w-20 h-20 rounded-full border-4 border-surface-variant p-1 relative z-10 bg-surface">
+<img alt="Second Place Operative" class="w-full h-full rounded-full object-cover filter grayscale hover:grayscale-0 transition-all duration-300" data-alt="Portrait of a professional woman looking focused, representing a high-performing operative in a corporate environment. The image is styled with a sophisticated, slightly desaturated aesthetic fitting a premium enterprise dashboard." src="https://lh3.googleusercontent.com/aida/AP1WRLtPTEK9lTf-cOjG1ivIdncrSb8UWTXIOl8pJLXQo6VnOdrgQSn38jHroQXa6RhHH0Tj-KEDFUA977QV8fEw1w4_vN0FhNj7dXc9p532iIvrDwWh2aFbkxjFqb5sDT1sBlKCosannnYStdh0daYkvLkbIt82fBB8GlouAchmC0qAmZoqctn6LGaSnwRQq6dMVuBU-4YDF3a8Q1wf_bEUpzQyNkB3H-LdQFKejgp3EkUZ0u-fegwQ7ED4q8ms"/>
+<div class="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-surface-variant border-2 border-surface flex items-center justify-center font-label-caps text-label-caps font-bold text-on-surface-variant">2</div>
+</div>
+<div class="mt-4 text-center">
+<p class="font-body-md text-body-md font-semibold text-on-surface">Sarah Chen</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant">SGP Node</p>
+</div>
+<div class="w-full h-24 bg-gradient-to-t from-surface-variant to-transparent mt-4 rounded-t-lg border-t border-x border-white/5 opacity-50"></div>
+</div>
+<!-- Rank 1 -->
+<div class="flex flex-col items-center w-48 relative group z-20 -translate-y-8">
+<div class="absolute -top-12 left-1/2 -translate-x-1/2 bg-secondary/20 border border-secondary/30 text-secondary font-data-mono text-data-mono px-3 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap backdrop-blur-md">
+                                Score: 99.8% (Flawless)
+                            </div>
+<div class="w-28 h-28 rounded-full border-4 border-secondary p-1 relative z-10 bg-surface rank-one-glow shadow-lg shadow-secondary/20">
+<img alt="First Place Operative" class="w-full h-full rounded-full object-cover" data-alt="Portrait of a serious male professional, representing the top-ranked operative globally. The lighting is cinematic and confident, with a high-contrast style that aligns with a premium dark-mode interface." src="https://lh3.googleusercontent.com/aida/AP1WRLs1ktmkhfkj9Uyolkohb6rbaJDURguGzGchtLtEQ4pNNLmfuMkfj_IHY96FwfkTjYKosaWJSieix8HjQC5ki7C4jm2A_9aNUKnwZURt5mId07xEE7Etpvj5TFyhdMKqnwsmSom4F0zI0E9Holm_0jfrNavnJbnP0WfEir0LL0Jta6fUhwF9_5NpUrzhg1KPklskQMzQs4JcldYaZlvSRKCTTscCD2GvjbabCjLfTXU6u4ptRx5fj7uUeItq"/>
+<div class="absolute -bottom-3 -right-2 w-10 h-10 rounded-full bg-secondary border-4 border-surface flex items-center justify-center font-label-caps text-label-caps font-bold text-on-secondary shadow-lg">1</div>
+</div>
+<div class="mt-5 text-center">
+<p class="font-headline-md text-headline-md font-bold text-secondary">Marcus Vance</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant flex items-center justify-center gap-1 mt-1">
+<span class="material-symbols-outlined text-[14px]">local_fire_department</span>
+                                    14 Wk Streak
+                                </p>
+</div>
+<div class="w-full h-36 bg-gradient-to-t from-secondary/10 to-transparent mt-4 rounded-t-lg border-t border-x border-secondary/20"></div>
+</div>
+<!-- Rank 3 -->
+<div class="flex flex-col items-center w-40 relative group">
+<div class="absolute -top-10 left-1/2 -translate-x-1/2 bg-surface-bright border border-white/10 text-on-surface font-data-mono text-data-mono px-2 py-1 rounded shadow-lg opacity-0 group-hover:opacity-100 transition-opacity z-10 whitespace-nowrap">
+                                Score: 97.9%
+                            </div>
+<div class="w-20 h-20 rounded-full border-4 border-surface-variant p-1 relative z-10 bg-surface">
+<img alt="Third Place Operative" class="w-full h-full rounded-full object-cover filter grayscale hover:grayscale-0 transition-all duration-300" data-alt="Portrait of a professional woman with a calm demeanor, representing the third-ranked operative. The aesthetic is clean, professional, and slightly moody to match the dark UI environment." src="https://lh3.googleusercontent.com/aida/AP1WRLt4NhgdWeYOogORGahKsFq0u-jO20XE9SlJJwulk4W5tD8oPiMdCLFucODmXdnHhKtzbaZY4n3jJM2H_fp2cWKZ5JTi19dN8muzBdTWMjkjIEcLzV2AdELUFyTyiMpACpMEYxNcvhHA_f1SXnEGeBIfgOkkI1Iztz4MXlwUd4ZpwIJpzAU0NvdFZo8HaZj4fq7FifM4ATUCg-bKXKEgZzOkv05vmjs-pa25LmNar0APdxOt9iFnqygYvkY"/>
+<div class="absolute -bottom-2 -right-2 w-8 h-8 rounded-full bg-surface-variant border-2 border-surface flex items-center justify-center font-label-caps text-label-caps font-bold text-on-surface-variant">3</div>
+</div>
+<div class="mt-4 text-center">
+<p class="font-body-md text-body-md font-semibold text-on-surface">Elena Rostova</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant">LDN Node</p>
+</div>
+<div class="w-full h-20 bg-gradient-to-t from-surface-variant to-transparent mt-4 rounded-t-lg border-t border-x border-white/5 opacity-50"></div>
+</div>
+</div>
+</div>
+<!-- Country Rankings -->
+<div class="col-span-1 md:col-span-4 bg-surface-container rounded-xl border border-white/5 p-6 flex flex-col backdrop-blur-md">
+<div class="flex justify-between items-center mb-6">
+<h3 class="font-body-lg text-body-lg font-semibold text-on-surface">Regional Dominance</h3>
+<button class="text-primary font-label-caps text-label-caps hover:underline">View All</button>
+</div>
+<div class="space-y-4 flex-1">
+<!-- Region Item -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface-container-high/50 border border-white/5 hover:bg-surface-variant transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface border border-white/10 flex items-center justify-center font-label-caps">US</div>
+<div>
+<p class="font-body-md text-body-md font-medium text-on-surface">North America</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant">4,201 Operatives</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-data-mono text-data-mono text-primary font-bold">94.2%</p>
+<p class="font-label-caps text-label-caps text-secondary flex items-center justify-end gap-1"><span class="material-symbols-outlined text-[12px]">trending_up</span> +1.2</p>
+</div>
+</div>
+<!-- Region Item -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface-container-high/50 border border-white/5 hover:bg-surface-variant transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface border border-white/10 flex items-center justify-center font-label-caps">EU</div>
+<div>
+<p class="font-body-md text-body-md font-medium text-on-surface">EMEA</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant">3,890 Operatives</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-data-mono text-data-mono text-on-surface font-bold">92.8%</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant flex items-center justify-end gap-1"><span class="material-symbols-outlined text-[12px]">trending_flat</span> 0.0</p>
+</div>
+</div>
+<!-- Region Item -->
+<div class="flex items-center justify-between p-3 rounded-lg bg-surface-container-high/50 border border-white/5 hover:bg-surface-variant transition-colors">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded bg-surface border border-white/10 flex items-center justify-center font-label-caps">AP</div>
+<div>
+<p class="font-body-md text-body-md font-medium text-on-surface">APAC</p>
+<p class="font-label-caps text-label-caps text-on-surface-variant">5,102 Operatives</p>
+</div>
+</div>
+<div class="text-right">
+<p class="font-data-mono text-data-mono text-on-surface font-bold">91.5%</p>
+<p class="font-label-caps text-label-caps text-error flex items-center justify-end gap-1"><span class="material-symbols-outlined text-[12px]">trending_down</span> -0.4</p>
+</div>
+</div>
+</div>
+<div class="mt-4 pt-4 border-t border-white/5">
+<div class="flex items-center justify-between text-on-surface-variant font-label-caps text-label-caps">
+<span>Global Average</span>
+<span class="font-data-mono text-data-mono">92.83%</span>
+</div>
+</div>
+</div>
+</div>
+<!-- Full Leaderboard Table -->
+<div class="bg-surface-container rounded-xl border border-white/5 overflow-hidden backdrop-blur-md">
+<div class="px-6 py-5 border-b border-white/5 flex justify-between items-center bg-surface-container/50">
+<h3 class="font-body-lg text-body-lg font-semibold text-on-surface">Comprehensive Ranking</h3>
+<div class="flex gap-2">
+<button class="p-1.5 rounded bg-surface border border-white/10 text-on-surface-variant hover:text-on-surface hover:border-white/20 transition-all"><span class="material-symbols-outlined text-[18px]">filter_list</span></button>
+<button class="p-1.5 rounded bg-surface border border-white/10 text-on-surface-variant hover:text-on-surface hover:border-white/20 transition-all"><span class="material-symbols-outlined text-[18px]">download</span></button>
+</div>
+</div>
+<div class="overflow-x-auto">
+<table class="w-full text-left border-collapse">
+<thead>
+<tr class="bg-surface-container-high/30 border-b border-white/5">
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium w-16">Rank</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium">Operative</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium">Location</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium text-right">Quality Score</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium text-right">Volume</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium">Consistency Status</th>
+<th class="py-4 px-6 font-label-caps text-label-caps text-on-surface-variant font-medium text-right">Trend</th>
+</tr>
+</thead>
+<tbody class="font-body-md text-body-md divide-y divide-white/5">
+<!-- Row 4 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-data-mono text-on-surface-variant">04</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-white/10 overflow-hidden">
+<img alt="Operative Avatar" class="w-full h-full object-cover" data-alt="Small circular avatar portrait of a professional male employee, high contrast dark UI aesthetic." src="https://lh3.googleusercontent.com/aida/AP1WRLt9nDUTzbKjR_BLhuubQg1XE1tTCFATj3_iou5AYatFMiBfa-jqlr8VIzsxyizn3FI1sXVlEp2i15tTHZp_mwijIAkV9tl6QvymZLY6T57rAQsrrGMhhJijLm2pphxeucEPb-703D2y5Aq1NNayPK-6S6BzdSWbfp2PhUVfS42OOQIOT7xLrKyU45LIXGqe0dRBUkkyDUzqjdv3JqsUATiKh7HKBhOpKh4ROdKGY8gM3Kb9OiUrdPw6rhbj"/>
+</div>
+<span class="font-medium text-on-surface">David Kim</span>
+</div>
+</td>
+<td class="py-4 px-6 text-on-surface-variant font-label-caps text-label-caps">NYC Node</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface">97.2%</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface-variant">1,402</td>
+<td class="py-4 px-6">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary font-label-caps text-[10px]">
+<span class="w-1.5 h-1.5 rounded-full bg-primary"></span> Exceptional
+                                    </span>
+</td>
+<td class="py-4 px-6 text-right text-secondary"><span class="material-symbols-outlined text-[18px]">keyboard_double_arrow_up</span></td>
+</tr>
+<!-- Row 5 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-data-mono text-on-surface-variant">05</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-white/10 overflow-hidden">
+<img alt="Operative Avatar" class="w-full h-full object-cover" data-alt="Small circular avatar portrait of a professional female employee, high contrast dark UI aesthetic." src="https://lh3.googleusercontent.com/aida/AP1WRLt8twEsiOGCvU81F-9QX8XwDzHVbD_njm7sV4qyBNpcG1VZN9lVjW9Z4UWmLY4ivOfVqnx7gjxD0KF2SuEIts4xlQ-hKe1KR8rC4PYrQcLoASoc4i9aamsU3DX6OVrpf5fa3loLQInjBcVx9hmuxIofKn1XMw98CwmEmk9ZMS6hUbz5CmMsgZjBShTaH2CgWCH7QGUuChOHok80CSeRkY7NPvAVNOUWjWlmVMAoI8E9E9m-D0PVAC2oP9A"/>
+</div>
+<span class="font-medium text-on-surface">Aisha Patel</span>
+</div>
+</td>
+<td class="py-4 px-6 text-on-surface-variant font-label-caps text-label-caps">MUM Node</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface">96.8%</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface-variant">2,105</td>
+<td class="py-4 px-6">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-bright border border-white/10 text-on-surface font-label-caps text-[10px]">
+<span class="w-1.5 h-1.5 rounded-full bg-on-surface-variant"></span> Stable
+                                    </span>
+</td>
+<td class="py-4 px-6 text-right text-on-surface-variant"><span class="material-symbols-outlined text-[18px]">horizontal_rule</span></td>
+</tr>
+<!-- Row 6 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-data-mono text-on-surface-variant">06</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-white/10 overflow-hidden flex items-center justify-center font-label-caps text-on-surface-variant">
+                                             MJ
+                                        </div>
+<span class="font-medium text-on-surface">Michael Johnson</span>
+</div>
+</td>
+<td class="py-4 px-6 text-on-surface-variant font-label-caps text-label-caps">SYD Node</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface">96.5%</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface-variant">1,250</td>
+<td class="py-4 px-6">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface-bright border border-white/10 text-on-surface font-label-caps text-[10px]">
+<span class="w-1.5 h-1.5 rounded-full bg-on-surface-variant"></span> Stable
+                                    </span>
+</td>
+<td class="py-4 px-6 text-right text-error"><span class="material-symbols-outlined text-[18px]">keyboard_arrow_down</span></td>
+</tr>
+<!-- Row 7 -->
+<tr class="hover:bg-surface-container-high/50 transition-colors group">
+<td class="py-4 px-6 font-data-mono text-data-mono text-on-surface-variant">07</td>
+<td class="py-4 px-6">
+<div class="flex items-center gap-3">
+<div class="w-8 h-8 rounded-full bg-surface-variant border border-white/10 overflow-hidden">
+<img alt="Operative Avatar" class="w-full h-full object-cover" data-alt="Small circular avatar portrait of a professional female employee, high contrast dark UI aesthetic, modern lighting." src="https://lh3.googleusercontent.com/aida/AP1WRLuaYTbGmGEwaPT5arRrHCkrVOyBKj-Jca82XaUSsEp_jQ-Af2s6YHBpvR4MlDAuBuXdCKkQaVyHN63LcdgWUe0ftCTN0VsGPd6OEoF-_McEK9YrhClpZSTkJyLQRhqbfJ-JSiZCwk-KdnnZzN7nJvQIVgLW38Y_d-7mCAT3a9MjXh-M7TpGX2BRnGrWBuImrig2FoeVw1FmjhxE4gXX7lAp8Lxqo9Lz6mQifsImpbWyN0XgUmEnyX7ZkZSL"/>
+</div>
+<span class="font-medium text-on-surface">Chloe Dubois</span>
+</div>
+</td>
+<td class="py-4 px-6 text-on-surface-variant font-label-caps text-label-caps">PAR Node</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface">96.1%</td>
+<td class="py-4 px-6 font-data-mono text-data-mono text-right text-on-surface-variant">1,180</td>
+<td class="py-4 px-6">
+<span class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-secondary/10 border border-secondary/20 text-secondary font-label-caps text-[10px]">
+<span class="w-1.5 h-1.5 rounded-full bg-secondary"></span> High Variance
+                                    </span>
+</td>
+<td class="py-4 px-6 text-right text-primary"><span class="material-symbols-outlined text-[18px]">keyboard_arrow_up</span></td>
+</tr>
+</tbody>
+</table>
+</div>
+<div class="p-4 border-t border-white/5 flex justify-center">
+<button class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors flex items-center gap-2">
+                        Load More Records <span class="material-symbols-outlined text-[16px]">expand_more</span>
+</button>
+</div>
+</div>
+</main>
+<!-- Footer -->
+<footer class="w-full py-6 mt-auto border-t border-white/5 bg-surface-container-lowest flex flex-col md:flex-row justify-between items-center px-margin-desktop max-w-container-max mx-auto flat no shadows opacity-100 hover:opacity-80 transition-opacity z-10 relative">
+<p class="font-label-caps text-label-caps text-on-surface-variant">© 2024 GlobalSolutions Enterprise Operations. All rights reserved.</p>
+<div class="flex gap-6 mt-4 md:mt-0">
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Security</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Compliance</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">System Status</a>
+<a class="font-label-caps text-label-caps text-on-surface-variant hover:text-primary transition-colors" href="#">Privacy Policy</a>
+</div>
+<div class="hidden lg:block font-label-caps text-label-caps text-secondary mt-4 md:mt-0">
+                GlobalSolutions
+            </div>
+</footer>
+</div>
+</body></html>
