@@ -219,7 +219,7 @@ export default function DashboardLayout({
             </div>
             <div className="h-8 w-px bg-white/5" />
             <Link 
-              href="/login" 
+              href="/auth/login" 
               className="flex items-center gap-2 text-xs font-bold text-slate-400 hover:text-white transition-colors"
             >
               <LogOut size={14} />
