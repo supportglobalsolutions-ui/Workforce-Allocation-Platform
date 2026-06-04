@@ -7,5 +7,9 @@
     "build": "cd frontend && npm run build",
     "start": "cd frontend && npm start"
   },
-  "dependencies": {}
+  "dependencies": {
+    "framer-motion": "^11.0.0",
+    "lucide-react": "^0.309.0"
+  }
 }
+

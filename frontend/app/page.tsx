@@ -71,7 +71,7 @@ export default function LandingPage() {
           <span>Executive Sign In</span>
         </Link>
         <Link 
-          href="/worker/portal" 
+          href="/worker/dashboard" 
           className="flex-1 py-3.5 bg-[#08241e] hover:bg-[#142f28] text-white border border-white/10 hover:border-[#61e3bb]/35 rounded-xl font-bold text-center transition-all duration-300 backdrop-blur-md flex items-center justify-center gap-2"
         >
           <span>Worker Portal</span>
