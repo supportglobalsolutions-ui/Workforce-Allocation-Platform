@@ -364,7 +364,7 @@ ________________________________________
 ________________________________________
 Appendix — New Elements Mapping
 
-| What You Described | What It Becomes in the System |
+| What You Described | What It Becomes in the System | 
 | :--- | :--- |
 | Workers submit schedules via group chat | **Shift Scheduling Module** — workers self-submit availability/shifts in advance |
 | Admin accepts and allocates RDP to a shift | **Shift Approval + RDP Assignment Flow** — admin reviews, approves, RDP becomes available at shift time |
