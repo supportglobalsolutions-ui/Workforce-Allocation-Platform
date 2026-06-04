@@ -64,7 +64,7 @@ export default function LandingPage() {
         className="mt-16 flex flex-col sm:flex-row gap-4 relative z-10 w-full max-w-md px-4 sm:px-0"
       >
         <Link 
-          href="/login" 
+          href="/auth/login" 
           className="flex-1 py-3.5 bg-[#61e3bb] hover:bg-[#3fc7a0] text-[#00382a] rounded-xl font-bold text-center transition-all duration-300 shadow-[0_0_20px_rgba(97,227,187,0.2)] hover:shadow-[0_0_30px_rgba(97,227,187,0.3)] flex items-center justify-center gap-2 border border-[#78f9cf]/20"
         >
           <Lock size={16} />
