@@ -1,202 +1,147 @@
-Workforce Session Allocation Platform — Full System Architecture Document
-
-Prepared by: Kibiru Kelvin — Lead Software Developer & Systems Architect
-For: GlobalSolutions | Luther Rukhairo, CEO
-Version: 2.0 — Expanded Scope
-Classification: Confidential
-Tagline: Remote — Smart — Global
-
-________________________________________
-1. Executive Summary
-This document defines the complete technical architecture for the GlobalSolutions Workforce Operating Platform — an internal, web-based system that replaces manual coordination with a structured, evidence-based digital infrastructure.
-The platform manages the complete operational lifecycle of every GlobalSolutions worker: shift scheduling, RDP allocation, live session tracking, quality scoring, performance leaderboards, payroll bridging, and leadership reporting — all in one controlled system.
-It is designed to scale from the current workforce to hundreds of workers across multiple countries without losing operational discipline, security, or management visibility.
-________________________________________
-2. The Problem Being Solved
-GlobalSolutions currently operates through manual coordination:
-• Workers submit shift availability via WhatsApp group chat with tables
-• RDP machines are allocated manually with no conflict prevention
-• There is no live view of which RDP machines are on or in use
-• Quality assessment data exists but is not connected to worker records
-• Payroll is calculated from a spreadsheet workbook with no session data link
-• There is no leaderboard or competitive visibility for workers
-• Leadership has no single dashboard to see the state of the organisation
-Each of these creates fragility that prevents scale. The platform replaces all of them.
-________________________________________
-3. System Vision
-The platform has three user-facing layers and one infrastructure layer:
-Worker Layer — What generalists see and use:
-• Submit shift availability and view approved shifts
-• See the live RDP board (which machines are available, live, offline)
-• Claim their allocated RDP at shift start
-• View their own hours, quality score, and leaderboard position
-Admin/Operations Layer — What handlers and operations leads use:
-• Review and approve submitted shifts
-• Assign RDP machines to approved shifts
-• Monitor all active sessions in real time
-• Force-release, lock, or intervene on any session
-• Flag quality issues and apply admin notes
-Leadership Layer — What the CEO and country managers see:
-• Full organisational dashboard: active workers, RDP utilisation, idle resources
-• Worker performance rankings and quality scores
-• Payroll export and period summaries
-• Audit trail for every action in the system
-• Exception flags and risk signals
-Infrastructure Layer — What runs underneath:
-• Health Monitor watching all RDP machines every 30 seconds
-• Uptime Kuma for independent machine monitoring and alerting
-• Firebase for real-time state synchronisation across all browsers
-• PostgreSQL as the permanent source of truth for all records
-________________________________________
-4. Updated Technology Stack
-4.1 Full Stack Decision Table
-Layer	Technology	Reason
-Frontend	Next.js (React)	Server-side rendering, fast dashboards, large ecosystem, WebSocket and Firebase SDK support, better than Flutter Web for admin/ops interfaces
-Backend API	FastAPI (Python)	Async-native, high performance, automatic OpenAPI docs, handles business logic, session rules, and payroll calculations cleanly
-Primary Database	PostgreSQL	Source of truth for all permanent records: workers, sessions, payroll, audit log, quality scores, shift history
-Real-Time Layer	Firebase Realtime Database / Firestore	Sub-second state push for live RDP board, active session status, and shift notifications — no polling required
-Authentication	Firebase Auth	Handles login, role-based tokens, session management cleanly across web and future mobile
-RDP Gateway	Apache Guacamole	Browser-based RDP access, credentials stored server-side only, no client installation required
-Machine Monitoring	Uptime Kuma	Self-hosted TCP/ping monitoring for all RDP machines, alerting via email/Slack/Telegram, 90-day uptime history
-Health Monitor	Custom Python Worker	Application-layer watchdog — polls all RDP machines every 30 seconds, updates PostgreSQL, pushes state to Firebase
-Reverse Proxy	Nginx	Single entry point, SSL termination, routes all traffic, WebSocket proxying
-Containerisation	Docker + Docker Compose	All services run in isolated containers, consistent environments, easy deployment
-
-4.2 Why Firebase + PostgreSQL Together
-These two databases serve different purposes and do not compete:
-PostgreSQL stores everything that must be permanent, auditable, and financially accurate. Payroll records, session history, worker profiles, quality scores, and the full audit log all live here. It is the source of truth. If Firebase were wiped, PostgreSQL would still have the complete operational history of the company.
-Firebase handles everything that must be instant. When an RDP machine comes online, every worker's dashboard updates within milliseconds. When an admin approves a shift, the worker sees it immediately without refreshing. Firebase removes the need for complex WebSocket infrastructure for real-time updates — it handles that problem natively.
-Firebase Auth provides a clean, secure login layer that issues tokens respected by both the Firebase real-time layer and the FastAPI backend.
-
-4.3 Why Next.js Over Flutter Web
-Flutter Web is designed for mobile-ported apps. For an operations dashboard used by workers, admins, and leadership across different devices, Next.js is the correct choice. It renders faster in the browser, integrates natively with Firebase SDK and REST APIs, has a far larger component ecosystem for dashboards and data tables, and is familiar to a much wider pool of developers — reducing future onboarding costs.
-
-4.4 Why Uptime Kuma Over Prometheus and Grafana
-Prometheus and Grafana are the right tools for infrastructure teams managing 100+ services with dedicated DevOps staff. For 15–50 RDP machines at this stage, Uptime Kuma deploys in a single Docker command, monitors TCP port 3389 on all machines on a schedule, sends alerts via email, Slack, or Telegram when a machine goes offline, and provides 90-day uptime history per machine — with zero configuration files required. Prometheus can be introduced later when the platform scales beyond 50 machines and a dedicated ops function exists.
-________________________________________
-5. Full Module Architecture
-The system is composed of nine functional modules. Each has its own API routes, database tables, business logic, and frontend views.
-Module 1 — Authentication and Roles
-Firebase Auth manages all login and session tokens. FastAPI validates Firebase tokens on every API request and enforces role-based permissions.
-Roles defined in the system:
-Role	Access Level
-superadmin	Full system access, user management, all data
-leadership	Org dashboard, reporting, payroll export, read all
-operations_lead	Shift approval, RDP assignment, session management
-country_manager	Country-scoped worker and session view
-admin	Worker records, session management, audit log
-worker	Own schedule, own RDP, own stats, leaderboard
-tech_admin	Infrastructure access, deployment, no payroll access
-
-Module 2 — Worker Records
-Stores and manages all worker profiles. Each worker record connects to their shifts, sessions, quality scores, and payroll data.
-Fields: Worker ID, full name, country, role, pay tier, hourly rate, currency, status (active/inactive/suspended), start date, country manager, notes, total hours accumulated, quality score.
-
-Module 3 — Shift Scheduling
-This is one of the most important modules. It replaces the WhatsApp table submission process entirely.
-Worker flow:
-1. Worker logs in and opens the Schedule page
-2. Worker selects available time slots from a calendar interface — days and hours they can work
-3. Worker submits their availability for admin review
-4. System records the submission with timestamp
-Admin/Operations flow:
-1. Admin sees all submitted availabilities in a queue
-2. Admin reviews, approves, or modifies the submission
-3. Admin assigns an available RDP machine to the approved shift
-4. Worker receives a real-time notification (via Firebase) that their shift is confirmed and which RDP they are assigned to
-5. At shift start time, the RDP becomes claimable for that worker only
-This creates a clean chain: availability submission → admin approval → RDP assignment → shift window → claim → session → release.
-
-Module 4 — RDP / Resource Records
-Manages the state and configuration of all RDP machines.
-States per machine:
-State	Meaning	Colour
-OFFLINE	Machine unreachable, powered off	Grey
-ONLINE_FREE	Machine on, RDP port open, unassigned	Green
-ASSIGNED	Machine allocated to an upcoming approved shift, not yet active	Blue
-ACTIVE	Machine in live use by a worker	Red
-IDLE	Machine assigned or active but no heartbeat detected	Amber
-UNHEALTHY	Machine reachable but RDP port not responding	Orange
-ADMIN_LOCKED	Locked by leadership, cannot be claimed	Dark Red
-UNDER_REVIEW	Flagged for management attention	Yellow
-These states are written to PostgreSQL and mirrored to Firebase in real time. Every connected browser shows the current state within milliseconds of any change.
-
-Module 5 — Claim and Release Engine
-This is the core allocation logic. It enforces that only the worker assigned to a shift can claim that RDP during the shift window, and that no two workers can ever hold the same machine simultaneously.
-Claim flow:
-1. Worker clicks Claim on their assigned RDP at shift start
-2. FastAPI receives the claim request with Firebase Auth token
-3. FastAPI verifies: is this worker's shift currently active? Is this the correct RDP?
-4. FastAPI acquires a distributed lock on that RDP machine ID
-5. FastAPI writes the allocation record to PostgreSQL
-6. FastAPI updates RDP state to ACTIVE in PostgreSQL and pushes to Firebase
-7. FastAPI generates Guacamole session token
-8. Worker's browser opens Guacamole iframe — RDP session begins
-9. All other connected browsers see the machine flip to Active in real time
-Release flow:
-1. Worker clicks Release, or heartbeat stops for 10 minutes
-2. FastAPI closes the Guacamole session
-3. FastAPI writes session end time, duration, and release reason to PostgreSQL
-4. FastAPI updates RDP state to ONLINE_FREE or ASSIGNED for next shift
-5. Firebase updated — all dashboards reflect the change instantly
-
-Module 6 — Session Tracking and Evidence
-Every session is a complete record of a unit of work. This is the foundation of the evidence stack.
-Session record fields: Session ID, Worker ID, RDP ID, shift ID, start time, end time, duration (minutes), status, release reason, admin notes, approval state, payroll period link, quality flag.
-The heartbeat system runs in the browser — every 60 seconds, the frontend sends a keep-alive ping to FastAPI. If no heartbeat arrives for 10 minutes, the session is marked idle. If no heartbeat arrives for 20 minutes, the session is auto-released, logged, and the RDP returned to available state.
-
-Module 7 — Quality Scoring
-This is a hybrid module combining objective assessment data with subjective admin ratings.
-Assessment component: Workers complete training assessments on the platform. Each assessment has a score. The system tracks assessment completion, scores, and improvement over time. Assessment performance contributes to a calculated quality component.
-Subjective admin component: After sessions or at review intervals, admins and country managers can apply a quality rating to a worker (1–5 scale) with a mandatory reason note. These are logged with timestamp and actor — they cannot be applied anonymously.
-Composite quality score: The system calculates a rolling quality score per worker combining:
-• Average assessment score (weighted)
-• Average admin rating (weighted)
-• Consistency bonus (low variance in scores over time)
-• Session reliability factor (completed vs. abandoned sessions ratio)
-This score is visible to the worker themselves and to leadership. It feeds directly into the leaderboard.
-
-Module 8 — Leaderboard and Performance Dashboard
-Visible to all workers when they log in. Designed to be competitive and motivating.
-Metrics displayed on the leaderboard:
-Metric	Description
-Total hours this period	Verified session hours in the current payroll period
-Total hours all time	Cumulative verified hours since account creation
-Quality score	Composite score from Module 7
-Sessions completed	Total sessions with clean release records
-Reliability rate	Percentage of shifts claimed and completed vs. abandoned
-Streak	Consecutive days with a completed session
-Country rank	Position within their country team
-Global rank	Position across all active workers
-Workers see their own stats prominently and can view the full leaderboard. Leadership sees the full leaderboard with additional filters (by country, by period, by RDP, by tier).
-
-Module 9 — Payroll Bridge
-Converts verified session data into payroll-ready output. This module connects to the existing payroll workbook logic by replicating its calculations inside the platform and eventually replacing the manual workbook entirely.
-Payroll period flow:
-1. Admin opens or creates a payroll period (e.g. 1–31 May)
-2. System pulls all approved sessions in that period per worker
-3. System applies the worker's hourly rate and pay tier
-4. System flags exceptions: sessions missing end times, sessions under review, disputed durations
-5. Admin reviews the period, resolves exceptions, and marks sessions as payroll-approved
-6. System generates export: CSV or Excel, one row per worker, showing hours, rate, gross pay, deductions, net pay
-7. Export feeds into the existing payment process or future payment provider integration
-________________________________________
-6. Data Architecture
-6.1 PostgreSQL — Permanent Tables
-workers
-├── id, name, email, country, role, pay_tier
-├── hourly_rate, currency, status
-├── quality_score, total_hours, created_at
-
-shifts
-├── id, worker_id, submitted_at, status
-├── start_time, end_time, approved_by
-├── rdp_id (assigned by admin on approval)
-
-rdp_machines
-├── id, name, internal_ip, rdp_port
-├── status, guacamole_connection_id
-├── country, assigned_shift_id, last_health_check_at
+globalsolutions-platform/
+│
+├── .env.example                    ← required vars, NO real values
+├── .gitignore
+├── README.md
+├── docker-compose.yml              ← PostgreSQL, Redis, Guacamole, Uptime Kuma
+│
+├── ── FRONTEND (Next.js) ──────────────────────────────────
+├── frontend/
+│   ├── .env.local.example
+│   ├── next.config.js
+│   ├── middleware.ts                ← role enforcement on every route
+│   │
+│   ├── app/
+│   │   ├── (auth)/
+│   │   │   ├── login/page.tsx
+│   │   │   └── register/page.tsx
+│   │   │
+│   │   ├── (worker)/               ← role: worker
+│   │   │   ├── layout.tsx          ← guards: role === "worker"
+│   │   │   ├── dashboard/page.tsx
+│   │   │   ├── shifts/
+│   │   │   │   ├── page.tsx        ← shift submission
+│   │   │   │   └── [id]/page.tsx
+│   │   │   ├── rdp/
+│   │   │   │   └── page.tsx        ← RDP claim board (Firebase live)
+│   │   │   ├── sessions/
+│   │   │   │   └── page.tsx        ← session history
+│   │   │   ├── quality/
+│   │   │   │   ├── page.tsx        ← quality score
+│   │   │   │   └── assessment/page.tsx  ← MCQ
+│   │   │   └── leaderboard/page.tsx
+│   │   │
+│   │   ├── (admin)/                ← role: admin
+│   │   │   ├── layout.tsx
+│   │   │   ├── dashboard/page.tsx
+│   │   │   ├── shifts/
+│   │   │   │   └── page.tsx        ← shift approval
+│   │   │   ├── rdp/
+│   │   │   │   └── page.tsx        ← RDP assignment + state management
+│   │   │   ├── sessions/
+│   │   │   │   └── page.tsx        ← live sessions monitor
+│   │   │   ├── ratings/
+│   │   │   │   └── page.tsx        ← quality rating input (with reason notes)
+│   │   │   └── payroll/
+│   │   │       └── page.tsx        ← payroll exports
+│   │   │
+│   │   └── (leadership)/           ← role: leadership
+│   │       ├── layout.tsx
+│   │       ├── dashboard/page.tsx  ← org command view
+│   │       ├── performance/page.tsx ← aggregate performance
+│   │       ├── payroll/
+│   │       │   └── page.tsx        ← payroll export + financial reporting
+│   │       └── audit/
+│   │           └── page.tsx        ← audit trail
+│   │
+│   ├── components/
+│   │   ├── shared/                 ← used across all roles
+│   │   │   ├── Navbar.tsx
+│   │   │   ├── Sidebar.tsx
+│   │   │   └── LoadingSpinner.tsx
+│   │   ├── worker/
+│   │   ├── admin/
+│   │   └── leadership/
+│   │
+│   └── lib/
+│       ├── firebase.ts             ← Firebase init (real-time display only)
+│       ├── api.ts                  ← axios client → FastAPI
+│       └── auth.ts                 ← Firebase Auth token helpers
+│
+│
+├── ── BACKEND (FastAPI) ───────────────────────────────────
+├── backend/
+│   ├── .env.example
+│   ├── requirements.txt
+│   ├── main.py                     ← FastAPI app entry
+│   │
+│   ├── core/
+│   │   ├── config.py               ← env var loading
+│   │   ├── security.py             ← Firebase token verification
+│   │   ├── permissions.py          ← role-based access logic
+│   │   └── database.py             ← PostgreSQL connection (SQLAlchemy)
+│   │
+│   ├── routers/
+│   │   ├── auth.py                 ← login, token validation
+│   │   ├── workers.py              ← worker CRUD
+│   │   ├── shifts.py               ← submit, approve
+│   │   ├── rdp.py                  ← claim, release, state machine
+│   │   ├── sessions.py             ← session lifecycle (all 3 types)
+│   │   ├── payroll.py              ← calculation engine, export
+│   │   ├── quality.py              ← MCQ, ratings, composite score
+│   │   ├── leaderboard.py
+│   │   ├── audit.py                ← append-only log reads
+│   │   └── whatsapp.py             ← DORMANT module (deferred)
+│   │
+│   ├── models/                     ← SQLAlchemy ORM models
+│   │   ├── worker.py
+│   │   ├── session.py
+│   │   ├── rdp_machine.py
+│   │   ├── shift.py
+│   │   ├── payroll.py
+│   │   ├── quality.py
+│   │   ├── partner.py
+│   │   └── audit_log.py
+│   │
+│   ├── schemas/                    ← Pydantic request/response shapes
+│   │   ├── worker.py
+│   │   ├── session.py
+│   │   ├── rdp.py
+│   │   ├── payroll.py
+│   │   └── quality.py
+│   │
+│   ├── services/                   ← business logic (not HTTP layer)
+│   │   ├── rdp_state_machine.py    ← 8 states, enforced transitions
+│   │   ├── payroll_engine.py       ← percentage splits, exception flags
+│   │   ├── quality_engine.py       ← 50/50 composite score
+│   │   ├── session_engine.py       ← session rules, heartbeat
+│   │   ├── audit_service.py        ← write-only audit entries
+│   │   └── firebase_sync.py        ← mirror state to Firebase
+│   │
+│   └── migrations/                 ← Alembic DB migrations
+│       └── versions/
+│
+│
+├── ── INFRASTRUCTURE ──────────────────────────────────────
+├── infrastructure/
+│   ├── docker-compose.yml
+│   ├── guacamole/
+│   │   ├── guacamole.properties    ← credentials NEVER in repo
+│   │   └── user-mapping.xml.example
+│   ├── postgres/
+│   │   └── init.sql                ← initial schema seed
+│   ├── redis/
+│   │   └── redis.conf
+│   └── uptime-kuma/                ← TCP ping config for RDP machines
+│
+│
+└── ── DOCS ────────────────────────────────────────────────
+    └── docs/
+        ├── ERD.md                  ← data model diagram
+        ├── api.md                  ← FastAPI auto-docs reference
+        ├── deployment.md           ← Hetzner VPS setup guide
+        ├── security-checklist.md
+        └── phase-progress.md       ← weekly update log
 
 allocations
 ├── id, shift_id, worker_id, rdp_id
@@ -314,41 +259,7 @@ docker-compose.yml
 └── uptime-kuma        — machine monitoring, port 3001
 Firebase is a managed cloud service — no container required. It communicates with the frontend via Firebase SDK and with the backend via Firebase Admin SDK.
 Only Nginx (443) and Uptime Kuma (3001) are exposed externally. All other services communicate on a private Docker network.
-________________________________________
-10. Repository Structure
-/globalsolutions-platform
-├── /docs
-│   ├── architecture.md
-│   ├── api-reference.md
-│   ├── data-models.md
-│   ├── deployment.md
-│   ├── security.md
-│   └── payroll-bridge.md
-├── /services
-│   ├── /backend
-│   │   ├── /auth
-│   │   ├── /workers
-│   │   ├── /shifts
-│   │   ├── /rdp
-│   │   ├── /allocations
-│   │   ├── /sessions
-│   │   ├── /quality
-│   │   ├── /leaderboard
-│   │   ├── /payroll
-│   │   ├── /admin
-│   │   └── /integrations
-│   ├── /frontend
-│   │   ├── /pages
-│   │   │   ├── /worker
-│   │   │   ├── /admin
-│   │   │   └── /leadership
-│   │   └── /components
-│   └── /monitor
-├── /nginx
-├── docker-compose.yml
-├── .env.example
-└── README.md
-________________________________________
+_________________________
 11. Delivery Phases (Aligned to Mandate)
 
 | Phase | Window | Primary Output |
