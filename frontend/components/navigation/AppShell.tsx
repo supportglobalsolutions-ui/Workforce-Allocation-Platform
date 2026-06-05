@@ -38,11 +38,6 @@ export default function AppShell({ children, role }: AppShellProps) {
 
   return (
     <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-hidden">
-      <div className="fixed inset-0 pointer-events-none z-0">
-        <div className="absolute top-0 right-1/4 w-[500px] h-[500px] bg-emerald-accent/[0.02] rounded-full blur-[120px]" />
-        <div className="absolute bottom-10 left-10 w-[400px] h-[400px] bg-gold-accent/[0.01] rounded-full blur-[100px]" />
-      </div>
-
       {mobileSidebarOpen && (
         <button
           type="button"

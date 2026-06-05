@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
+import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 
@@ -29,7 +30,7 @@ export default function PortalGuard({
   if (isLoading || !session || !canAccess(requiredPortal)) {
     return (
       <div className="min-h-screen bg-brand-background flex items-center justify-center">
-        <div className="w-8 h-8 rounded-full border-2 border-emerald-accent border-t-transparent animate-spin" />
+        <SpinningDots size="lg" className="text-emerald-accent" />
       </div>
     );
   }

@@ -54,6 +54,15 @@ const config: Config = {
         display: ["Manrope", "Inter", "system-ui", "sans-serif"],
         mono: ["JetBrains Mono", "ui-monospace", "SFMono-Regular", "Menlo", "Consolas", "monospace"],
       },
+      keyframes: {
+        'dot-bounce': {
+          '0%, 80%, 100%': { transform: 'scale(0.6)', opacity: '0.4' },
+          '40%': { transform: 'scale(1)', opacity: '1' },
+        },
+      },
+      animation: {
+        'dot-bounce': 'dot-bounce 1.2s infinite ease-in-out both',
+      },
     },
   },
   plugins: [],

@@ -10,19 +10,12 @@ export default function ResetPasswordPage() {
   const [submitted, setSubmitted] = useState(false);
 
   return (
-    <div className="flex-1 flex items-center justify-center p-6 relative">
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[500px] h-[500px] bg-emerald-accent/[0.05] rounded-full blur-[100px]" />
-        <div className="absolute bottom-1/3 left-1/4 w-[250px] h-[250px] bg-gold-accent/[0.04] rounded-full blur-[80px]" />
-      </div>
-
+    <div className="flex-1 flex items-center justify-center p-6">
       <motion.div
         initial={{ opacity: 0, scale: 0.95 }}
         animate={{ opacity: 1, scale: 1 }}
         className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10"
       >
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-20 h-1 bg-gradient-to-r from-transparent via-emerald-accent to-transparent rounded-full" />
-
         <div className="flex flex-col items-center mb-6">
           <LogoMark size="md" />
           <h1 className="text-xl font-black text-theme-heading mt-4">Reset Password</h1>

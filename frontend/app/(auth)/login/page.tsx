@@ -4,8 +4,9 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Lock, Mail, AlertCircle } from 'lucide-react';
+import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
+import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { DEMO_ACCOUNTS } from '@/lib/auth/config';
 import { ROLE_LANDING } from '@/lib/navigation/config';
@@ -17,6 +18,7 @@ export default function LoginPage() {
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
     if (session) router.replace(ROLE_LANDING[session.primaryPortal]);
@@ -32,21 +34,13 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="flex-1 flex items-center justify-center p-6 relative">
-      {/* Background */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[600px] h-[600px] bg-emerald-accent/[0.06] rounded-full blur-[120px]" />
-        <div className="absolute bottom-1/4 right-1/4 w-[300px] h-[300px] bg-gold-accent/[0.05] rounded-full blur-[100px]" />
-      </div>
-
+    <div className="flex-1 flex items-center justify-center p-6">
       <motion.div
         initial={{ opacity: 0, scale: 0.95, y: 20 }}
         animate={{ opacity: 1, scale: 1, y: 0 }}
         transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
         className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10"
       >
-        <div className="absolute top-0 left-1/2 -translate-x-1/2 w-24 h-1 bg-gradient-to-r from-transparent via-gold-accent to-transparent rounded-full" />
-
         <div className="flex flex-col items-center mb-8">
           <LogoMark size="md" />
           <h1 className="text-xl font-black text-theme-heading mt-4">GlobalSolutions</h1>
@@ -70,14 +64,25 @@ export default function LoginPage() {
           </div>
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Password</label>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
-              className="input-field"
-            />
+            <div className="relative">
+              <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent/70 pointer-events-none" />
+              <input
+                type={showPassword ? 'text' : 'password'}
+                required
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="••••••••"
+                className="input-field pl-10 pr-10"
+              />
+              <button
+                type="button"
+                onClick={() => setShowPassword((v) => !v)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted hover:text-emerald-accent transition-colors"
+                aria-label={showPassword ? 'Hide password' : 'Show password'}
+              >
+                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+              </button>
+            </div>
           </div>
 
           <div className="flex justify-end">
@@ -96,10 +101,18 @@ export default function LoginPage() {
           <button
             type="submit"
             disabled={loading}
-            className="btn-primary w-full flex items-center justify-center gap-2 py-3 disabled:opacity-60"
+            className={`w-full flex items-center justify-center gap-2 py-3 disabled:opacity-60 ${
+              loading ? 'btn-secondary' : 'btn-primary'
+            }`}
           >
-            <Lock size={16} />
-            {loading ? 'Signing in…' : 'Login'}
+            {loading ? (
+              <SpinningDots size="md" className="text-emerald-accent" />
+            ) : (
+              <>
+                <Lock size={16} />
+                Login
+              </>
+            )}
           </button>
         </form>
 
