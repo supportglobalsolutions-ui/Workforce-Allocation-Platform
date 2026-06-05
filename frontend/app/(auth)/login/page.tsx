@@ -1,9 +1,9 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import Image from 'next/image';
 import Link from 'next/link';
 import { Lock, BookOpen, Shield } from 'lucide-react';
+import LogoMark from '@/components/theme/LogoMark';
 
 export default function LoginPage() {
   return (
@@ -16,8 +16,8 @@ export default function LoginPage() {
         }} />
         <div className="relative z-10">
           <div className="flex items-center gap-3 mb-8">
-            <Image src="/images/logo.png" alt="GlobalSolutions Logo" width={40} height={40} className="rounded-xl" />
-            <span className="text-xl font-black text-white">GlobalSolutions</span>
+            <LogoMark size="md" />
+            <span className="text-xl font-black text-theme-heading">GlobalSolutions</span>
           </div>
           <h2 className="text-3xl font-black text-white mb-4">Operations Command Platform</h2>
           <p className="text-brand-on-surface-variant max-w-md">Secure access for workers, operations leads, country managers, and executive leadership.</p>

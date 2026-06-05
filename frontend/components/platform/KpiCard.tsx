@@ -28,8 +28,8 @@ export default function KpiCard({ label, value, change, icon: Icon, accent = 'em
           </span>
         )}
       </div>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1">{label}</p>
-      <p className="text-2xl font-black text-white tracking-tight">{value}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1">{label}</p>
+      <p className="text-2xl font-black text-theme-heading tracking-tight">{value}</p>
     </div>
   );
 }

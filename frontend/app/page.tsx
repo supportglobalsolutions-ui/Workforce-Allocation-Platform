@@ -1,10 +1,10 @@
 'use client';
 
 import { motion } from 'framer-motion';
-import Image from 'next/image';
 import { ShieldCheck, Zap, Globe2, BarChart3, ChevronRight, Lock, BookOpen, Users, Clock, Network } from 'lucide-react';
 import Link from 'next/link';
 import { PAGES } from '@/lib/pages-registry';
+import LogoMark from '@/components/theme/LogoMark';
 
 export default function LandingPage() {
   return (
@@ -25,7 +25,7 @@ export default function LandingPage() {
           className="text-center mb-12 max-w-4xl"
         >
           <div className="flex justify-center mb-6">
-            <Image src="/images/logo.png" alt="GlobalSolutions Logo" width={64} height={64} className="rounded-2xl" />
+            <LogoMark size="lg" />
           </div>
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-surface-high/60 border border-emerald-accent/20 mb-6 backdrop-blur-md">
             <span className="w-2 h-2 rounded-full bg-emerald-accent animate-pulse" />

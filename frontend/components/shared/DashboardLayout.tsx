@@ -6,10 +6,11 @@ import {
   LogOut, ChevronDown, Bell, ClipboardList, DollarSign, BarChart3,
   Activity, Shield, BookOpen, Globe2, Zap, History, PenLine,
 } from 'lucide-react';
-import Image from 'next/image';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { PAGES, Portal, PORTAL_LABELS } from '@/lib/pages-registry';
+import LogoMark from '@/components/theme/LogoMark';
+import ThemeToggle from '@/components/theme/ThemeToggle';
 
 type UserRole = 'worker' | 'admin' | 'leadership';
 
@@ -112,9 +113,9 @@ export default function DashboardLayout({
       <aside className="w-[280px] bg-brand-surface-lowest/90 backdrop-blur-xl border-r border-white/5 flex flex-col fixed inset-y-0 left-0 z-40">
         <div className="p-6 border-b border-white/5">
           <Link href="/" className="flex items-center gap-2">
-            <Image src="/images/logo.png" alt="GlobalSolutions Logo" width={32} height={32} className="rounded-lg" />
+            <LogoMark size="sm" />
             <div>
-              <h1 className="text-lg font-black text-white tracking-tight leading-none">GlobalSolutions</h1>
+              <h1 className="text-lg font-black text-theme-heading tracking-tight leading-none">GlobalSolutions</h1>
               <p className="text-[9px] font-bold text-gold-accent tracking-[0.25em] uppercase mt-1">Operations Platform</p>
             </div>
           </Link>
@@ -201,6 +202,7 @@ export default function DashboardLayout({
             </span>
           </div>
           <div className="flex items-center gap-4">
+            <ThemeToggle showLabel={false} />
             <Link href="/admin/notifications" className="relative p-1.5 rounded-lg hover:bg-white/5 transition-colors">
               <Bell size={16} className="text-brand-on-surface-variant" />
               <span className="absolute top-0.5 right-0.5 w-2 h-2 bg-danger rounded-full" />
