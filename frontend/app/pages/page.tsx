@@ -3,7 +3,7 @@
 import { useState, useMemo } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Search, ExternalLink, ArrowLeft, Filter } from 'lucide-react';
+import { Search, ExternalLink, Filter } from 'lucide-react';
 import { PAGES, PORTAL_LABELS, Portal } from '@/lib/pages-registry';
 
 const PORTAL_ORDER: Portal[] = ['public', 'worker', 'admin', 'leadership', 'audit'];
@@ -35,10 +35,6 @@ export default function PagesIndex() {
     <div className="min-h-screen bg-brand-background p-6 md:p-10 font-sans">
       <div className="max-w-6xl mx-auto">
         <div className="mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm text-brand-on-surface-variant hover:text-emerald-accent transition-colors mb-6">
-            <ArrowLeft size={14} />
-            Back to Landing
-          </Link>
           <motion.div initial={{ opacity: 0, y: -12 }} animate={{ opacity: 1, y: 0 }}>
             <h1 className="text-3xl md:text-4xl font-black text-white tracking-tight">Platform Pages Directory</h1>
             <p className="text-brand-on-surface-variant mt-2 max-w-2xl">

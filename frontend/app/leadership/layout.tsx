@@ -1,5 +1,5 @@
-import DashboardLayout from '@/components/shared/DashboardLayout';
+import AppShell from '@/components/navigation/AppShell';
 
 export default function LeadershipLayout({ children }: { children: React.ReactNode }) {
-  return <DashboardLayout role="leadership">{children}</DashboardLayout>;
+  return <AppShell role="leadership">{children}</AppShell>;
 }

@@ -6,10 +6,33 @@ import { useTheme } from '@/lib/theme/ThemeProvider';
 interface ThemeToggleProps {
   className?: string;
   showLabel?: boolean;
+  variant?: 'switch' | 'icon';
 }
 
-export default function ThemeToggle({ className = '', showLabel = true }: ThemeToggleProps) {
+export default function ThemeToggle({
+  className = '',
+  showLabel = false,
+  variant = 'icon',
+}: ThemeToggleProps) {
   const { theme, toggleTheme, isDark } = useTheme();
+
+  if (variant === 'icon') {
+    return (
+      <button
+        type="button"
+        onClick={toggleTheme}
+        aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
+        title={isDark ? 'Light theme' : 'Dark theme'}
+        className={`p-2 rounded-xl border border-theme hover:bg-white/5 transition-all ${className}`}
+      >
+        {isDark ? (
+          <Moon size={18} className="text-emerald-accent" />
+        ) : (
+          <Sun size={18} className="text-gold-accent" />
+        )}
+      </button>
+    );
+  }
 
   return (
     <button

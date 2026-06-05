@@ -1,5 +1,5 @@
-import DashboardLayout from '@/components/shared/DashboardLayout';
+import AppShell from '@/components/navigation/AppShell';
 
 export default function WorkerLayout({ children }: { children: React.ReactNode }) {
-  return <DashboardLayout role="worker">{children}</DashboardLayout>;
+  return <AppShell role="worker">{children}</AppShell>;
 }
