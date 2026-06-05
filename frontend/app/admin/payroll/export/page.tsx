@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import PageHeader from '@/components/platform/PageHeader';
+import PayrollTabs from '@/components/platform/PayrollTabs';
 import { Download, FileSpreadsheet } from 'lucide-react';
 
 export default function PayrollExportPage() {
@@ -13,6 +14,7 @@ export default function PayrollExportPage() {
         title="Payroll Export Center"
         description="Generate CSV or Excel payroll exports with period selector and approval logs."
       />
+      <PayrollTabs active="/admin/payroll/export" />
       <div className="glass-panel p-6 space-y-4 mb-6">
         <div>
           <label className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1.5 block">Payroll Period</label>

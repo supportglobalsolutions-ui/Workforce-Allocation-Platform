@@ -222,6 +222,16 @@ export const PAGES: PageEntry[] = [
     roles: ['Handler', 'Operations Lead', 'CEO'],
   },
   {
+    id: 'payroll-receipts',
+    title: 'Send Payroll Receipts',
+    href: '/admin/payroll/receipts',
+    portal: 'admin',
+    purpose: 'Deliver approved payroll receipts to workers via email and WhatsApp.',
+    features: ['Email delivery', 'WhatsApp delivery', 'Period selector', 'Worker selection', 'Delivery log'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
     id: 'ceo-command',
     title: 'CEO Command Center',
     href: '/leadership/ceo-command',

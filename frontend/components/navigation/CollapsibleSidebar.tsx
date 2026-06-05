@@ -2,9 +2,10 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { ChevronDown, LogOut, Shield } from 'lucide-react';
+import { ChevronDown, LogOut } from 'lucide-react';
 import { useState } from 'react';
 import LogoMark from '@/components/theme/LogoMark';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import {
   NavItem,
   PortalRole,
@@ -12,7 +13,6 @@ import {
   ROLE_LABELS,
   ROLE_LANDING,
 } from '@/lib/navigation/config';
-import { PAGES } from '@/lib/pages-registry';
 
 interface CollapsibleSidebarProps {
   role: PortalRole;
@@ -58,10 +58,15 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 
 export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSidebarProps) {
   const router = useRouter();
+  const { session, logout, canAccess } = useAuth();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const items = PORTAL_SIDEBAR_NAV[role];
 
+  const allowedPortals = (session?.allowedPortals ?? [role]).filter((p) => canAccess(p));
+  const showSwitcher = allowedPortals.length > 1;
+
   const handleRoleChange = (r: PortalRole) => {
+    if (!canAccess(r)) return;
     setIsDropdownOpen(false);
     router.push(ROLE_LANDING[r]);
   };
@@ -72,9 +77,8 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
         collapsed ? 'w-[72px]' : 'w-[280px]'
       }`}
     >
-      {/* Brand */}
       <div className={`border-b border-theme ${collapsed ? 'p-3 flex justify-center' : 'p-5'}`}>
-        <Link href="/" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`} title="GlobalSolutions Home">
+        <Link href="/" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>
           <LogoMark size="sm" />
           {!collapsed && (
             <div className="min-w-0">
@@ -85,81 +89,78 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
         </Link>
       </div>
 
-      {/* Workspace switcher */}
-      <div className={`border-b border-theme relative ${collapsed ? 'px-2 py-2' : 'px-3 py-3'}`}>
-        <button
-          type="button"
-          onClick={() => !collapsed && setIsDropdownOpen(!isDropdownOpen)}
-          title={ROLE_LABELS[role]}
-          className={`w-full flex items-center rounded-xl bg-white/5 hover:bg-white/10 border border-theme transition-all ${
-            collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2 text-left'
-          }`}
-        >
-          {!collapsed ? (
-            <>
-              <div className="flex flex-col min-w-0">
-                <span className="text-[10px] text-theme-muted font-bold uppercase tracking-wider">Workspace</span>
-                <span className="text-sm font-bold text-theme-heading mt-0.5 truncate">{ROLE_LABELS[role]}</span>
-              </div>
-              <ChevronDown size={16} className={`text-theme-muted transition-transform shrink-0 ${isDropdownOpen ? 'rotate-180' : ''}`} />
-            </>
-          ) : (
-            <span className={`text-[10px] font-black uppercase ${getRoleColor(role).split(' ')[0]}`}>
-              {role[0].toUpperCase()}
-            </span>
+      {showSwitcher && (
+        <div className={`border-b border-theme relative ${collapsed ? 'px-2 py-2' : 'px-3 py-3'}`}>
+          <button
+            type="button"
+            onClick={() => !collapsed && setIsDropdownOpen(!isDropdownOpen)}
+            title={ROLE_LABELS[role]}
+            className={`w-full flex items-center rounded-xl bg-white/5 hover:bg-white/10 border border-gold-accent/15 transition-all ${
+              collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2 text-left'
+            }`}
+          >
+            {!collapsed ? (
+              <>
+                <div className="flex flex-col min-w-0">
+                  <span className="text-[10px] text-gold-accent font-bold uppercase tracking-wider">Workspace</span>
+                  <span className="text-sm font-bold text-theme-heading mt-0.5 truncate">{ROLE_LABELS[role]}</span>
+                </div>
+                <ChevronDown size={16} className={`text-theme-muted transition-transform shrink-0 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+              </>
+            ) : (
+              <span className={`text-[10px] font-black uppercase ${getRoleColor(role).split(' ')[0]}`}>
+                {role[0].toUpperCase()}
+              </span>
+            )}
+          </button>
+          {isDropdownOpen && !collapsed && (
+            <div className="absolute top-[calc(100%-4px)] left-3 right-3 bg-brand-card border border-gold-accent/20 rounded-xl shadow-2xl p-2 z-50 glass-modal">
+              {allowedPortals.map((r) => (
+                <button
+                  key={r}
+                  type="button"
+                  onClick={() => handleRoleChange(r)}
+                  className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all mb-1 last:mb-0 flex items-center justify-between ${
+                    role === r ? 'bg-gold-accent/10 text-theme-heading' : 'text-theme-muted hover:text-theme-heading hover:bg-white/[0.02]'
+                  }`}
+                >
+                  <span>{ROLE_LABELS[r]}</span>
+                  <span className={`px-2 py-0.5 text-[8px] rounded border uppercase font-mono ${getRoleColor(r)}`}>{r}</span>
+                </button>
+              ))}
+            </div>
           )}
-        </button>
-        {isDropdownOpen && !collapsed && (
-          <div className="absolute top-[calc(100%-4px)] left-3 right-3 bg-brand-card border border-theme rounded-xl shadow-2xl p-2 z-50">
-            {(['worker', 'admin', 'leadership'] as PortalRole[]).map((r) => (
-              <button
-                key={r}
-                type="button"
-                onClick={() => handleRoleChange(r)}
-                className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all mb-1 last:mb-0 flex items-center justify-between ${
-                  role === r ? 'bg-white/5 text-theme-heading' : 'text-theme-muted hover:text-theme-heading hover:bg-white/[0.02]'
-                }`}
-              >
-                <span>{ROLE_LABELS[r]}</span>
-                <span className={`px-2 py-0.5 text-[8px] rounded border uppercase font-mono ${getRoleColor(r)}`}>{r}</span>
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
 
-      {/* Section nav */}
+      {!showSwitcher && !collapsed && session && (
+        <div className="px-3 py-3 border-b border-theme">
+          <p className="text-[10px] text-gold-accent font-bold uppercase tracking-wider">Workspace</p>
+          <p className="text-sm font-bold text-theme-heading mt-0.5">{ROLE_LABELS[role]}</p>
+        </div>
+      )}
+
       <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
         {!collapsed && (
-          <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-theme-muted">This section</p>
+          <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-gold-accent/80">Navigation</p>
         )}
         {items.map((item) => (
           <SidebarLink key={item.href} item={item} collapsed={collapsed} />
         ))}
       </nav>
 
-      {/* Footer */}
-      <div className={`border-t border-theme space-y-0.5 ${collapsed ? 'p-2' : 'p-3'}`}>
-        <Link
-          href="/pages"
-          title="All Pages"
-          className={`flex items-center gap-2 rounded-xl text-xs font-medium text-theme-muted hover:text-emerald-accent hover:bg-white/[0.02] transition-colors ${
-            collapsed ? 'justify-center p-2.5' : 'px-3 py-2'
-          }`}
-        >
-          <Shield size={14} className="shrink-0" />
-          {!collapsed && <span>All Pages ({PAGES.length})</span>}
-        </Link>
-        <Link
-          href="/login"
+      <div className={`border-t border-theme ${collapsed ? 'p-2' : 'p-3'}`}>
+        <button
+          type="button"
+          onClick={logout}
           title="Sign Out"
-          className={`flex items-center gap-2 rounded-xl text-xs font-medium text-theme-muted hover:text-theme-heading hover:bg-white/[0.02] transition-colors ${
+          className={`w-full flex items-center gap-2 rounded-xl text-xs font-medium text-theme-muted hover:text-theme-heading hover:bg-white/[0.02] transition-colors ${
             collapsed ? 'justify-center p-2.5' : 'px-3 py-2'
           }`}
         >
           <LogOut size={14} className="shrink-0" />
           {!collapsed && <span>Sign Out</span>}
-        </Link>
+        </button>
       </div>
     </aside>
   );

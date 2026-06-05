@@ -2,8 +2,10 @@
 
 import { usePathname } from 'next/navigation';
 import PublicShell from './PublicShell';
+import BareShell from './BareShell';
 
-/** Wraps public routes with top-only navigation; portal routes use their own layout */
+const BARE_PATHS = ['/', '/login', '/reset-password'];
+
 export default function RouteShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '/';
   const isPortal =
@@ -12,5 +14,6 @@ export default function RouteShell({ children }: { children: React.ReactNode }) 
     pathname.startsWith('/leadership');
 
   if (isPortal) return <>{children}</>;
+  if (BARE_PATHS.includes(pathname)) return <BareShell>{children}</BareShell>;
   return <PublicShell>{children}</PublicShell>;
 }

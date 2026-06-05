@@ -3,6 +3,7 @@
 import Link from 'next/link';
 import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
+import PayrollTabs from '@/components/platform/PayrollTabs';
 import { DollarSign, AlertTriangle, Clock, CheckCircle } from 'lucide-react';
 
 export default function PayrollDashboardPage() {
@@ -12,12 +13,14 @@ export default function PayrollDashboardPage() {
         title="Payroll Dashboard"
         description="Current payroll period overview, pending reviews, exception alerts, and total payroll."
         actions={
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <Link href="/admin/payroll/calculate" className="btn-secondary text-sm">Calculate</Link>
+            <Link href="/admin/payroll/receipts" className="btn-secondary text-sm">Send Receipts</Link>
             <Link href="/admin/payroll/export" className="btn-primary text-sm">Export</Link>
           </div>
         }
       />
+      <PayrollTabs active="/admin/payroll" />
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <KpiCard label="Current Period" value="2026-05" icon={Clock} />
         <KpiCard label="Pending Reviews" value={12} icon={AlertTriangle} accent="gold" />

@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Monitor, Settings, FileText, Trophy, Landmark,
   Bell, ClipboardList, DollarSign, BarChart3, Activity, BookOpen, Globe2,
-  Zap, History, PenLine, Home, Lock, Shield,
+  Zap, History, PenLine, Home, Lock, Shield, Send,
 } from 'lucide-react';
 
 export type PortalRole = 'worker' | 'admin' | 'leadership';
@@ -34,6 +34,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <ClipboardList size={18} />, label: 'Quality', href: '/admin/quality' },
     { icon: <BookOpen size={18} />, label: 'Assessments', href: '/admin/assessments' },
     { icon: <DollarSign size={18} />, label: 'Payroll', href: '/admin/payroll' },
+    { icon: <Send size={18} />, label: 'Send Receipts', href: '/admin/payroll/receipts', shortLabel: 'Receipts' },
     { icon: <FileText size={18} />, label: 'Audit Logs', href: '/admin/audit-logs' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/admin/notifications' },
     { icon: <Settings size={18} />, label: 'Settings', href: '/admin/settings' },
@@ -78,7 +79,7 @@ export const PUBLIC_TOP_NAV: NavItem[] = [
 export const ROLE_LABELS: Record<PortalRole, string> = {
   worker: 'Worker Portal',
   admin: 'Operations Lead',
-  leadership: 'Executive Leadership',
+  leadership: 'Executive Command',
 };
 
 export const ROLE_LANDING: Record<PortalRole, string> = {

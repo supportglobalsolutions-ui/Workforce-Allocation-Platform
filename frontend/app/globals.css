@@ -36,35 +36,35 @@ html.dark {
   --toggle-track: rgba(255, 255, 255, 0.08);
 }
 
-/* ── Light theme — brand-dominant emerald mist, never plain white ── */
+/* ── Light theme — clean white surfaces, green & gold accents only ── */
 html.light {
   color-scheme: light;
-  --background: #D4EDE4;
-  --foreground: #032F25;
-  --primary-dark: #021D17;
+  --background: #F7F9F8;
+  --foreground: #1C2B26;
+  --primary-dark: #032F25;
   --secondary-green: #0A4D3A;
-  --emerald-accent: #1A9B72;
-  --gold-accent: #9A7B1A;
-  --card-bg: #BFE4D6;
-  --surface-lowest: #E8F5F0;
-  --surface-low: #D4EDE4;
-  --surface-container: #C5E6DC;
-  --surface-high: #A8D4C8;
-  --surface-highest: #8FC9BA;
-  --on-surface: #032F25;
-  --on-surface-variant: #0A4D3A;
-  --text-heading: #021D17;
-  --glass-bg: rgba(191, 228, 214, 0.88);
-  --glass-border: rgba(3, 47, 37, 0.14);
-  --glass-hover: rgba(168, 212, 200, 0.95);
-  --input-bg: rgba(197, 230, 220, 0.9);
-  --input-border: rgba(3, 47, 37, 0.18);
-  --scrollbar-track: #C5E6DC;
-  --scrollbar-thumb: #8FC9BA;
-  --glow-emerald: rgba(26, 155, 114, 0.12);
-  --glow-gold: rgba(154, 123, 26, 0.08);
-  --shadow-color: rgba(3, 47, 37, 0.12);
-  --toggle-track: rgba(3, 47, 37, 0.10);
+  --emerald-accent: #0A7A55;
+  --gold-accent: #D4AF37;
+  --card-bg: #FFFFFF;
+  --surface-lowest: #FFFFFF;
+  --surface-low: #F7F9F8;
+  --surface-container: #FFFFFF;
+  --surface-high: #F0F2F1;
+  --surface-highest: #E8EBEA;
+  --on-surface: #1C2B26;
+  --on-surface-variant: #5F6F69;
+  --text-heading: #0F1F1A;
+  --glass-bg: rgba(255, 255, 255, 0.96);
+  --glass-border: rgba(15, 31, 26, 0.08);
+  --glass-hover: rgba(248, 250, 249, 1);
+  --input-bg: #FFFFFF;
+  --input-border: rgba(15, 31, 26, 0.12);
+  --scrollbar-track: #F0F2F1;
+  --scrollbar-thumb: #C5CCC9;
+  --glow-emerald: rgba(10, 122, 85, 0.02);
+  --glow-gold: rgba(184, 146, 46, 0.02);
+  --shadow-color: rgba(0, 0, 0, 0.06);
+  --toggle-track: rgba(0, 0, 0, 0.06);
 }
 
 @layer base {
@@ -78,6 +78,10 @@ html.light {
       radial-gradient(at 50% 100%, rgba(3, 47, 37, 0.15) 0px, transparent 50%);
     background-attachment: fixed;
     min-height: 100vh;
+  }
+
+  html.light body {
+    background-image: linear-gradient(180deg, #ffffff 0%, #f7f9f8 100%);
   }
 
   /* Adapt hardcoded utility classes across all pages */
@@ -94,12 +98,12 @@ html.light {
   html.light .bg-white\/5,
   html.light .bg-white\/\[0\.03\],
   html.light .bg-white\/\[0\.02\] {
-    background-color: color-mix(in srgb, var(--primary-dark) 6%, transparent) !important;
+    background-color: rgba(0, 0, 0, 0.03) !important;
   }
   html.light .hover\:bg-white\/5:hover,
   html.light .hover\:bg-white\/10:hover,
   html.light .hover\:bg-white\/\[0\.02\]:hover {
-    background-color: color-mix(in srgb, var(--primary-dark) 10%, transparent) !important;
+    background-color: rgba(0, 0, 0, 0.05) !important;
   }
   html.light .hover\:text-white:hover {
     color: var(--text-heading);
@@ -117,6 +121,36 @@ html.light {
     transition: background 0.3s, border-color 0.3s, box-shadow 0.3s;
   }
 
+  html.light .glass-panel {
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 4px 16px rgba(0, 0, 0, 0.05);
+    border-color: color-mix(in srgb, var(--gold-accent) 8%, var(--glass-border));
+  }
+
+  .glass-modal {
+    background: var(--glass-bg);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+    border: 1px solid color-mix(in srgb, var(--gold-accent) 25%, var(--glass-border));
+    box-shadow:
+      0 8px 32px var(--shadow-color),
+      0 0 0 1px color-mix(in srgb, var(--emerald-accent) 8%, transparent),
+      inset 0 1px 0 color-mix(in srgb, white 8%, transparent);
+    border-radius: 20px;
+    transition: all 0.3s ease;
+  }
+
+  html.light .glass-modal {
+    background: rgba(255, 255, 255, 0.85);
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.06),
+      0 0 0 1px color-mix(in srgb, var(--gold-accent) 15%, transparent),
+      inset 0 1px 0 rgba(255, 255, 255, 0.9);
+  }
+
+  html.light .glass-panel-hover:hover {
+    border-color: color-mix(in srgb, var(--gold-accent) 20%, transparent);
+  }
+
   .glass-panel-hover {
     transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
   }
@@ -128,9 +162,9 @@ html.light {
 
   .btn-primary {
     @apply px-4 py-2.5 rounded-xl font-bold text-sm transition-all;
-    background-color: var(--emerald-accent);
+    background: linear-gradient(135deg, var(--emerald-accent), color-mix(in srgb, var(--emerald-accent) 80%, var(--gold-accent)));
     color: var(--primary-dark);
-    box-shadow: 0 0 20px color-mix(in srgb, var(--emerald-accent) 15%, transparent);
+    box-shadow: 0 0 20px color-mix(in srgb, var(--emerald-accent) 15%, transparent), 0 0 0 1px color-mix(in srgb, var(--gold-accent) 20%, transparent);
   }
   .btn-primary:hover {
     filter: brightness(1.05);

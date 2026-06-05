@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react';
 import TopNav from './TopNav';
 import CollapsibleSidebar from './CollapsibleSidebar';
+import SiteFooter from '@/components/layout/SiteFooter';
 import { PortalRole, SIDEBAR_STORAGE_KEY } from '@/lib/navigation/config';
 
 interface AppShellProps {
@@ -72,6 +73,7 @@ export default function AppShell({ children, role }: AppShellProps) {
           showSidebarToggle
         />
         <main className="p-4 md:p-6 lg:p-8 flex-1 w-full max-w-[1600px]">{children}</main>
+        <SiteFooter />
       </div>
     </div>
   );

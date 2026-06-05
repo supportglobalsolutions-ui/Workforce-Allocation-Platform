@@ -3,6 +3,7 @@
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
+import PayrollTabs from '@/components/platform/PayrollTabs';
 import { payrollRows } from '@/lib/mock-data';
 
 export default function PayrollCalculationPage() {
@@ -13,6 +14,7 @@ export default function PayrollCalculationPage() {
         description="Per-worker earnings with partner splits, GS revenue, exception flags, and approval status."
         actions={<button className="btn-primary text-sm">Approve Period</button>}
       />
+      <PayrollTabs active="/admin/payroll/calculate" />
       <DataTable
         columns={[
           { key: 'worker', header: 'Worker' },
