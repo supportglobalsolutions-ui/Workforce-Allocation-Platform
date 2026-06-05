@@ -2,29 +2,37 @@
 @tailwind components;
 @tailwind utilities;
 
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Manrope:wght@600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+
 :root {
-  --background: #001712;
+  --background: #021D17;
   --foreground: #cbe9df;
+  --primary-dark: #032F25;
+  --secondary-green: #0A4D3A;
+  --emerald-accent: #3FC7A0;
+  --gold-accent: #D4AF37;
+  --card-bg: #0A241E;
 }
 
 body {
   color: var(--foreground);
   background-color: var(--background);
-  background-image: 
-    radial-gradient(at 0% 0%, rgba(97, 227, 187, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(233, 195, 73, 0.03) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(4, 32, 26, 0.8) 0px, transparent 50%);
+  background-image:
+    radial-gradient(at 0% 0%, rgba(63, 199, 160, 0.06) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(212, 175, 55, 0.04) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(3, 47, 37, 0.8) 0px, transparent 50%);
   background-attachment: fixed;
   min-height: 100vh;
 }
 
 @layer components {
   .glass-panel {
-    background: rgba(8, 36, 30, 0.7);
+    background: rgba(10, 36, 30, 0.75);
     backdrop-filter: blur(16px);
     -webkit-backdrop-filter: blur(16px);
     border: 1px solid rgba(255, 255, 255, 0.08);
-    box-shadow: 0 8px 32px 0 rgba(0, 17, 13, 0.37);
+    box-shadow: 0 8px 32px 0 rgba(2, 29, 23, 0.4);
+    border-radius: 16px;
   }
 
   .glass-panel-hover {
@@ -32,27 +40,34 @@ body {
   }
   .glass-panel-hover:hover {
     background: rgba(20, 47, 40, 0.85);
-    border-color: rgba(97, 227, 187, 0.2);
-    box-shadow: 0 12px 40px 0 rgba(97, 227, 187, 0.08);
+    border-color: rgba(63, 199, 160, 0.2);
+    box-shadow: 0 12px 40px 0 rgba(63, 199, 160, 0.08);
   }
 
-  .glass-panel-floating {
-    background: rgba(20, 47, 40, 0.9);
-    backdrop-filter: blur(24px);
-    -webkit-backdrop-filter: blur(24px);
-    border: 1px solid rgba(97, 227, 187, 0.15);
-    box-shadow: 0 20px 50px 0 rgba(0, 0, 0, 0.5), 0 0 15px 0 rgba(97, 227, 187, 0.05);
+  .btn-primary {
+    @apply px-4 py-2.5 bg-emerald-accent hover:bg-emerald-accent/90 text-brand-primary-dark rounded-xl font-bold text-sm transition-all shadow-[0_0_20px_rgba(63,199,160,0.15)];
+  }
+
+  .btn-secondary {
+    @apply px-4 py-2.5 bg-brand-card hover:bg-brand-surface-high text-white border border-white/10 rounded-xl font-bold text-sm transition-all;
+  }
+
+  .btn-gold {
+    @apply px-4 py-2.5 bg-gold-accent/10 hover:bg-gold-accent/20 text-gold-accent border border-gold-accent/30 rounded-xl font-bold text-sm transition-all;
+  }
+
+  .input-field {
+    @apply w-full px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-brand-on-surface-variant/60 focus:outline-none focus:border-emerald-accent/40 transition-colors;
   }
 
   .text-glow-emerald {
-    text-shadow: 0 0 8px rgba(97, 227, 187, 0.4);
+    text-shadow: 0 0 8px rgba(63, 199, 160, 0.4);
   }
 
   .text-glow-gold {
-    text-shadow: 0 0 8px rgba(233, 195, 73, 0.4);
+    text-shadow: 0 0 8px rgba(212, 175, 55, 0.4);
   }
 
-  /* Custom Scrollbar */
   ::-webkit-scrollbar {
     width: 8px;
     height: 8px;

@@ -1,9 +1,13 @@
+import Image from 'next/image';
 import Link from 'next/link';
 
 function Sidebar() {
   return (
     <nav className="w-64 bg-[#001712] text-[#cbe9df] p-6 flex flex-col space-y-6">
-      <div className="text-2xl font-bold mb-4">GlobalSolutions</div>
+      <div className="flex items-center gap-3 mb-4">
+        <Image src="/images/logo.png" alt="GlobalSolutions Logo" width={36} height={36} className="rounded-lg" />
+        <span className="text-2xl font-bold">GlobalSolutions</span>
+      </div>
       <section>
         <h2 className="text-sm uppercase opacity-70 mb-2">Worker</h2>
         <ul className="space-y-1">

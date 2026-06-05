@@ -1,54 +1,71 @@
-// services/frontend/app/(auth)/login/page.tsx
-
 'use client';
 
 import { motion } from 'framer-motion';
+import Image from 'next/image';
 import Link from 'next/link';
-import { Lock, BookOpen } from 'lucide-react';
+import { Lock, BookOpen, Shield } from 'lucide-react';
 
 export default function LoginPage() {
   return (
-    <div className="min-h-screen bg-[#001712] flex items-center justify-center p-6 font-sans">
-      <motion.div
-        initial={{ opacity: 0, y: -20 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.6 }}
-        className="max-w-md w-full glass-panel p-8 rounded-2xl border border-white/5"
-      >
-        <h1 className="text-3xl text-white font-bold mb-6 text-center">Executive Sign In</h1>
-        {/* Placeholder form */}
-        <form className="space-y-4">
-          <input
-            type="email"
-            placeholder="Email"
-            className="w-full px-4 py-2 bg-[#08241e]/60 border border-white/10 rounded focus:outline-none focus:border-[#61e3bb]/30 text-white"
-          />
-          <input
-            type="password"
-            placeholder="Password"
-            className="w-full px-4 py-2 bg-[#08241e]/60 border border-white/10 rounded focus:outline-none focus:border-[#61e3bb]/30 text-white"
-          />
-          <button
-            type="submit"
-            className="w-full flex items-center justify-center gap-2 py-2 bg-[#61e3bb] hover:bg-[#3fc7a0] text-[#00382a] rounded font-bold transition-colors"
-          >
-            <Lock size={16} />
-            Sign In
-          </button>
-        </form>
-        <div className="mt-6 text-center text-[#bbcac2] text-sm">
-          <Link href="/reset-password" className="underline hover:text-[#61e3bb]">Forgot password?</Link>
+    <div className="min-h-screen bg-brand-background flex font-sans">
+      {/* Left panel */}
+      <div className="hidden lg:flex lg:w-1/2 flex-col justify-center p-12 relative overflow-hidden">
+        <div className="absolute inset-0 opacity-[0.06]" style={{
+          backgroundImage: 'linear-gradient(#3FC7A0 1px, transparent 1px), linear-gradient(90deg, #3FC7A0 1px, transparent 1px)',
+          backgroundSize: '40px 40px',
+        }} />
+        <div className="relative z-10">
+          <div className="flex items-center gap-3 mb-8">
+            <Image src="/images/logo.png" alt="GlobalSolutions Logo" width={40} height={40} className="rounded-xl" />
+            <span className="text-xl font-black text-white">GlobalSolutions</span>
+          </div>
+          <h2 className="text-3xl font-black text-white mb-4">Operations Command Platform</h2>
+          <p className="text-brand-on-surface-variant max-w-md">Secure access for workers, operations leads, country managers, and executive leadership.</p>
+          <div className="mt-8 p-6 glass-panel max-w-sm">
+            <Shield size={24} className="text-emerald-accent mb-3" />
+            <p className="text-sm text-brand-on-surface-variant">Firebase Auth · Role-based access · SSO-ready architecture</p>
+          </div>
         </div>
-        <div className="mt-6 flex justify-center space-x-4">
-          <Link
-            href="/pages"
-            className="inline-flex items-center gap-2 px-4 py-2 rounded bg-white/[0.03] hover:bg-[#08241e]/60 text-[#bbcac2] hover:text-[#61e3bb] border border-white/10"
-          >
-            <BookOpen size={14} />
-            View All Pages
-          </Link>
-        </div>
-      </motion.div>
+      </div>
+
+      {/* Right panel — form */}
+      <div className="flex-1 flex items-center justify-center p-6">
+        <motion.div
+          initial={{ opacity: 0, y: -20 }}
+          animate={{ opacity: 1, y: 0 }}
+          className="max-w-md w-full glass-panel p-8"
+        >
+          <h1 className="text-2xl text-white font-black mb-6">Sign In</h1>
+          <form className="space-y-4" onSubmit={(e) => e.preventDefault()}>
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1.5 block">Email</label>
+              <input type="email" placeholder="you@globalsolutions.com" className="input-field" />
+            </div>
+            <div>
+              <label className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1.5 block">Password</label>
+              <input type="password" placeholder="••••••••" className="input-field" />
+            </div>
+            <div className="flex items-center justify-between text-sm">
+              <label className="flex items-center gap-2 text-brand-on-surface-variant cursor-pointer">
+                <input type="checkbox" className="rounded border-white/20" />
+                Remember me
+              </label>
+              <Link href="/reset-password" className="text-emerald-accent hover:underline">Forgot password?</Link>
+            </div>
+            <button type="submit" className="btn-primary w-full flex items-center justify-center gap-2">
+              <Lock size={16} />
+              Login
+            </button>
+          </form>
+          <p className="text-center text-xs text-brand-on-surface-variant mt-4">SSO integration point ready</p>
+          <div className="mt-6 flex justify-center">
+            <Link href="/pages" className="inline-flex items-center gap-2 text-sm text-brand-on-surface-variant hover:text-emerald-accent">
+              <BookOpen size={14} />
+              View All Pages
+            </Link>
+          </div>
+        </motion.div>
+      </div>
     </div>
   );
 }

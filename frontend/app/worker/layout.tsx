@@ -1,16 +1,5 @@
-import Sidebar from "../../components/Sidebar";
+import DashboardLayout from '@/components/shared/DashboardLayout';
 
-export default function WorkerLayout({
-  children,
-}: {
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="flex min-h-screen bg-[#001712] text-[#cbe9df]">
-      <Sidebar />
-      <main className="flex-1 p-8 overflow-y-auto">
-        {children}
-      </main>
-    </div>
-  );
+export default function WorkerLayout({ children }: { children: React.ReactNode }) {
+  return <DashboardLayout role="worker">{children}</DashboardLayout>;
 }
