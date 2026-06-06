@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { usePathname, useRouter } from 'next/navigation';
+import { usePathname } from 'next/navigation';
 import { ChevronDown, LogOut } from 'lucide-react';
 import { useState } from 'react';
 import LogoMark from '@/components/theme/LogoMark';
@@ -34,6 +34,7 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
   return (
     <Link
       href={item.href}
+      prefetch
       title={collapsed ? item.label : undefined}
       className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${
         collapsed ? 'justify-center' : ''
@@ -57,19 +58,12 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 }
 
 export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSidebarProps) {
-  const router = useRouter();
   const { session, logout, canAccess } = useAuth();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
   const items = PORTAL_SIDEBAR_NAV[role];
 
   const allowedPortals = (session?.allowedPortals ?? [role]).filter((p) => canAccess(p));
   const showSwitcher = allowedPortals.length > 1;
-
-  const handleRoleChange = (r: PortalRole) => {
-    if (!canAccess(r)) return;
-    setIsDropdownOpen(false);
-    router.push(ROLE_LANDING[r]);
-  };
 
   return (
     <aside
@@ -116,17 +110,18 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
           {isDropdownOpen && !collapsed && (
             <div className="absolute top-[calc(100%-4px)] left-3 right-3 bg-brand-card border border-gold-accent/20 rounded-xl shadow-2xl p-2 z-50 glass-modal">
               {allowedPortals.map((r) => (
-                <button
+                <Link
                   key={r}
-                  type="button"
-                  onClick={() => handleRoleChange(r)}
+                  href={ROLE_LANDING[r]}
+                  prefetch
+                  onClick={() => setIsDropdownOpen(false)}
                   className={`w-full text-left px-3 py-2 rounded-lg text-xs font-bold transition-all mb-1 last:mb-0 flex items-center justify-between ${
                     role === r ? 'bg-gold-accent/10 text-theme-heading' : 'text-theme-muted hover:text-theme-heading hover:bg-white/[0.02]'
                   }`}
                 >
                   <span>{ROLE_LABELS[r]}</span>
                   <span className={`px-2 py-0.5 text-[8px] rounded border uppercase font-mono ${getRoleColor(r)}`}>{r}</span>
-                </button>
+                </Link>
               ))}
             </div>
           )}

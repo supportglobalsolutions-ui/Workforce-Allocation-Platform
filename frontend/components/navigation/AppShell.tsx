@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import TopNav from './TopNav';
 import CollapsibleSidebar from './CollapsibleSidebar';
 import SiteFooter from '@/components/layout/SiteFooter';
@@ -12,15 +12,11 @@ interface AppShellProps {
 }
 
 export default function AppShell({ children, role }: AppShellProps) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
+  });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
-
-  useEffect(() => {
-    const stored = localStorage.getItem(SIDEBAR_STORAGE_KEY);
-    if (stored === 'true') setSidebarCollapsed(true);
-    setMounted(true);
-  }, []);
 
   const toggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -34,7 +30,7 @@ export default function AppShell({ children, role }: AppShellProps) {
     });
   };
 
-  const collapsed = mounted && sidebarCollapsed;
+  const collapsed = sidebarCollapsed;
 
   return (
     <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-hidden">

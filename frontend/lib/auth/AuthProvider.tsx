@@ -1,16 +1,14 @@
 'use client';
 
-import { createContext, useCallback, useContext, useEffect, useState } from 'react';
+import { createContext, useCallback, useContext, useSyncExternalStore } from 'react';
 import { useRouter } from 'next/navigation';
+import { AuthSession, authenticate, canAccessPortal } from './config';
 import {
-  AUTH_STORAGE_KEY,
-  AuthSession,
-  authenticate,
-  canAccessPortal,
-  clearSessionCookie,
-  parseSession,
-  setSessionCookie,
-} from './config';
+  getSessionServerSnapshot,
+  getSessionSnapshot,
+  subscribeSession,
+  writeStoredSession,
+} from './session-store';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 
 interface AuthContextValue {
@@ -24,32 +22,25 @@ interface AuthContextValue {
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  const [session, setSession] = useState<AuthSession | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
   const router = useRouter();
-
-  useEffect(() => {
-    const stored = localStorage.getItem(AUTH_STORAGE_KEY);
-    setSession(parseSession(stored));
-    setIsLoading(false);
-  }, []);
+  const session = useSyncExternalStore(
+    subscribeSession,
+    getSessionSnapshot,
+    getSessionServerSnapshot
+  );
 
   const login = useCallback(async (email: string, password: string) => {
     const result = authenticate(email, password);
     if (!result) {
       return { ok: false, error: 'Invalid email or password.' };
     }
-    localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(result));
-    setSessionCookie(result);
-    setSession(result);
+    writeStoredSession(result);
     router.push(ROLE_LANDING[result.primaryPortal]);
     return { ok: true };
   }, [router]);
 
   const logout = useCallback(() => {
-    localStorage.removeItem(AUTH_STORAGE_KEY);
-    clearSessionCookie();
-    setSession(null);
+    writeStoredSession(null);
     router.push('/');
   }, [router]);
 
@@ -59,7 +50,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <AuthContext.Provider value={{ session, isLoading, login, logout, canAccess }}>
+    <AuthContext.Provider
+      value={{
+        session,
+        isLoading: false,
+        login,
+        logout,
+        canAccess,
+      }}
+    >
       {children}
     </AuthContext.Provider>
   );

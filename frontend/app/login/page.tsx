@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
 import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -35,16 +34,19 @@ export default function LoginPage() {
 
   return (
     <div className="flex-1 flex items-center justify-center p-6">
-      <motion.div
-        initial={{ opacity: 0, scale: 0.95, y: 20 }}
-        animate={{ opacity: 1, scale: 1, y: 0 }}
-        transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
-        className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10"
-      >
+      <div className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10">
         <div className="flex flex-col items-center mb-8">
           <LogoMark size="md" />
-          <h1 className="text-xl font-black text-theme-heading mt-4">GlobalSolutions</h1>
-          <p className="text-[10px] font-bold uppercase tracking-[0.25em] text-gold-accent mt-1">Sign In</p>
+          <h1 className="type-headline-md text-theme-heading mt-6 font-display">
+            Global Solutions
+          </h1>
+          <p className="type-label-caps mt-3 text-theme-muted">
+            <span className="text-emerald-accent">Remote</span>
+            <span className="text-gold-accent/60 mx-1.5">·</span>
+            <span className="text-gold-accent">Smart</span>
+            <span className="text-gold-accent/60 mx-1.5">·</span>
+            <span className="text-emerald-accent">Global</span>
+          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
@@ -86,7 +88,7 @@ export default function LoginPage() {
           </div>
 
           <div className="flex justify-end">
-            <Link href="/reset-password" className="text-xs text-gold-accent hover:underline font-medium">
+            <Link href="/reset-password" prefetch className="text-xs text-gold-accent hover:underline font-medium">
               Forgot password?
             </Link>
           </div>
@@ -131,7 +133,7 @@ export default function LoginPage() {
             ))}
           </div>
         </div>
-      </motion.div>
+      </div>
     </div>
   );
 }

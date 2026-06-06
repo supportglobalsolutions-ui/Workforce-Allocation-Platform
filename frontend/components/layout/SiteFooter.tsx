@@ -25,14 +25,30 @@ export default function SiteFooter({ className = '' }: { className?: string }) {
   }) ?? '';
 
   return (
-    <footer className={`border-t border-theme bg-brand-surface-lowest/60 backdrop-blur-md px-4 py-3 ${className}`}>
-      <div className="flex flex-col sm:flex-row items-center justify-between gap-2 max-w-[1600px] mx-auto text-center sm:text-left">
-        <p className="text-[11px] text-theme-muted font-medium">
-          © <span suppressHydrationWarning>{year}</span> GlobalSolutions. All rights reserved.
+    <footer className={`px-5 sm:px-8 py-5 ${className}`}>
+      <div className="max-w-[1600px] mx-auto flex flex-col sm:flex-row items-center justify-between gap-4 sm:gap-6">
+        <p className="text-sm sm:text-base font-semibold font-display text-theme-heading tracking-tight">
+          © <span suppressHydrationWarning>{year}</span>{' '}
+          <span className="text-emerald-accent">Global Solutions</span>
+          <span className="text-theme-muted font-normal">. All rights reserved.</span>
         </p>
-        <p className="text-[11px] font-mono text-gold-accent/90" suppressHydrationWarning>
-          {dayDate && time ? `${dayDate} · ${time}` : '—'}
-        </p>
+
+        <div
+          className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm sm:text-base font-mono tabular-nums"
+          suppressHydrationWarning
+        >
+          {dayDate && time ? (
+            <>
+              <span className="text-theme-body font-medium">{dayDate}</span>
+              <span className="text-gold-accent font-bold" aria-hidden>
+                ·
+              </span>
+              <span className="text-gold-accent font-semibold text-glow-gold">{time}</span>
+            </>
+          ) : (
+            <span className="text-theme-muted">—</span>
+          )}
+        </div>
       </div>
     </footer>
   );

@@ -1,7 +1,12 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
+  compress: true,
   transpilePackages: ['framer-motion'],
+  experimental: {
+    optimizePackageImports: ['lucide-react', 'framer-motion'],
+  },
   async redirects() {
     return [
       { source: '/auth/login', destination: '/login', permanent: true },
