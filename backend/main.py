@@ -5,10 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.database import create_db_and_tables
+from core.firebase_admin import init_firebase
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    init_firebase()
     create_db_and_tables()
     yield
 
