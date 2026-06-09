@@ -1,44 +1,59 @@
-from datetime import datetime, timezone
-from typing import TYPE_CHECKING, Optional
-from uuid import UUID, uuid4
+import uuid
+from sqlalchemy import Column, String, Text, Numeric, Date, ForeignKey, CheckConstraint, text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
-from sqlmodel import Field, Relationship, SQLModel
-
-if TYPE_CHECKING:
-    from .worker import Worker
-    from .rdp_machine import RDPMachine
-    from .payroll import PayrollPeriod
+from .base import Base
+from .enums import EntityStatusType
+from .mixins import CreatedAtMixin
 
 
-class PartnerBase(SQLModel):
-    name: str = Field(max_length=120, index=True)
-    country: str = Field(max_length=80)
-    commission_pct: float = Field(ge=0.0, le=100.0, default=0.0)
-    is_active: bool = True
+class PartnerEntity(Base, CreatedAtMixin):
+    __tablename__ = "partner_entities"
+
+    id     = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    name   = Column(String(255), unique=True, nullable=False)
+    notes  = Column(Text, nullable=True)
+    status = Column(EntityStatusType, nullable=False)
+
+    arrangements = relationship("PartnerArrangement", back_populates="partner_entity")
+    workers      = relationship("Worker",             back_populates="partner_entity")
+    sessions     = relationship("Session",            back_populates="partner_entity", foreign_keys="Session.partner_entity_id")
 
 
-class Partner(PartnerBase, table=True):
-    __tablename__ = "partners"
+class PartnerArrangement(Base):
+    __tablename__ = "partner_arrangements"
+    __table_args__ = (
+        CheckConstraint("worker_pct + gs_pct + partner_pct = 100.00", name="ck_partner_arrangements_splits_sum"),
+    )
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    id                = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    partner_entity_id = Column(UUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=False)
+    worker_pct        = Column(Numeric(5, 2), nullable=False)
+    gs_pct            = Column(Numeric(5, 2), nullable=False)
+    partner_pct       = Column(Numeric(5, 2), nullable=False)
+    effective_from    = Column(Date, nullable=False)
+    effective_to      = Column(Date, nullable=True)
+    notes             = Column(Text, nullable=True)
 
-    workers: list["Worker"] = Relationship(back_populates="partner")
-    rdp_machines: list["RDPMachine"] = Relationship(back_populates="partner")
-    payroll_periods: list["PayrollPeriod"] = Relationship(back_populates="partner")
-
-
-class PartnerCreate(PartnerBase):
-    pass
-
-
-class PartnerRead(PartnerBase):
-    id: UUID
-    created_at: datetime
+    partner_entity   = relationship("PartnerEntity",       back_populates="arrangements")
+    client_overrides = relationship("PartnerClientOverride", back_populates="arrangement")
+    sessions         = relationship("Session",              back_populates="partner_arrangement", foreign_keys="Session.partner_arrangement_id")
 
 
-class PartnerUpdate(SQLModel):
-    name: Optional[str] = None
-    country: Optional[str] = None
-    commission_pct: Optional[float] = None
-    is_active: Optional[bool] = None
+class PartnerClientOverride(Base):
+    __tablename__ = "partner_client_overrides"
+    __table_args__ = (
+        CheckConstraint("worker_pct + gs_pct + partner_pct = 100.00", name="ck_partner_overrides_splits_sum"),
+    )
+
+    id                     = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    partner_arrangement_id = Column(UUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=False)
+    client_name            = Column(String(255), nullable=False)
+    worker_pct             = Column(Numeric(5, 2), nullable=False)
+    gs_pct                 = Column(Numeric(5, 2), nullable=False)
+    partner_pct            = Column(Numeric(5, 2), nullable=False)
+    effective_from         = Column(Date, nullable=False)
+    notes                  = Column(Text, nullable=True)
+
+    arrangement = relationship("PartnerArrangement", back_populates="client_overrides")

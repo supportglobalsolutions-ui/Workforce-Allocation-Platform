@@ -1,49 +1,33 @@
-from datetime import datetime, timezone
-from typing import Any, Optional
-from uuid import UUID, uuid4
+import uuid
+from sqlalchemy import Column, String, Text, ForeignKey, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB, INET, TIMESTAMPTZ
+from sqlalchemy.orm import relationship
 
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, SQLModel
+from .base import Base
 
 
-class AuditLog(SQLModel, table=True):
-    """Immutable append-only audit trail. Never update or delete rows."""
+class AuditLog(Base):
+    """
+    Immutable append-only audit trail.
 
+    !! APPLICATION ROLES MUST NOT BE GRANTED UPDATE OR DELETE ON THIS TABLE !!
+    Enforce at the PostgreSQL level:
+        REVOKE UPDATE, DELETE ON audit_log FROM app_role;
+    The FastAPI application must only ever INSERT rows via AuditService.
+    All material actions (claims, force-releases, payroll approval, etc.) must
+    write an entry here before the transaction commits.
+    """
     __tablename__ = "audit_log"
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    actor_id: Optional[UUID] = Field(default=None, index=True)
-    actor_email: str = Field(max_length=255)
-    action: str = Field(max_length=120, index=True)
-    resource_type: str = Field(max_length=80, index=True)
-    resource_id: Optional[str] = Field(default=None, max_length=80)
-    ip_address: Optional[str] = Field(default=None, max_length=45)
-    metadata: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSONB, nullable=True)
-    )
-    created_at: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc), index=True
-    )
+    id             = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    actor_id       = Column(UUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True, index=True)
+    action         = Column(String(64),  nullable=False, index=True)
+    target_type    = Column(String(64),  nullable=False, index=True)
+    target_id      = Column(UUID(as_uuid=True), nullable=False)
+    previous_value = Column(JSONB, nullable=True)
+    new_value      = Column(JSONB, nullable=True)
+    reason_note    = Column(Text, nullable=True)
+    ip_address     = Column(INET, nullable=True)
+    created_at     = Column(TIMESTAMPTZ, nullable=False, server_default=text("now()"), index=True)
 
-
-class AuditLogCreate(SQLModel):
-    actor_id: Optional[UUID] = None
-    actor_email: str
-    action: str
-    resource_type: str
-    resource_id: Optional[str] = None
-    ip_address: Optional[str] = None
-    metadata: Optional[dict[str, Any]] = None
-
-
-class AuditLogRead(SQLModel):
-    id: UUID
-    actor_id: Optional[UUID]
-    actor_email: str
-    action: str
-    resource_type: str
-    resource_id: Optional[str]
-    ip_address: Optional[str]
-    metadata: Optional[dict[str, Any]]
-    created_at: datetime
+    actor = relationship("AdminUser", back_populates="audit_entries", foreign_keys=[actor_id])

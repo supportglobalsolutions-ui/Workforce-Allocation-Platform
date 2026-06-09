@@ -75,12 +75,11 @@ The fastest way to answer "what runs where". Each row maps a folder to the techn
 | Directory / file | Stack | Status | Purpose |
 | :--- | :--- | :--- | :--- |
 | `frontend/` | Next.js 14, React 18, TypeScript | Implemented | Web application (all three portals) |
-| `frontend/app/` | Next.js App Router | Implemented | Route groups: `worker/`, `admin/`, `leadership/`, `login/`, `reset-password/` |
+| `frontend/app/` | Next.js App Router | Implemented | **Routing: App Router only** — route groups: `worker/`, `admin/`, `leadership/`, `login/`, `reset-password/`; sitemap at `app/pages/page.tsx` (`/pages`) |
 | `frontend/components/` | React + Tailwind | Implemented | UI: `platform/`, `navigation/`, `shared/`, `theme/`, `auth/`, `landing/`, `layout/` |
 | `frontend/lib/` | TypeScript modules | Implemented | `auth/`, `navigation/`, `theme/`, `firebase.ts`, `mock-data.ts`, `pages-registry.ts` |
 | `frontend/lib/firebase.ts` | Firebase Web SDK | Implemented | Firebase init: Auth, Firestore, Storage |
 | `frontend/lib/auth/` | Custom + Firebase | Implemented | Demo session auth (`config.ts`, `AuthProvider.tsx`, `session-store.ts`) |
-| `frontend/pages/*/code.html` | Static HTML | Implemented (legacy) | Original design mockups, kept for reference |
 | `frontend/tailwind.config.ts`, `postcss.config.js`, `globals.css` | Tailwind CSS, PostCSS | Implemented | Styling pipeline |
 | `backend/` | FastAPI (Python) | Implemented (scaffold) | API service |
 | `backend/main.py` | FastAPI + Uvicorn | Implemented | App entry, CORS, `/health`, lifespan table creation |
@@ -100,7 +99,7 @@ The fastest way to answer "what runs where". Each row maps a folder to the techn
 | `infrastructure/guacamole/` | Apache Guacamole | Planned | Config described in README, not yet committed |
 | `infrastructure/uptime-kuma/` | Uptime Kuma | Planned | RDP monitoring config, not yet committed |
 | `docker-compose.yml` | Docker Compose | Planned | Referenced across docs; file not yet committed |
-| `docs/` | Markdown | Implemented | This and other specs (`data-models.md`, `architecture.md`, etc.) |
+| `docs/` | Markdown | Implemented | Specs: `data-models.md`, `tech-stack.md`, `worker-layer-setup.md` (Phase 1 worker build runbook), etc. |
 
 ---
 
@@ -121,6 +120,7 @@ Confirmed in `frontend/package.json`.
 | **Firebase Web SDK** | 12.14 | Implemented | `frontend/lib/firebase.ts` | Initializes `auth`, Firestore `db`, `storage`; exports `COLLECTIONS` |
 
 Notes:
+- **Routing is App Router only** (`frontend/app/`). There is no Next.js Pages Router in this project. Legacy HTML design mockups were removed; live screens live under `app/`. An empty `frontend/pages/` directory is kept so Next.js dev/build does not throw `ENOENT` when scanning for Pages Router routes.
 - `frontend/lib/firebase.ts` initializes **Firebase Auth, Firestore, and Storage** from `NEXT_PUBLIC_FIREBASE_*` env vars. It currently targets **Firestore** (`getFirestore`), whereas some architecture docs mention "Realtime Database" — the code uses Firestore.
 - `frontend/lib/auth/` currently implements a **demo session model** (`DEMO_ACCOUNTS`, cookie-based) for the three roles (`worker`, `admin`, `executive`). Live Firebase Auth enforcement is a Phase 1 task.
 

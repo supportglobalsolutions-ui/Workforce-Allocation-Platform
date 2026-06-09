@@ -1,60 +1,42 @@
-from datetime import datetime, timezone
-from enum import Enum
-from typing import TYPE_CHECKING, Optional
-from uuid import UUID, uuid4
+import uuid
+from sqlalchemy import Column, String, Date, ForeignKey, CheckConstraint, text
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import relationship
 
-from sqlmodel import Field, Relationship, SQLModel
-
-if TYPE_CHECKING:
-    from .partner import Partner
-    from .shift import Shift
-    from .session import WorkSession
-    from .payroll import PayrollPeriod
-    from .quality import QualityScore
+from .base import Base
+from .enums import WorkerTypeType, WorkerStatusType
+from .mixins import TimestampMixin
 
 
-class AuthRole(str, Enum):
-    worker = "worker"
-    admin = "admin"
-    executive = "executive"
-
-
-class WorkerBase(SQLModel):
-    email: str = Field(max_length=255, unique=True, index=True)
-    display_name: str = Field(max_length=120)
-    auth_role: AuthRole = AuthRole.worker
-    country: Optional[str] = Field(default=None, max_length=80)
-    is_active: bool = True
-    partner_id: Optional[UUID] = Field(default=None, foreign_key="partners.id")
-
-
-class Worker(WorkerBase, table=True):
+class Worker(Base, TimestampMixin):
     __tablename__ = "workers"
+    __table_args__ = (
+        # Partner workers must have a partner_entity_id
+        CheckConstraint(
+            "(worker_type != 'partner_worker') OR (partner_entity_id IS NOT NULL)",
+            name="ck_workers_partner_entity_required",
+        ),
+    )
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    hashed_password: str
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    id                = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    admin_user_id     = Column(UUID(as_uuid=True), ForeignKey("admin_users.id"), unique=True, nullable=True)
+    worker_type       = Column(WorkerTypeType,   nullable=False)
+    partner_entity_id = Column(UUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=True)
+    display_name      = Column(String(255), nullable=False)
+    country           = Column(String(64),  nullable=False)
+    pay_tier          = Column(String(64),  nullable=False)
+    status            = Column(WorkerStatusType, nullable=False)
+    start_date        = Column(Date, nullable=False)
 
-    partner: Optional["Partner"] = Relationship(back_populates="workers")
-    shifts: list["Shift"] = Relationship(back_populates="worker")
-    sessions: list["WorkSession"] = Relationship(back_populates="worker")
-    payroll_periods: list["PayrollPeriod"] = Relationship(back_populates="worker")
-    quality_scores: list["QualityScore"] = Relationship(back_populates="worker")
-
-
-class WorkerCreate(WorkerBase):
-    password: str
-
-
-class WorkerRead(WorkerBase):
-    id: UUID
-    created_at: datetime
-    updated_at: datetime
-
-
-class WorkerUpdate(SQLModel):
-    display_name: Optional[str] = None
-    country: Optional[str] = None
-    is_active: Optional[bool] = None
-    partner_id: Optional[UUID] = None
+    # Relationships
+    admin_user         = relationship("AdminUser",              back_populates="workers",           foreign_keys=[admin_user_id])
+    partner_entity     = relationship("PartnerEntity",          back_populates="workers")
+    shifts             = relationship("Shift",                  back_populates="worker",            foreign_keys="Shift.worker_id")
+    allocations        = relationship("Allocation",             back_populates="worker")
+    sessions           = relationship("Session",                back_populates="worker")
+    rate_entries       = relationship("RateTableEntry",         back_populates="worker",            foreign_keys="RateTableEntry.worker_id")
+    payroll_line_items = relationship("PayrollLineItem",        back_populates="worker")
+    quality_ratings    = relationship("QualityIndicatorRating", back_populates="worker")
+    composite_scores   = relationship("QualityCompositeScore",  back_populates="worker")
+    mcq_results        = relationship("McqResult",              back_populates="worker")
+    session_tickets    = relationship("SessionTicket",          back_populates="worker")

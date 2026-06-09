@@ -1,72 +1,47 @@
-from datetime import datetime, timezone
-from enum import Enum
-from typing import TYPE_CHECKING, Any, Optional
-from uuid import UUID, uuid4
+import uuid
+from sqlalchemy import Column, Integer, Text, ForeignKey, text
+from sqlalchemy.dialects.postgresql import UUID, JSONB, TIMESTAMPTZ
+from sqlalchemy.orm import relationship
 
-from sqlalchemy import Column
-from sqlalchemy.dialects.postgresql import JSONB
-from sqlmodel import Field, Relationship, SQLModel
-
-if TYPE_CHECKING:
-    from .worker import Worker
-    from .rdp_machine import RDPMachine
+from .base import Base
+from .enums import SessionTypeType, SessionCloseType, PayrollSessionType
+from .mixins import TimestampMixin
 
 
-class SessionType(str, Enum):
-    gs_rdp = "gs_rdp"
-    partner_channel = "partner_channel"
-    third_party = "third_party"
-
-
-class SessionStatus(str, Enum):
-    active = "active"
-    paused = "paused"
-    completed = "completed"
-    abandoned = "abandoned"
-
-
-class WorkSessionBase(SQLModel):
-    worker_id: UUID = Field(foreign_key="workers.id", index=True)
-    rdp_machine_id: Optional[UUID] = Field(default=None, foreign_key="rdp_machines.id")
-    session_type: SessionType
-    status: SessionStatus = SessionStatus.active
-    currency: str = Field(default="USD", max_length=3)
-
-
-class WorkSession(WorkSessionBase, table=True):
+class Session(Base, TimestampMixin):
+    """
+    Unified session record for all three channel types:
+      - gs_rdp:               uses allocation_id + rdp_resource_id; type_specific_fields carries
+                              guacamole_connection_token, machine_health_at_start/end, last_heartbeat_at
+      - partner_multilog:     uses partner_entity_id; fields carry multilog_client_name, partner_reference_id
+      - third_party_platform: fields carry platform_name, task_or_batch_reference,
+                              self_reported_duration_minutes, optional_reported_earnings
+    """
     __tablename__ = "sessions"
 
-    id: UUID = Field(default_factory=uuid4, primary_key=True)
-    started_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
-    ended_at: Optional[datetime] = None
-    duration_minutes: Optional[int] = None
-    earnings_amount: Optional[float] = Field(default=None, ge=0)
-    metadata: Optional[dict[str, Any]] = Field(
-        default=None, sa_column=Column(JSONB, nullable=True)
-    )
-    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    id                     = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
+    worker_id              = Column(UUID(as_uuid=True), ForeignKey("workers.id"),              nullable=False, index=True)
+    session_type           = Column(SessionTypeType,    nullable=False)
+    allocation_id          = Column(UUID(as_uuid=True), ForeignKey("allocations.id"),          nullable=True)
+    rdp_resource_id        = Column(UUID(as_uuid=True), ForeignKey("rdp_resources.id"),        nullable=True)
+    partner_entity_id      = Column(UUID(as_uuid=True), ForeignKey("partner_entities.id"),     nullable=True)
+    partner_arrangement_id = Column(UUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=True)
+    start_time             = Column(TIMESTAMPTZ, nullable=False)
+    end_time               = Column(TIMESTAMPTZ, nullable=True)
+    duration_minutes       = Column(Integer, nullable=True)
+    close_status           = Column(SessionCloseType,   nullable=True)
+    payroll_approval_state = Column(PayrollSessionType, nullable=False, server_default="pending")
+    payroll_period_id      = Column(UUID(as_uuid=True), ForeignKey("payroll_periods.id"),      nullable=True)
+    admin_notes            = Column(Text, nullable=True)
+    type_specific_fields   = Column(JSONB, nullable=False, server_default="'{}'")
 
-    worker: Optional["Worker"] = Relationship(back_populates="sessions")
-    rdp_machine: Optional["RDPMachine"] = Relationship(back_populates="sessions")
-
-
-class WorkSessionCreate(WorkSessionBase):
-    metadata: Optional[dict[str, Any]] = None
-
-
-class WorkSessionRead(WorkSessionBase):
-    id: UUID
-    started_at: datetime
-    ended_at: Optional[datetime]
-    duration_minutes: Optional[int]
-    earnings_amount: Optional[float]
-    metadata: Optional[dict[str, Any]]
-    created_at: datetime
-
-
-class WorkSessionUpdate(SQLModel):
-    status: Optional[SessionStatus] = None
-    ended_at: Optional[datetime] = None
-    duration_minutes: Optional[int] = None
-    earnings_amount: Optional[float] = None
-    metadata: Optional[dict[str, Any]] = None
+    # Relationships
+    worker             = relationship("Worker",            back_populates="sessions")
+    allocation         = relationship("Allocation",        back_populates="session")
+    rdp_resource       = relationship("RDPResource",       back_populates="sessions",           foreign_keys=[rdp_resource_id])
+    partner_entity     = relationship("PartnerEntity",     back_populates="sessions",           foreign_keys=[partner_entity_id])
+    partner_arrangement = relationship("PartnerArrangement", back_populates="sessions",         foreign_keys=[partner_arrangement_id])
+    payroll_period     = relationship("PayrollPeriod",     back_populates="sessions")
+    payroll_line_items = relationship("PayrollLineItem",   back_populates="session")
+    quality_ratings    = relationship("QualityIndicatorRating", back_populates="session")
+    tickets            = relationship("SessionTicket",     back_populates="session")

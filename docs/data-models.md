@@ -125,6 +125,8 @@ erDiagram
 
 ## Layer 1 — Worker portal
 
+> **Build runbook:** Step-by-step implementation order, page-to-table mapping, and Firebase/Redis setup for this layer → [worker-layer-setup.md](worker-layer-setup.md).
+
 ### Data needs
 
 Workers (both GS registered and partner workers) manage **their own** productivity: they submit shift availability, claim RDP machines, run and log sessions across all three channels, take MCQ assessments, view their quality rank, and read the live leaderboard. Workers only ever read or write rows that belong to them; the live RDP board is the one shared view they read.
