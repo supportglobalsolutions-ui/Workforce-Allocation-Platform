@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 from typing import Any
@@ -14,6 +15,31 @@ VALID_ROLES = {"user", "admin", "super_admin"}
 VALID_STATUSES = {"pending", "approved", "rejected"}
 SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
+_BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_REPO_ROOT = os.path.dirname(_BACKEND_DIR)
+
+
+def _resolve_credentials_path() -> str | None:
+    """Find Firebase service account JSON from env or common locations."""
+    candidates = [
+        settings.FIREBASE_CREDENTIALS_PATH,
+        os.path.join(_BACKEND_DIR, "admin.json"),
+        os.path.join(_BACKEND_DIR, "firebase-service-account.json"),
+        os.path.join(_REPO_ROOT, "admin.json"),
+        os.path.join(_REPO_ROOT, "firebase-service-account.json"),
+    ]
+    seen: set[str] = set()
+    for raw in candidates:
+        if not raw:
+            continue
+        path = os.path.abspath(os.path.expanduser(raw))
+        if path in seen:
+            continue
+        seen.add(path)
+        if os.path.isfile(path):
+            return path
+    return None
+
 
 def is_firebase_ready() -> bool:
     return _initialized or bool(firebase_admin._apps)
@@ -25,18 +51,25 @@ def init_firebase() -> None:
         _initialized = True
         return
 
-    cred_path = settings.FIREBASE_CREDENTIALS_PATH
-    if not os.path.exists(cred_path):
+    cred_path = _resolve_credentials_path()
+    if not cred_path:
         logger.warning(
-            "Firebase credentials not found at %s — auth/admin user APIs will not work until configured.",
-            cred_path,
+            "Firebase credentials not found — set FIREBASE_CREDENTIALS_PATH in backend/.env "
+            "(e.g. ../admin.json). Auth and registration will not work until configured.",
         )
         return
 
     cred = credentials.Certificate(cred_path)
     options: dict[str, Any] = {}
-    if settings.FIREBASE_PROJECT_ID:
-        options["projectId"] = settings.FIREBASE_PROJECT_ID
+    project_id = settings.FIREBASE_PROJECT_ID
+    if not project_id:
+        try:
+            with open(cred_path, encoding="utf-8") as fh:
+                project_id = json.load(fh).get("project_id", "") or ""
+        except OSError:
+            project_id = ""
+    if project_id:
+        options["projectId"] = project_id
     if settings.FIREBASE_DATABASE_URL:
         options["databaseURL"] = settings.FIREBASE_DATABASE_URL
 
@@ -47,8 +80,8 @@ def init_firebase() -> None:
 def require_firebase() -> None:
     if not is_firebase_ready():
         raise RuntimeError(
-            "Firebase Admin is not configured. Add firebase-service-account.json to the backend folder "
-            "(see backend/.env.example)."
+            "Firebase Admin is not configured. Set FIREBASE_CREDENTIALS_PATH in backend/.env "
+            "(e.g. ../admin.json) and restart the API."
         )
 
 
