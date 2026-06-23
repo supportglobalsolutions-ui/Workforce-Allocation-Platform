@@ -9,6 +9,7 @@ from .config import settings
 _initialized = False
 
 VALID_ROLES = {"user", "admin", "super_admin"}
+VALID_STATUSES = {"pending", "approved", "rejected"}
 SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
 
@@ -45,15 +46,16 @@ def verify_firebase_token(id_token: str) -> dict:
 def set_user_role(uid: str, role: str) -> None:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
-    auth.set_custom_user_claims(uid, {"role": role})
+    existing = auth.get_user(uid).custom_claims or {}
+    auth.set_custom_user_claims(uid, {**existing, "role": role})
 
 
-def get_firebase_user(uid: str) -> auth.UserRecord:
-    return auth.get_user(uid)
-
-
-def get_firebase_user_by_email(email: str) -> auth.UserRecord:
-    return auth.get_user_by_email(email)
+def set_user_claims(uid: str, *, role: str, status: str) -> None:
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role: {role}")
+    if status not in VALID_STATUSES:
+        raise ValueError(f"Invalid status: {status}")
+    auth.set_custom_user_claims(uid, {"role": role, "status": status})
 
 
 def create_firebase_user(
@@ -68,9 +70,62 @@ def create_firebase_user(
         email=email,
         password=password,
         display_name=display_name,
+        disabled=False,
     )
-    auth.set_custom_user_claims(user.uid, {"role": role})
+    set_user_claims(user.uid, role=role, status="approved")
     return user
+
+
+def register_pending_user(
+    email: str,
+    password: str,
+    display_name: str,
+) -> auth.UserRecord:
+    user = auth.create_user(
+        email=email,
+        password=password,
+        display_name=display_name,
+        disabled=True,
+    )
+    set_user_claims(user.uid, role="user", status="pending")
+    return user
+
+
+def approve_firebase_user(uid: str) -> auth.UserRecord:
+    auth.update_user(uid, disabled=False)
+    set_user_claims(uid, role="user", status="approved")
+    return auth.get_user(uid)
+
+
+def reject_firebase_user(uid: str) -> auth.UserRecord:
+    auth.update_user(uid, disabled=True)
+    set_user_claims(uid, role="user", status="rejected")
+    return auth.get_user(uid)
+
+
+def get_firebase_user(uid: str) -> auth.UserRecord:
+    return auth.get_user(uid)
+
+
+def get_firebase_user_by_email(email: str) -> auth.UserRecord:
+    return auth.get_user_by_email(email)
+
+
+def user_to_dict(u: auth.UserRecord) -> dict:
+    return _user_to_dict(u)
+
+
+def _user_to_dict(u: auth.UserRecord) -> dict:
+    claims = u.custom_claims or {}
+    return {
+        "uid": u.uid,
+        "email": u.email or "",
+        "displayName": u.display_name or "",
+        "role": claims.get("role", "user"),
+        "status": claims.get("status", "approved" if not u.disabled else "pending"),
+        "disabled": u.disabled,
+        "createdAt": u.user_metadata.creation_timestamp,
+    }
 
 
 def list_firebase_users() -> list[dict]:
@@ -78,15 +133,7 @@ def list_firebase_users() -> list[dict]:
     page = auth.list_users()
     while page:
         for u in page.users:
-            claims = u.custom_claims or {}
-            results.append({
-                "uid": u.uid,
-                "email": u.email or "",
-                "displayName": u.display_name or "",
-                "role": claims.get("role", "user"),
-                "disabled": u.disabled,
-                "createdAt": u.user_metadata.creation_timestamp,
-            })
+            results.append(_user_to_dict(u))
         page = page.get_next_page()
     return results
 
@@ -94,5 +141,5 @@ def list_firebase_users() -> list[dict]:
 def bootstrap_super_admin() -> dict:
     """Ensure support.globalsolutions@gmail.com has the super_admin claim."""
     user = get_firebase_user_by_email(SUPER_ADMIN_EMAIL)
-    auth.set_custom_user_claims(user.uid, {"role": "super_admin"})
+    auth.set_custom_user_claims(user.uid, {"role": "super_admin", "status": "approved"})
     return {"uid": user.uid, "email": user.email, "role": "super_admin"}

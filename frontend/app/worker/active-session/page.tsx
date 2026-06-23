@@ -19,11 +19,11 @@ export default function ActiveSessionPage() {
   const s = (seconds % 60).toString().padStart(2, '0');
 
   return (
-    <div>
+    <div className="max-w-3xl">
       <PageHeader
-        title="Active Session"
-        description="You are currently working on a GlobalSolutions RDP machine."
-        actions={<StatusBadge status="active" label="Session Active" />}
+        title="Active session"
+        description="Current RDP work session."
+        actions={<StatusBadge status="active" label="Live" />}
       />
       <div className="grid lg:grid-cols-2 gap-6">
         <div className="glass-panel p-8 text-center">

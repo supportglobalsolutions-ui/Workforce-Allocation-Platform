@@ -3,53 +3,84 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Lock, Mail, AlertCircle, Eye, EyeOff, UserPlus, X } from 'lucide-react';
+import { UserPlus, Mail, Lock, AlertCircle, CheckCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
-import { ROLE_LANDING } from '@/lib/navigation/config';
+import { apiRegisterUser } from '@/lib/auth/firebase-auth';
 
-export default function LoginPage() {
-  const { login, session } = useAuth();
+export default function SignupPage() {
+  const { session } = useAuth();
   const router = useRouter();
+  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+  const [submitted, setSubmitted] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace(ROLE_LANDING[session.primaryPortal]);
+    if (session) router.replace('/login');
   }, [session, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');
     setLoading(true);
-    const result = await login(email, password);
-    if (!result.ok) setError(result.error ?? 'Login failed.');
-    setLoading(false);
+    try {
+      await apiRegisterUser(email, password, displayName);
+      setSubmitted(true);
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : 'Registration failed.';
+      setError(msg.includes('EMAIL_EXISTS') ? 'An account with this email already exists.' : msg);
+    } finally {
+      setLoading(false);
+    }
   };
+
+  if (submitted) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <div className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10 text-center">
+          <CheckCircle size={40} className="mx-auto text-emerald-accent mb-4" />
+          <h1 className="type-headline-md text-theme-heading font-display mb-2">Request received</h1>
+          <p className="text-sm text-theme-muted mb-6">
+            Your account is pending admin approval. You will be able to sign in once an administrator activates your account.
+          </p>
+          <Link href="/login" className="btn-primary inline-flex items-center gap-2">
+            Back to sign in
+          </Link>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex items-center justify-center p-6">
       <div className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10">
         <div className="flex flex-col items-center mb-8">
           <LogoMark size="md" />
-          <h1 className="type-headline-md text-theme-heading mt-6 font-display">
-            Global Solutions
-          </h1>
-          <p className="type-label-caps mt-3 text-theme-muted">
-            <span className="text-emerald-accent">Remote</span>
-            <span className="text-gold-accent/60 mx-1.5">·</span>
-            <span className="text-gold-accent">Smart</span>
-            <span className="text-gold-accent/60 mx-1.5">·</span>
-            <span className="text-emerald-accent">Global</span>
+          <h1 className="type-headline-md text-theme-heading mt-6 font-display">Create account</h1>
+          <p className="text-sm text-theme-muted mt-2 text-center">
+            Submit your details. An admin will review and approve access.
           </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
+              Full name
+            </label>
+            <input
+              required
+              value={displayName}
+              onChange={(e) => setDisplayName(e.target.value)}
+              placeholder="Your name"
+              className="input-field"
+            />
+          </div>
+
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
               Email
@@ -76,9 +107,10 @@ export default function LoginPage() {
               <input
                 type={showPassword ? 'text' : 'password'}
                 required
+                minLength={8}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
+                placeholder="Min 8 characters"
                 className="input-field pl-10 pr-10"
               />
               <button
@@ -90,12 +122,6 @@ export default function LoginPage() {
                 {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
               </button>
             </div>
-          </div>
-
-          <div className="flex justify-end">
-            <Link href="/reset-password" prefetch className="text-xs text-gold-accent hover:underline font-medium">
-              Forgot password?
-            </Link>
           </div>
 
           {error && (
@@ -116,62 +142,20 @@ export default function LoginPage() {
               <SpinningDots size="md" className="text-emerald-accent" />
             ) : (
               <>
-                <Lock size={16} />
-                Sign In
+                <UserPlus size={16} />
+                Request access
               </>
             )}
           </button>
         </form>
 
         <p className="text-center text-sm text-theme-muted mt-6">
-          New here?{' '}
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="text-emerald-accent hover:underline font-medium"
-          >
-            Create an account
-          </button>
+          Already have an account?{' '}
+          <Link href="/login" className="text-emerald-accent hover:underline font-medium">
+            Sign in
+          </Link>
         </p>
       </div>
-
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
-          <div className="glass-modal w-full max-w-sm p-6 relative">
-            <button
-              type="button"
-              onClick={() => setShowCreateModal(false)}
-              className="absolute top-4 right-4 text-theme-muted hover:text-white"
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
-            <div className="flex flex-col items-center text-center mb-5">
-              <UserPlus size={28} className="text-emerald-accent mb-3" />
-              <h2 className="text-lg font-bold text-white">Request platform access</h2>
-              <p className="text-sm text-theme-muted mt-2">
-                Create an account request. An administrator must approve it before you can sign in.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Link
-                href="/signup"
-                className="btn-primary w-full text-center py-2.5"
-                onClick={() => setShowCreateModal(false)}
-              >
-                Continue to registration
-              </Link>
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="btn-secondary w-full py-2.5 text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

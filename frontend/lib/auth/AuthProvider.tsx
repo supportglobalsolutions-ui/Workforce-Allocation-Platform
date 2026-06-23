@@ -25,6 +25,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = subscribeAuthState((s) => {
       setSession(s);
       setIsLoading(false);
+      // Set/clear a role cookie so Next.js middleware can enforce routes server-side.
+      if (s) {
+        document.cookie = `gs-role=${s.authRole}; path=/; max-age=86400; SameSite=Lax`;
+      } else {
+        document.cookie = 'gs-role=; path=/; max-age=0';
+      }
     });
     return unsub;
   }, []);
@@ -48,7 +54,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: false, error: 'Too many attempts. Try again later.' };
       }
       if (raw.includes('user-disabled')) {
-        return { ok: false, error: 'This account has been disabled.' };
+        return { ok: false, error: 'Your account is awaiting admin approval or has been disabled.' };
       }
       return { ok: false, error: 'Login failed. Check your credentials.' };
     }

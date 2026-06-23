@@ -13,6 +13,7 @@ import {
   ROLE_TO_PORTAL,
   ROLE_ALLOWED_PORTALS,
 } from './config';
+import { api } from '@/lib/api';
 
 export async function signIn(email: string, password: string): Promise<AuthSession> {
   const { user } = await signInWithEmailAndPassword(auth, email, password);
@@ -48,52 +49,36 @@ export function subscribeAuthState(
 
 // ── Backend API helpers ────────────────────────────────────────────────────
 
-// All requests go through Next.js /api proxy → backend (configured in next.config.js rewrites)
-const API = '/api';
-
-async function authHeaders(): Promise<HeadersInit> {
-  const token = await auth.currentUser?.getIdToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-  };
-}
+export type AccountStatus = 'pending' | 'approved' | 'rejected';
 
 export interface ManagedUser {
   uid: string;
   email: string;
   displayName: string;
   role: AuthRole;
+  status: AccountStatus;
   disabled: boolean;
   createdAt: number;
 }
 
-export async function apiListUsers(): Promise<ManagedUser[]> {
-  const res = await fetch(`${API}/auth/users`, { headers: await authHeaders() });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
+export const apiListUsers = () =>
+  api.get<ManagedUser[]>('/auth/users');
 
-export async function apiCreateUser(
+export const apiCreateUser = (
   email: string,
   password: string,
   displayName: string,
   role: AuthRole,
-): Promise<ManagedUser> {
-  const res = await fetch(`${API}/auth/users`, {
-    method: 'POST',
-    headers: await authHeaders(),
-    body: JSON.stringify({ email, password, displayName, role }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
-}
+) => api.post<ManagedUser>('/auth/users', { email, password, displayName, role });
 
-export async function apiUpdateUserRole(uid: string, role: AuthRole): Promise<void> {
-  const res = await fetch(`${API}/auth/users/${uid}/role`, {
-    method: 'PATCH',
-    headers: await authHeaders(),
-    body: JSON.stringify({ role }),
-  });
-  if (!res.ok) throw new Error(await res.text());
-}
+export const apiUpdateUserRole = (uid: string, role: AuthRole) =>
+  api.patch<void>(`/auth/users/${uid}/role`, { role });
+
+export const apiRegisterUser = (email: string, password: string, displayName: string) =>
+  api.post<ManagedUser>('/auth/register', { email, password, displayName });
+
+export const apiApproveUser = (uid: string) =>
+  api.patch<ManagedUser>(`/auth/users/${uid}/approve`, {});
+
+export const apiRejectUser = (uid: string) =>
+  api.patch<ManagedUser>(`/auth/users/${uid}/reject`, {});

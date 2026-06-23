@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { UserPlus, ShieldCheck, User, ChevronDown, AlertCircle, CheckCircle } from 'lucide-react';
+import { UserPlus, ShieldCheck, User, ChevronDown, AlertCircle, CheckCircle, XCircle } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
@@ -12,8 +12,10 @@ import {
 } from '@/lib/auth/config';
 import {
   ManagedUser,
+  apiApproveUser,
   apiCreateUser,
   apiListUsers,
+  apiRejectUser,
   apiUpdateUserRole,
 } from '@/lib/auth/firebase-auth';
 
@@ -21,6 +23,12 @@ const ROLE_BADGE: Record<AuthRole, string> = {
   super_admin: 'bg-gold-accent/20 text-gold-accent border border-gold-accent/30',
   admin: 'bg-emerald-accent/20 text-emerald-accent border border-emerald-accent/30',
   user: 'bg-white/10 text-theme-muted border border-white/10',
+};
+
+const STATUS_LABEL: Record<string, string> = {
+  pending: 'Pending approval',
+  approved: 'Active',
+  rejected: 'Rejected',
 };
 
 function RoleBadge({ role }: { role: AuthRole }) {
@@ -60,7 +68,11 @@ export default function UserManagementPage() {
   const [createSuccess, setCreateSuccess] = useState('');
 
   const [elevating, setElevating] = useState<string | null>(null);
-  const [elevateError, setElevateError] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [actingOn, setActingOn] = useState<string | null>(null);
+
+  const pendingUsers = users.filter((u) => u.status === 'pending');
+  const otherUsers = users.filter((u) => u.status !== 'pending');
 
   async function load() {
     setLoading(true);
@@ -96,14 +108,40 @@ export default function UserManagementPage() {
 
   async function handleElevate(uid: string, newRole: AuthRole) {
     setElevating(uid);
-    setElevateError('');
+    setActionError('');
     try {
       await apiUpdateUserRole(uid, newRole);
       await load();
     } catch (e: unknown) {
-      setElevateError(e instanceof Error ? e.message : 'Failed to update role.');
+      setActionError(e instanceof Error ? e.message : 'Failed to update role.');
     } finally {
       setElevating(null);
+    }
+  }
+
+  async function handleApprove(uid: string) {
+    setActingOn(uid);
+    setActionError('');
+    try {
+      await apiApproveUser(uid);
+      await load();
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Failed to approve account.');
+    } finally {
+      setActingOn(null);
+    }
+  }
+
+  async function handleReject(uid: string) {
+    setActingOn(uid);
+    setActionError('');
+    try {
+      await apiRejectUser(uid);
+      await load();
+    } catch (e: unknown) {
+      setActionError(e instanceof Error ? e.message : 'Failed to reject account.');
+    } finally {
+      setActingOn(null);
     }
   }
 
@@ -111,69 +149,47 @@ export default function UserManagementPage() {
     <div>
       <PageHeader
         title="User Management"
-        description="Create and manage platform accounts. Role assignment is governed by your own permission level."
+        description="Review account requests, approve access, and manage roles."
       />
 
-      {/* Toolbar */}
       <div className="flex items-center justify-between mb-6">
-        <p className="text-sm text-theme-muted">{users.length} account{users.length !== 1 ? 's' : ''}</p>
+        <p className="text-sm text-theme-muted">
+          {users.length} account{users.length !== 1 ? 's' : ''}
+          {pendingUsers.length > 0 && (
+            <span className="ml-2 text-gold-accent">· {pendingUsers.length} pending</span>
+          )}
+        </p>
         {allowedCreate.length > 0 && (
           <button
             onClick={() => { setShowCreate((v) => !v); setCreateError(''); setCreateSuccess(''); }}
             className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
           >
             <UserPlus size={15} />
-            Create Account
+            Create account
           </button>
         )}
       </div>
 
-      {/* Create account form */}
       {showCreate && (
         <div className="glass-panel p-6 mb-6">
-          <h2 className="text-sm font-bold text-white mb-4">New Account</h2>
+          <h2 className="text-sm font-bold text-white mb-4">New account (immediate access)</h2>
           <form onSubmit={handleCreate} className="grid sm:grid-cols-2 gap-4">
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Display Name</label>
-              <input
-                required
-                value={form.displayName}
-                onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-                placeholder="Full Name"
-                className="input-field"
-              />
+              <input required value={form.displayName} onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))} placeholder="Full Name" className="input-field" />
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Email</label>
-              <input
-                type="email"
-                required
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                placeholder="user@globalsolutions.com"
-                className="input-field"
-              />
+              <input type="email" required value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="user@globalsolutions.com" className="input-field" />
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Password</label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                placeholder="Min 8 characters"
-                className="input-field"
-              />
+              <input type="password" required minLength={8} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 8 characters" className="input-field" />
             </div>
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Role</label>
               <div className="relative">
-                <select
-                  value={form.role}
-                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AuthRole }))}
-                  className="input-field appearance-none pr-8"
-                >
+                <select value={form.role} onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AuthRole }))} className="input-field appearance-none pr-8">
                   {allowedCreate.map((r) => (
                     <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
                   ))}
@@ -181,17 +197,13 @@ export default function UserManagementPage() {
                 <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
               </div>
             </div>
-
             {createError && (
               <div className="sm:col-span-2 flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
                 <AlertCircle size={14} /> {createError}
               </div>
             )}
-
             <div className="sm:col-span-2 flex gap-3 justify-end">
-              <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary text-sm py-2 px-4">
-                Cancel
-              </button>
+              <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary text-sm py-2 px-4">Cancel</button>
               <button type="submit" disabled={creating} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
                 {creating ? <SpinningDots size="sm" className="text-emerald-accent" /> : <UserPlus size={14} />}
                 Create
@@ -201,21 +213,18 @@ export default function UserManagementPage() {
         </div>
       )}
 
-      {/* Success toast */}
       {createSuccess && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-4">
           <CheckCircle size={14} /> {createSuccess}
         </div>
       )}
 
-      {/* Elevation error */}
-      {elevateError && (
+      {actionError && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs mb-4">
-          <AlertCircle size={14} /> {elevateError}
+          <AlertCircle size={14} /> {actionError}
         </div>
       )}
 
-      {/* Users table */}
       {loading ? (
         <div className="flex justify-center py-16">
           <SpinningDots size="lg" className="text-emerald-accent" />
@@ -225,66 +234,105 @@ export default function UserManagementPage() {
           <AlertCircle size={16} /> {loadError}
         </div>
       ) : (
-        <div className="glass-panel overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">User</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Role</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Status</th>
-                {canElevate && (
-                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Change Role</th>
-                )}
-              </tr>
-            </thead>
-            <tbody>
-              {users.map((u) => (
-                <tr key={u.uid} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
-                  <td className="px-4 py-3">
-                    <p className="text-white font-medium">{u.displayName || '—'}</p>
-                    <p className="text-xs text-theme-muted">{u.email}</p>
-                  </td>
-                  <td className="px-4 py-3">
-                    <RoleBadge role={u.role} />
-                  </td>
-                  <td className="px-4 py-3">
-                    <span className={`text-xs font-medium ${u.disabled ? 'text-danger' : 'text-emerald-accent'}`}>
-                      {u.disabled ? 'Disabled' : 'Active'}
-                    </span>
-                  </td>
+        <>
+          {pendingUsers.length > 0 && (
+            <div className="glass-panel overflow-hidden mb-6">
+              <div className="px-4 py-3 border-b border-white/[0.06]">
+                <h2 className="text-sm font-bold text-white">Pending approval</h2>
+              </div>
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-b border-white/[0.06]">
+                    <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Applicant</th>
+                    <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {pendingUsers.map((u) => (
+                    <tr key={u.uid} className="border-b border-white/[0.04] last:border-0">
+                      <td className="px-4 py-3">
+                        <p className="text-white font-medium">{u.displayName || '—'}</p>
+                        <p className="text-xs text-theme-muted">{u.email}</p>
+                      </td>
+                      <td className="px-4 py-3 text-right">
+                        {actingOn === u.uid ? (
+                          <SpinningDots size="sm" className="text-emerald-accent inline-block" />
+                        ) : (
+                          <div className="inline-flex gap-2">
+                            <button onClick={() => handleApprove(u.uid)} className="btn-primary text-xs py-1.5 px-3 flex items-center gap-1">
+                              <CheckCircle size={12} /> Approve
+                            </button>
+                            <button onClick={() => handleReject(u.uid)} className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1">
+                              <XCircle size={12} /> Reject
+                            </button>
+                          </div>
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+
+          <div className="glass-panel overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06]">
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">User</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Role</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Status</th>
                   {canElevate && (
-                    <td className="px-4 py-3 text-right">
-                      {elevating === u.uid ? (
-                        <SpinningDots size="sm" className="text-emerald-accent inline-block" />
-                      ) : (
-                        <div className="inline-flex gap-1">
-                          {(['user', 'admin', 'super_admin'] as AuthRole[])
-                            .filter((r) => r !== u.role)
-                            .map((r) => (
-                              <button
-                                key={r}
-                                onClick={() => handleElevate(u.uid, r)}
-                                className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border border-white/10 text-theme-muted hover:text-white hover:border-white/30 transition-colors"
-                              >
-                                → {ROLE_DISPLAY[r]}
-                              </button>
-                            ))}
-                        </div>
-                      )}
-                    </td>
+                    <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Change role</th>
                   )}
                 </tr>
-              ))}
-              {users.length === 0 && (
-                <tr>
-                  <td colSpan={canElevate ? 4 : 3} className="px-4 py-12 text-center text-theme-muted text-sm">
-                    No accounts found.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
-        </div>
+              </thead>
+              <tbody>
+                {otherUsers.map((u) => (
+                  <tr key={u.uid} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-3">
+                      <p className="text-white font-medium">{u.displayName || '—'}</p>
+                      <p className="text-xs text-theme-muted">{u.email}</p>
+                    </td>
+                    <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
+                    <td className="px-4 py-3">
+                      <span className={`text-xs font-medium ${
+                        u.status === 'approved' && !u.disabled ? 'text-emerald-accent' :
+                        u.status === 'rejected' ? 'text-danger' : 'text-gold-accent'
+                      }`}>
+                        {STATUS_LABEL[u.status] ?? (u.disabled ? 'Disabled' : 'Active')}
+                      </span>
+                    </td>
+                    {canElevate && (
+                      <td className="px-4 py-3 text-right">
+                        {elevating === u.uid ? (
+                          <SpinningDots size="sm" className="text-emerald-accent inline-block" />
+                        ) : (
+                          <div className="inline-flex gap-1">
+                            {(['user', 'admin', 'super_admin'] as AuthRole[])
+                              .filter((r) => r !== u.role)
+                              .map((r) => (
+                                <button key={r} onClick={() => handleElevate(u.uid, r)} className="text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border border-white/10 text-theme-muted hover:text-white hover:border-white/30 transition-colors">
+                                  → {ROLE_DISPLAY[r]}
+                                </button>
+                              ))}
+                          </div>
+                        )}
+                      </td>
+                    )}
+                  </tr>
+                ))}
+                {otherUsers.length === 0 && (
+                  <tr>
+                    <td colSpan={canElevate ? 4 : 3} className="px-4 py-12 text-center text-theme-muted text-sm">
+                      No active accounts.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
     </div>
   );

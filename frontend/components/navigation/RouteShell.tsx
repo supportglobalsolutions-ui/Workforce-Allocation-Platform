@@ -4,7 +4,7 @@ import { usePathname } from 'next/navigation';
 import PublicShell from './PublicShell';
 import BareShell from './BareShell';
 
-const BARE_PATHS = ['/', '/login', '/reset-password'];
+const BARE_PATHS = ['/', '/login', '/signup', '/reset-password'];
 
 export default function RouteShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname() ?? '/';
