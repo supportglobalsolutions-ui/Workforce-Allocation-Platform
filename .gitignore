@@ -34,6 +34,11 @@ frontend/.env.local
 # Firebase service account key
 **/firebase-service-account.json
 firebase-service-account.json
+**/admin.json
+admin.json
+
+# Env files in subdirectories
+frontend/app/admin/.env
 
 # Vercel
 .vercel
