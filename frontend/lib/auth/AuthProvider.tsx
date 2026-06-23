@@ -4,6 +4,8 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { useRouter } from 'next/navigation';
 import { AuthSession, canAccessPortal } from './config';
 import { signIn, signOut, subscribeAuthState } from './firebase-auth';
+import { clearAuthRoleCookie, setAuthRoleCookie } from './cookies';
+import { getFirebaseAuthErrorMessage } from './errors';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 
 interface AuthContextValue {
@@ -25,11 +27,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = subscribeAuthState((s) => {
       setSession(s);
       setIsLoading(false);
-      // Set/clear a role cookie so Next.js middleware can enforce routes server-side.
       if (s) {
-        document.cookie = `gs-role=${s.authRole}; path=/; max-age=86400; SameSite=Lax`;
+        setAuthRoleCookie(s.authRole);
       } else {
-        document.cookie = 'gs-role=; path=/; max-age=0';
+        clearAuthRoleCookie();
       }
     });
     return unsub;
@@ -38,31 +39,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     try {
       const s = await signIn(email, password);
-      router.push(ROLE_LANDING[s.primaryPortal]);
-      return { ok: true };
+      setSession(s);
+      setAuthRoleCookie(s.authRole);
+      router.replace(ROLE_LANDING[s.primaryPortal]);
+      return { ok: true as const };
     } catch (err: unknown) {
-      const raw = err instanceof Error ? err.message : '';
-      if (
-        raw.includes('wrong-password') ||
-        raw.includes('user-not-found') ||
-        raw.includes('invalid-credential') ||
-        raw.includes('INVALID_LOGIN_CREDENTIALS')
-      ) {
-        return { ok: false, error: 'Invalid email or password.' };
-      }
-      if (raw.includes('too-many-requests')) {
-        return { ok: false, error: 'Too many attempts. Try again later.' };
-      }
-      if (raw.includes('user-disabled')) {
-        return { ok: false, error: 'Your account is awaiting admin approval or has been disabled.' };
-      }
-      return { ok: false, error: 'Login failed. Check your credentials.' };
+      return { ok: false as const, error: getFirebaseAuthErrorMessage(err) };
     }
   }, [router]);
 
   const logout = useCallback(async () => {
     await signOut();
-    router.push('/login');
+    clearAuthRoleCookie();
+    setSession(null);
+    router.replace('/login');
   }, [router]);
 
   const canAccess = useCallback(

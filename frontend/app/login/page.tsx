@@ -7,10 +7,11 @@ import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 
 export default function LoginPage() {
-  const { login, session } = useAuth();
+  const { login, session, isLoading } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -19,17 +20,28 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace(ROLE_LANDING[session.primaryPortal]);
+    if (!session) return;
+    setAuthRoleCookie(session.authRole);
+    router.replace(ROLE_LANDING[session.primaryPortal]);
   }, [session, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setError('');
     setLoading(true);
     const result = await login(email, password);
     if (!result.ok) setError(result.error ?? 'Login failed.');
     setLoading(false);
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <SpinningDots size="lg" className="text-emerald-accent" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex-1 flex items-center justify-center p-6">

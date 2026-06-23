@@ -8,9 +8,11 @@ import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { apiRegisterUser } from '@/lib/auth/firebase-auth';
+import { getFirebaseAuthErrorMessage } from '@/lib/auth/errors';
+import { ROLE_LANDING } from '@/lib/navigation/config';
 
 export default function SignupPage() {
-  const { session } = useAuth();
+  const { session, isLoading } = useAuth();
   const router = useRouter();
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -20,11 +22,13 @@ export default function SignupPage() {
   const [showPassword, setShowPassword] = useState(false);
 
   useEffect(() => {
-    if (session) router.replace('/login');
+    if (!session) return;
+    router.replace(ROLE_LANDING[session.primaryPortal]);
   }, [session, router]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (loading) return;
     setError('');
     setLoading(true);
     try {
@@ -32,11 +36,19 @@ export default function SignupPage() {
       await apiRegisterUser(email, password, displayName);
       setSubmitted(true);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Registration failed.');
+      setError(getFirebaseAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center p-6">
+        <SpinningDots size="lg" className="text-emerald-accent" />
+      </div>
+    );
+  }
 
   if (submitted) {
     return (
