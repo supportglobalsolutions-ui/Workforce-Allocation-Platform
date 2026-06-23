@@ -40,7 +40,8 @@ flowchart TB
 
     subgraph be [Backend - backend/]
         FastApi[FastAPI + Uvicorn]
-        SqlModel[SQLModel ORM]
+        SqlAlchemy[SQLAlchemy ORM]
+        PydanticSchemas[Pydantic schemas]
         Alembic[Alembic migrations]
         FbAdmin[firebase-admin - declared]
     end
@@ -59,7 +60,8 @@ flowchart TB
     Browser --> Nginx --> Next
     Next --> FastApi
     Next --> FbSdk --> Firestore
-    FastApi --> SqlModel --> Postgres
+    FastApi --> SqlAlchemy --> Postgres
+    FastApi --> PydanticSchemas
     Alembic --> Postgres
     FastApi --> FbAdmin --> Firestore
     FastApi -.planned.-> Redis
@@ -82,16 +84,16 @@ The fastest way to answer "what runs where". Each row maps a folder to the techn
 | `frontend/lib/auth/` | Custom + Firebase | Implemented | Demo session auth (`config.ts`, `AuthProvider.tsx`, `session-store.ts`) |
 | `frontend/tailwind.config.ts`, `postcss.config.js`, `globals.css` | Tailwind CSS, PostCSS | Implemented | Styling pipeline |
 | `backend/` | FastAPI (Python) | Implemented (scaffold) | API service |
-| `backend/main.py` | FastAPI + Uvicorn | Implemented | App entry, CORS, `/health`, lifespan table creation |
+| `backend/main.py` | FastAPI + Uvicorn | Implemented | App entry, CORS, `/health`, domain routers |
 | `backend/core/config.py` | pydantic-settings | Implemented | Env var loading (`.env`) |
-| `backend/core/database.py` | SQLModel + SQLAlchemy engine | Implemented | Engine, `get_session()`, `create_db_and_tables()` |
+| `backend/core/database.py` | SQLAlchemy engine | Implemented | Engine, `SessionLocal`, `get_db()` dependency |
 | `backend/core/security.py` | python-jose (JWT), passlib (bcrypt) | Implemented | Password hashing, JWT issue/verify, `get_current_user` |
 | `backend/core/permissions.py` | FastAPI deps | Implemented | Role-based access logic |
-| `backend/models/` | SQLModel | Implemented | ORM + schema models (`worker.py`, `session.py`, `rdp_machine.py`, `shift.py`, `payroll.py`, `quality.py`, `partner.py`, `audit_log.py`) |
-| `backend/migrations/` | Alembic | Implemented (no versions yet) | `env.py`, `script.py.mako`; `versions/` is empty until first migration |
+| `backend/models/` | SQLAlchemy | Implemented | Declarative ORM models (`worker.py`, `session.py`, `rdp_machine.py`, `shift.py`, `payroll.py`, `quality.py`, `partner.py`, `audit_log.py`, …) |
+| `backend/migrations/` | Alembic | Implemented | `env.py`, `script.py.mako`, `versions/` with initial schema migration |
 | `backend/alembic.ini` | Alembic | Implemented | Migration config; points `sqlalchemy.url` at PostgreSQL |
-| `backend/routers/` | FastAPI routers | Planned | Listed in README; not yet committed (commented out in `main.py`) |
-| `backend/schemas/` | Pydantic | Planned | Request/response shapes; currently folded into SQLModel `*Create/*Read/*Update` |
+| `backend/routers/` | FastAPI routers | Implemented | `auth.py`, `workers.py`, `shifts.py`, `rdp.py`, `sessions.py`, `payroll.py`, `quality.py`, `leaderboard.py`, `audit.py` |
+| `backend/schemas/` | Pydantic | Implemented | Request/response shapes (`*Create`, `*Update`, `*Response`) separate from ORM models |
 | `backend/services/` | Python business logic | Planned | RDP state machine, payroll/quality engines, firebase sync |
 | `infrastructure/nginx/` | Nginx | Planned | Only `README.md` placeholder committed |
 | `infrastructure/redis/` | Redis | Planned | `redis.conf` described in README, not yet committed |
@@ -134,11 +136,10 @@ Confirmed in `backend/requirements.txt`.
 | :--- | :--- | :--- | :--- | :--- |
 | **FastAPI** | 0.111 | Implemented | `backend/main.py`, `core/security.py` | HTTP API framework; CORS, dependency injection, `/health`, auto docs at `/docs` |
 | **Uvicorn** | 0.29 | Declared | run target for `main.py` | ASGI server (run command not yet scripted) |
-| **SQLModel** | 0.0.19 | Implemented | `backend/models/**`, `core/database.py` | ORM **and** Pydantic schemas in one. Each entity defines `Base` / `Create` / `Read` / `Update` (see `models/worker.py`) |
-| **SQLAlchemy** | (via SQLModel) | Implemented | `core/database.py`, `migrations/env.py` | Engine and metadata under SQLModel; `create_engine` with pooling |
-| **Alembic** | 1.13.1 | Implemented (no versions) | `backend/alembic.ini`, `backend/migrations/env.py` | Schema migrations; `target_metadata = SQLModel.metadata`, `compare_type=True`; reads `DATABASE_URL` env |
+| **SQLAlchemy** | 2.0.30 | Implemented | `backend/models/**`, `core/database.py`, `migrations/env.py` | Declarative ORM (`DeclarativeBase`, `Column`, `relationship`); engine + session in `database.py` |
+| **Alembic** | 1.13.1 | Implemented | `backend/alembic.ini`, `backend/migrations/env.py`, `migrations/versions/` | Schema migrations; `target_metadata = Base.metadata`, `compare_type=True`; reads `DATABASE_URL` env |
 | **psycopg2-binary** | 2.9.9 | Implemented | DB driver for `DATABASE_URL` | PostgreSQL driver used by the engine |
-| **Pydantic** | 2.7.1 | Implemented | SQLModel models, validation | Data validation (SQLModel builds on it) |
+| **Pydantic** | 2.7.1 | Implemented | `backend/schemas/**`, `routers/auth.py` | API request/response validation (`*Create`, `*Update`, `*Response`) |
 | **pydantic-settings** | 2.2.1 | Implemented | `backend/core/config.py` | Loads settings from `.env` (`DATABASE_URL`, Firebase, CORS, JWT) |
 | **email-validator** | 2.1.1 | Declared | worker email fields | Email format validation |
 | **python-jose[cryptography]** | 3.3.0 | Implemented | `backend/core/security.py` | JWT encode/decode for access tokens |
@@ -209,9 +210,9 @@ All of the following are described in `README.md` (Deployment Architecture) but 
 
 ## 8. Summary by question
 
-**"Where is SQLModel used?"** — `backend/models/*.py` (all entity models) and `backend/core/database.py` (engine + session). SQLModel replaces the README's mention of "SQLAlchemy ORM"; it is built on SQLAlchemy and provides Pydantic schemas in the same class.
+**"Where is SQLAlchemy used?"** — `backend/models/*.py` (all entity ORM models) and `backend/core/database.py` (engine + `get_db()` session dependency). Pydantic API shapes live separately in `backend/schemas/`.
 
-**"Where is Alembic used?"** — `backend/alembic.ini` and `backend/migrations/env.py` (with `script.py.mako`). It targets `SQLModel.metadata` and reads `DATABASE_URL`. No version migrations have been generated yet (`migrations/versions/` is empty) — the first will be created in Phase 1 Week 2.
+**"Where is Alembic used?"** — `backend/alembic.ini` and `backend/migrations/env.py` (with `script.py.mako`). It targets `Base.metadata` from `models/base.py` and reads `DATABASE_URL`. Initial migration in `migrations/versions/`.
 
 **"Where is Redis used?"** — Specified in `docs/data-models.md` and `README.md` for claim locks, heartbeats, and rate limiting at `infrastructure/redis/`, but **not yet implemented** in code or dependencies.
 
@@ -223,10 +224,10 @@ All of the following are described in `README.md` (Deployment Architecture) but 
 
 ## 9. Known doc-vs-code gaps to reconcile
 
-1. **ORM naming** — README says "SQLAlchemy ORM models"; code uses **SQLModel** (`requirements.txt`, `models/`). Treat SQLModel as authoritative.
+1. **ORM naming** — README says "SQLAlchemy ORM models"; code uses **SQLAlchemy 2.0 declarative** models in `backend/models/` with **separate Pydantic schemas** in `backend/schemas/`. Some older docs may still mention SQLModel — treat the code as authoritative.
 2. **Auth mechanism** — README/charter say Firebase Auth; backend code currently uses **local JWT + bcrypt**. `firebase-admin` is declared but unused.
 3. **Firebase product** — Some docs say "Realtime Database"; `frontend/lib/firebase.ts` uses **Firestore**.
-4. **Backend folders** — `routers/`, `schemas/`, `services/` are in the README layout but not yet committed; schemas currently live inside SQLModel models.
+4. **Backend services** — `services/` (RDP state machine, payroll engine, firebase sync) are planned but not yet committed; routers call ORM directly for now.
 5. **Infrastructure** — `docker-compose.yml` and most `infrastructure/*` configs are described but not yet committed; only `infrastructure/nginx/README.md` exists.
 
 ---

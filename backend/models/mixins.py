@@ -1,5 +1,6 @@
 from sqlalchemy import Column, DateTime, text
-from sqlalchemy.dialects.postgresql import TIMESTAMPTZ
+
+from .types import TIMESTAMPTZ
 
 
 class TimestampMixin:

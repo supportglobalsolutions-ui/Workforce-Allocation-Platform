@@ -1,11 +1,33 @@
 /** @type {import('next').NextConfig} */
+const path = require('path');
+
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,
-  transpilePackages: ['framer-motion'],
+  transpilePackages: ['framer-motion', 'firebase'],
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
+  },
+  webpack: (config) => {
+    // Firebase sub-packages (e.g. firebase/firestore) import @firebase/* peers.
+    // Resolve from the project root so nested firebase/node_modules does not shadow them.
+    config.resolve.modules = [
+      path.resolve(__dirname, 'node_modules'),
+      ...(config.resolve.modules ?? ['node_modules']),
+    ];
+    return config;
+  },
+  async rewrites() {
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    return [
+      {
+        // Proxy /api/:path* → backend :path*
+        // e.g. /api/auth/users → http://localhost:8000/auth/users
+        source: '/api/:path*',
+        destination: `${backendUrl}/:path*`,
+      },
+    ];
   },
   async redirects() {
     return [

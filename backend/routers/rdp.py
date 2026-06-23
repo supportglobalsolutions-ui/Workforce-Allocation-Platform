@@ -1,0 +1,103 @@
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import Session
+
+from core.database import get_db
+from core.permissions import require_admin, require_user
+from models.allocation import Allocation
+from models.enums import RdpStatusEnum
+from models.rdp_machine import RDPResource
+from schemas.rdp import RDPResourceCreate, RDPResourceResponse, RDPResourceUpdate
+from .deps import apply_update, get_worker_for_user
+
+router = APIRouter()
+
+
+@router.get("", response_model=list[RDPResourceResponse])
+def list_rdp_resources(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_user),
+):
+    return db.query(RDPResource).order_by(RDPResource.nickname).all()
+
+
+@router.get("/{rdp_id}", response_model=RDPResourceResponse)
+def get_rdp_resource(
+    rdp_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_user),
+):
+    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    return resource
+
+
+@router.post("", response_model=RDPResourceResponse, status_code=status.HTTP_201_CREATED)
+def create_rdp_resource(
+    body: RDPResourceCreate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    resource = RDPResource(**body.model_dump())
+    db.add(resource)
+    db.commit()
+    db.refresh(resource)
+    return resource
+
+
+@router.patch("/{rdp_id}", response_model=RDPResourceResponse)
+def update_rdp_resource(
+    rdp_id: UUID,
+    body: RDPResourceUpdate,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+
+    apply_update(resource, body)
+    db.commit()
+    db.refresh(resource)
+    return resource
+
+
+@router.post("/{rdp_id}/claim", status_code=status.HTTP_201_CREATED)
+def claim_rdp_resource(
+    rdp_id: UUID,
+    shift_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Claim an online-free RDP machine and create an open allocation."""
+    worker = get_worker_for_user(db, current_user)
+    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+
+    if resource.status != RdpStatusEnum.online_free:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"RDP resource is not claimable (status={resource.status})",
+        )
+
+    allocation = Allocation(
+        worker_id=worker.id,
+        rdp_resource_id=resource.id,
+        shift_id=shift_id,
+    )
+    resource.status = RdpStatusEnum.assigned
+    resource.assigned_worker_id = worker.id
+
+    db.add(allocation)
+    db.commit()
+    db.refresh(allocation)
+
+    return {
+        "allocation_id": allocation.id,
+        "rdp_resource_id": resource.id,
+        "worker_id": worker.id,
+        "status": resource.status.value,
+    }

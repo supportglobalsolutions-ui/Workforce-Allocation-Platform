@@ -48,7 +48,8 @@ export function subscribeAuthState(
 
 // ── Backend API helpers ────────────────────────────────────────────────────
 
-const API = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+// All requests go through Next.js /api proxy → backend (configured in next.config.js rewrites)
+const API = '/api';
 
 async function authHeaders(): Promise<HeadersInit> {
   const token = await auth.currentUser?.getIdToken();

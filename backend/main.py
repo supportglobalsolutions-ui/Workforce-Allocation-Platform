@@ -5,7 +5,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.firebase_admin import init_firebase
-from routers import auth
+from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, workers
 
 
 @asynccontextmanager
@@ -37,14 +37,11 @@ def health():
 
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
-
-# Remaining routers registered as they are implemented:
-# from routers import workers, shifts, rdp, sessions, payroll, quality, leaderboard, audit
-# app.include_router(workers.router, prefix="/workers", tags=["workers"])
-# app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
-# app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
-# app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
-# app.include_router(payroll.router, prefix="/payroll", tags=["payroll"])
-# app.include_router(quality.router, prefix="/quality", tags=["quality"])
-# app.include_router(leaderboard.router, prefix="/leaderboard", tags=["leaderboard"])
-# app.include_router(audit.router, prefix="/audit", tags=["audit"])
+app.include_router(workers.router, prefix="/workers", tags=["workers"])
+app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
+app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
+app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
+app.include_router(payroll.router, prefix="/payroll", tags=["payroll"])
+app.include_router(quality.router, prefix="/quality", tags=["quality"])
+app.include_router(leaderboard.router, prefix="/leaderboard", tags=["leaderboard"])
+app.include_router(audit.router, prefix="/audit", tags=["audit"])
