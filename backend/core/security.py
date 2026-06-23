@@ -9,8 +9,7 @@ from .firebase_admin import verify_firebase_token
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
 
-# Valid roles — must match Firebase custom claims and the Worker.auth_role enum
-ROLES = {"worker", "admin", "executive"}
+ROLES = {"user", "admin", "super_admin"}
 
 
 def hash_password(password: str) -> str:
@@ -26,10 +25,8 @@ def get_current_user(
 ) -> dict:
     """
     Verify the Firebase ID token sent as Bearer <token>.
-    Returns the decoded token payload which includes:
-      - uid: Firebase user UID
-      - email: user email
-      - role: custom claim set via set_user_role() (worker | admin | executive)
+    Returns decoded payload with uid, email, and role custom claim.
+    Roles: user | admin | super_admin
     """
     if not credentials:
         raise HTTPException(
@@ -47,7 +44,7 @@ def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    role = decoded.get("role", "worker")
+    role = decoded.get("role", "user")
     if role not in ROLES:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,

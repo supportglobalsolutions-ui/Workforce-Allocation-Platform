@@ -4,6 +4,7 @@ import { useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
+import SpinningDots from '@/components/shared/SpinningDots';
 
 export default function PortalGuard({
   children,
@@ -12,14 +13,14 @@ export default function PortalGuard({
   children: React.ReactNode;
   requiredPortal: PortalRole;
 }) {
-  const { session, canAccess } = useAuth();
+  const { session, isLoading, canAccess } = useAuth();
   const router = useRouter();
   const redirecting = useRef(false);
 
   const allowed = session && canAccess(requiredPortal);
 
   useEffect(() => {
-    if (allowed || redirecting.current) return;
+    if (isLoading || allowed || redirecting.current) return;
 
     redirecting.current = true;
     if (!session) {
@@ -27,7 +28,15 @@ export default function PortalGuard({
       return;
     }
     router.replace(ROLE_LANDING[session.primaryPortal]);
-  }, [allowed, session, router, requiredPortal]);
+  }, [isLoading, allowed, session, router]);
+
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <SpinningDots size="lg" className="text-emerald-accent" />
+      </div>
+    );
+  }
 
   if (!allowed) return null;
 

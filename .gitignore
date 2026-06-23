@@ -37,6 +37,10 @@ firebase-service-account.json
 **/admin.json
 admin.json
 
+# Firebase security rules — copy-paste into Firebase Console, never commit
+firestore.rules
+storage.rules
+
 # Env files in subdirectories
 frontend/app/admin/.env
 

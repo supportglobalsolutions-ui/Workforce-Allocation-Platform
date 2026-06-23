@@ -1,14 +1,9 @@
 'use client';
 
-import { createContext, useCallback, useContext, useSyncExternalStore } from 'react';
+import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { AuthSession, authenticate, canAccessPortal } from './config';
-import {
-  getSessionServerSnapshot,
-  getSessionSnapshot,
-  subscribeSession,
-  writeStoredSession,
-} from './session-store';
+import { AuthSession, canAccessPortal } from './config';
+import { signIn, signOut, subscribeAuthState } from './firebase-auth';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 
 interface AuthContextValue {
@@ -23,42 +18,54 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const session = useSyncExternalStore(
-    subscribeSession,
-    getSessionSnapshot,
-    getSessionServerSnapshot
-  );
+  const [session, setSession] = useState<AuthSession | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const unsub = subscribeAuthState((s) => {
+      setSession(s);
+      setIsLoading(false);
+    });
+    return unsub;
+  }, []);
 
   const login = useCallback(async (email: string, password: string) => {
-    const result = authenticate(email, password);
-    if (!result) {
-      return { ok: false, error: 'Invalid email or password.' };
+    try {
+      const s = await signIn(email, password);
+      router.push(ROLE_LANDING[s.primaryPortal]);
+      return { ok: true };
+    } catch (err: unknown) {
+      const raw = err instanceof Error ? err.message : '';
+      if (
+        raw.includes('wrong-password') ||
+        raw.includes('user-not-found') ||
+        raw.includes('invalid-credential') ||
+        raw.includes('INVALID_LOGIN_CREDENTIALS')
+      ) {
+        return { ok: false, error: 'Invalid email or password.' };
+      }
+      if (raw.includes('too-many-requests')) {
+        return { ok: false, error: 'Too many attempts. Try again later.' };
+      }
+      if (raw.includes('user-disabled')) {
+        return { ok: false, error: 'This account has been disabled.' };
+      }
+      return { ok: false, error: 'Login failed. Check your credentials.' };
     }
-    writeStoredSession(result);
-    router.push(ROLE_LANDING[result.primaryPortal]);
-    return { ok: true };
   }, [router]);
 
-  const logout = useCallback(() => {
-    writeStoredSession(null);
-    router.push('/');
+  const logout = useCallback(async () => {
+    await signOut();
+    router.push('/login');
   }, [router]);
 
   const canAccess = useCallback(
     (portal: PortalRole) => canAccessPortal(session, portal),
-    [session]
+    [session],
   );
 
   return (
-    <AuthContext.Provider
-      value={{
-        session,
-        isLoading: false,
-        login,
-        logout,
-        canAccess,
-      }}
-    >
+    <AuthContext.Provider value={{ session, isLoading, login, logout, canAccess }}>
       {children}
     </AuthContext.Provider>
   );

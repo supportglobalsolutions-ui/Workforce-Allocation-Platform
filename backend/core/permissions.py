@@ -5,12 +5,19 @@ from fastapi import Depends, HTTPException, status
 
 from .security import get_current_user
 
-AuthRole = str  # "worker" | "admin" | "executive"
+AuthRole = str  # "user" | "admin" | "super_admin"
 
 ROLE_HIERARCHY: dict[AuthRole, int] = {
-    "worker": 1,
+    "user": 1,
     "admin": 2,
-    "executive": 3,
+    "super_admin": 3,
+}
+
+# What each role is allowed to assign when creating/elevating another account.
+ROLE_CAN_ASSIGN: dict[AuthRole, set[AuthRole]] = {
+    "super_admin": {"user", "admin", "super_admin"},
+    "admin": {"user"},
+    "user": set(),
 }
 
 
@@ -42,6 +49,6 @@ def require_min_role(min_role: AuthRole) -> Callable:
     return dependency
 
 
-require_worker = require_min_role("worker")
+require_user = require_min_role("user")
 require_admin = require_min_role("admin")
-require_executive = require_min_role("executive")
+require_super_admin = require_min_role("super_admin")

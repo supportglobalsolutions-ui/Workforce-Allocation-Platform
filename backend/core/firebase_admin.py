@@ -1,4 +1,5 @@
 import os
+from typing import Any
 
 import firebase_admin
 from firebase_admin import auth, credentials
@@ -6,6 +7,9 @@ from firebase_admin import auth, credentials
 from .config import settings
 
 _initialized = False
+
+VALID_ROLES = {"user", "admin", "super_admin"}
+SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
 
 def init_firebase() -> None:
@@ -17,10 +21,9 @@ def init_firebase() -> None:
     if os.path.exists(cred_path):
         cred = credentials.Certificate(cred_path)
     else:
-        # Fall back to Application Default Credentials (Cloud Run / GCP)
         cred = credentials.ApplicationDefault()
 
-    options = {}
+    options: dict[str, Any] = {}
     if settings.FIREBASE_DATABASE_URL:
         options["databaseURL"] = settings.FIREBASE_DATABASE_URL
 
@@ -29,7 +32,6 @@ def init_firebase() -> None:
 
 
 def verify_firebase_token(id_token: str) -> dict:
-    """Verify a Firebase ID token and return the decoded claims."""
     try:
         return auth.verify_id_token(id_token, check_revoked=True)
     except auth.RevokedIdTokenError:
@@ -41,9 +43,56 @@ def verify_firebase_token(id_token: str) -> dict:
 
 
 def set_user_role(uid: str, role: str) -> None:
-    """Set a custom claim 'role' on a Firebase user. Call this after creating a worker."""
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role: {role}")
     auth.set_custom_user_claims(uid, {"role": role})
 
 
-def get_firebase_user(uid: str):
+def get_firebase_user(uid: str) -> auth.UserRecord:
     return auth.get_user(uid)
+
+
+def get_firebase_user_by_email(email: str) -> auth.UserRecord:
+    return auth.get_user_by_email(email)
+
+
+def create_firebase_user(
+    email: str,
+    password: str,
+    display_name: str,
+    role: str,
+) -> auth.UserRecord:
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role: {role}")
+    user = auth.create_user(
+        email=email,
+        password=password,
+        display_name=display_name,
+    )
+    auth.set_custom_user_claims(user.uid, {"role": role})
+    return user
+
+
+def list_firebase_users() -> list[dict]:
+    results = []
+    page = auth.list_users()
+    while page:
+        for u in page.users:
+            claims = u.custom_claims or {}
+            results.append({
+                "uid": u.uid,
+                "email": u.email or "",
+                "displayName": u.display_name or "",
+                "role": claims.get("role", "user"),
+                "disabled": u.disabled,
+                "createdAt": u.user_metadata.creation_timestamp,
+            })
+        page = page.get_next_page()
+    return results
+
+
+def bootstrap_super_admin() -> dict:
+    """Ensure support.globalsolutions@gmail.com has the super_admin claim."""
+    user = get_firebase_user_by_email(SUPER_ADMIN_EMAIL)
+    auth.set_custom_user_claims(user.uid, {"role": "super_admin"})
+    return {"uid": user.uid, "email": user.email, "role": "super_admin"}

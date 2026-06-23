@@ -7,7 +7,6 @@ import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
-import { DEMO_ACCOUNTS } from '@/lib/auth/config';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 
 export default function LoginPage() {
@@ -51,7 +50,9 @@ export default function LoginPage() {
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Email</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
+              Email
+            </label>
             <div className="relative">
               <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent/70" />
               <input
@@ -64,8 +65,11 @@ export default function LoginPage() {
               />
             </div>
           </div>
+
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Password</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
+              Password
+            </label>
             <div className="relative">
               <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent/70 pointer-events-none" />
               <input
@@ -112,27 +116,11 @@ export default function LoginPage() {
             ) : (
               <>
                 <Lock size={16} />
-                Login
+                Sign In
               </>
             )}
           </button>
         </form>
-
-        <div className="mt-6 pt-5 border-t border-theme">
-          <p className="text-[10px] text-theme-muted text-center mb-2 uppercase tracking-wider font-bold">Demo accounts</p>
-          <div className="space-y-1 text-[10px] font-mono text-theme-muted text-center">
-            {Object.entries(DEMO_ACCOUNTS).map(([em, acc]) => (
-              <button
-                key={em}
-                type="button"
-                onClick={() => { setEmail(em); setPassword('123456'); }}
-                className="block w-full hover:text-emerald-accent transition-colors py-0.5"
-              >
-                {em} · {acc.displayName}
-              </button>
-            ))}
-          </div>
-        </div>
       </div>
     </div>
   );

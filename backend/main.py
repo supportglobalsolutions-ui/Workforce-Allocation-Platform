@@ -5,12 +5,12 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from core.config import settings
 from core.firebase_admin import init_firebase
+from routers import auth
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_firebase()
-    # Schema is managed by Alembic — never call Base.metadata.create_all() here
     yield
 
 
@@ -36,9 +36,10 @@ def health():
     return {"status": "ok"}
 
 
-# Routers registered here as they are implemented
-# from routers import auth, workers, shifts, rdp, sessions, payroll, quality, leaderboard, audit
-# app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(auth.router, prefix="/auth", tags=["auth"])
+
+# Remaining routers registered as they are implemented:
+# from routers import workers, shifts, rdp, sessions, payroll, quality, leaderboard, audit
 # app.include_router(workers.router, prefix="/workers", tags=["workers"])
 # app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
 # app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
