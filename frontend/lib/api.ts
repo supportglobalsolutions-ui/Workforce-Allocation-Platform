@@ -20,23 +20,50 @@ async function headers(extra?: HeadersInit): Promise<HeadersInit> {
   };
 }
 
+async function parseErrorMessage(res: Response): Promise<string> {
+  const text = await res.text().catch(() => '');
+
+  if (text) {
+    try {
+      const json = JSON.parse(text) as { detail?: string | { msg: string }[] };
+      if (typeof json.detail === 'string') return json.detail;
+      if (Array.isArray(json.detail)) {
+        return json.detail.map((d) => d.msg).join(', ');
+      }
+    } catch {
+      if (text.length < 300) return text;
+    }
+  }
+
+  if (res.status === 500 || res.status === 502 || res.status === 503) {
+    return 'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000';
+  }
+
+  return `Request failed (${res.status})`;
+}
+
 async function request<T>(
   method: string,
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const res = await fetch(`${BASE}${path}`, {
-    method,
-    headers: await headers(),
-    ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-  });
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => res.statusText);
-    throw new Error(text || `HTTP ${res.status}`);
+  let res: Response;
+  try {
+    res = await fetch(`${BASE}${path}`, {
+      method,
+      headers: await headers(),
+      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+    });
+  } catch {
+    throw new Error(
+      'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000',
+    );
   }
 
-  // 204 No Content
+  if (!res.ok) {
+    throw new Error(await parseErrorMessage(res));
+  }
+
   if (res.status === 204) return undefined as unknown as T;
   return res.json() as Promise<T>;
 }

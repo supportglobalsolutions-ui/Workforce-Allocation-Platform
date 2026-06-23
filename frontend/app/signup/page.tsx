@@ -12,7 +12,6 @@ import { apiRegisterUser } from '@/lib/auth/firebase-auth';
 export default function SignupPage() {
   const { session } = useAuth();
   const router = useRouter();
-  const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
@@ -29,11 +28,11 @@ export default function SignupPage() {
     setError('');
     setLoading(true);
     try {
+      const displayName = email.split('@')[0] || 'User';
       await apiRegisterUser(email, password, displayName);
       setSubmitted(true);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Registration failed.';
-      setError(msg.includes('EMAIL_EXISTS') ? 'An account with this email already exists.' : msg);
+      setError(err instanceof Error ? err.message : 'Registration failed.');
     } finally {
       setLoading(false);
     }
@@ -44,9 +43,9 @@ export default function SignupPage() {
       <div className="flex-1 flex items-center justify-center p-6">
         <div className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10 text-center">
           <CheckCircle size={40} className="mx-auto text-emerald-accent mb-4" />
-          <h1 className="type-headline-md text-theme-heading font-display mb-2">Request received</h1>
+          <h1 className="type-headline-md text-theme-heading font-display mb-2">Account created</h1>
           <p className="text-sm text-theme-muted mb-6">
-            Your account is pending admin approval. You will be able to sign in once an administrator activates your account.
+            Your account is pending admin approval. You cannot sign in until an administrator approves your account.
           </p>
           <Link href="/login" className="btn-primary inline-flex items-center gap-2">
             Back to sign in
@@ -62,25 +61,9 @@ export default function SignupPage() {
         <div className="flex flex-col items-center mb-8">
           <LogoMark size="md" />
           <h1 className="type-headline-md text-theme-heading mt-6 font-display">Create account</h1>
-          <p className="text-sm text-theme-muted mt-2 text-center">
-            Submit your details. An admin will review and approve access.
-          </p>
         </div>
 
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
-              Full name
-            </label>
-            <input
-              required
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="Your name"
-              className="input-field"
-            />
-          </div>
-
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
               Email
@@ -143,7 +126,7 @@ export default function SignupPage() {
             ) : (
               <>
                 <UserPlus size={16} />
-                Request access
+                Create account
               </>
             )}
           </button>

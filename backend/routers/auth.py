@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 
+from core.auth_errors import http_error_from_firebase
 from core.firebase_admin import (
     SUPER_ADMIN_EMAIL,
     approve_firebase_user,
@@ -55,7 +56,7 @@ def register_user(body: RegisterRequest):
             display_name=body.displayName,
         )
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise http_error_from_firebase(exc) from exc
 
     return user_to_dict(user)
 

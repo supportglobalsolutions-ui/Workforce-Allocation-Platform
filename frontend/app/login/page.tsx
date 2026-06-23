@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Lock, Mail, AlertCircle, Eye, EyeOff, UserPlus, X } from 'lucide-react';
+import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
@@ -17,7 +17,6 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
-  const [showCreateModal, setShowCreateModal] = useState(false);
 
   useEffect(() => {
     if (session) router.replace(ROLE_LANDING[session.primaryPortal]);
@@ -125,53 +124,11 @@ export default function LoginPage() {
 
         <p className="text-center text-sm text-theme-muted mt-6">
           New here?{' '}
-          <button
-            type="button"
-            onClick={() => setShowCreateModal(true)}
-            className="text-emerald-accent hover:underline font-medium"
-          >
+          <Link href="/signup" className="text-emerald-accent hover:underline font-medium">
             Create an account
-          </button>
+          </Link>
         </p>
       </div>
-
-      {showCreateModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-6 bg-black/60 backdrop-blur-sm">
-          <div className="glass-modal w-full max-w-sm p-6 relative">
-            <button
-              type="button"
-              onClick={() => setShowCreateModal(false)}
-              className="absolute top-4 right-4 text-theme-muted hover:text-white"
-              aria-label="Close"
-            >
-              <X size={18} />
-            </button>
-            <div className="flex flex-col items-center text-center mb-5">
-              <UserPlus size={28} className="text-emerald-accent mb-3" />
-              <h2 className="text-lg font-bold text-white">Request platform access</h2>
-              <p className="text-sm text-theme-muted mt-2">
-                Create an account request. An administrator must approve it before you can sign in.
-              </p>
-            </div>
-            <div className="flex flex-col gap-2">
-              <Link
-                href="/signup"
-                className="btn-primary w-full text-center py-2.5"
-                onClick={() => setShowCreateModal(false)}
-              >
-                Continue to registration
-              </Link>
-              <button
-                type="button"
-                onClick={() => setShowCreateModal(false)}
-                className="btn-secondary w-full py-2.5 text-sm"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import logging
 import os
 from typing import Any
 
@@ -6,6 +7,7 @@ from firebase_admin import auth, credentials
 
 from .config import settings
 
+logger = logging.getLogger(__name__)
 _initialized = False
 
 VALID_ROLES = {"user", "admin", "super_admin"}
@@ -13,23 +15,41 @@ VALID_STATUSES = {"pending", "approved", "rejected"}
 SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
 
+def is_firebase_ready() -> bool:
+    return _initialized or bool(firebase_admin._apps)
+
+
 def init_firebase() -> None:
     global _initialized
-    if _initialized or firebase_admin._apps:
+    if is_firebase_ready():
+        _initialized = True
         return
 
     cred_path = settings.FIREBASE_CREDENTIALS_PATH
-    if os.path.exists(cred_path):
-        cred = credentials.Certificate(cred_path)
-    else:
-        cred = credentials.ApplicationDefault()
+    if not os.path.exists(cred_path):
+        logger.warning(
+            "Firebase credentials not found at %s — auth/admin user APIs will not work until configured.",
+            cred_path,
+        )
+        return
 
+    cred = credentials.Certificate(cred_path)
     options: dict[str, Any] = {}
+    if settings.FIREBASE_PROJECT_ID:
+        options["projectId"] = settings.FIREBASE_PROJECT_ID
     if settings.FIREBASE_DATABASE_URL:
         options["databaseURL"] = settings.FIREBASE_DATABASE_URL
 
     firebase_admin.initialize_app(cred, options)
     _initialized = True
+
+
+def require_firebase() -> None:
+    if not is_firebase_ready():
+        raise RuntimeError(
+            "Firebase Admin is not configured. Add firebase-service-account.json to the backend folder "
+            "(see backend/.env.example)."
+        )
 
 
 def verify_firebase_token(id_token: str) -> dict:
@@ -81,6 +101,7 @@ def register_pending_user(
     password: str,
     display_name: str,
 ) -> auth.UserRecord:
+    require_firebase()
     user = auth.create_user(
         email=email,
         password=password,
