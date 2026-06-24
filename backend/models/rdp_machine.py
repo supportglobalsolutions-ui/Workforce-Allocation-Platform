@@ -19,7 +19,7 @@ class RDPResource(Base):
     assigned_worker_id     = Column(UUID(as_uuid=True), ForeignKey("workers.id"), nullable=True)
     guacamole_connection_id = Column(String(128), nullable=True)
     health_notes           = Column(Text, nullable=True)
-    risk_flags             = Column(JSONB, nullable=False, server_default="'[]'")
+    risk_flags             = Column(JSONB, nullable=False, server_default=text("'[]'"))
     last_health_check_at   = Column(TIMESTAMPTZ, nullable=True)
     status_changed_at      = Column(TIMESTAMPTZ, nullable=False, server_default=text("now()"))
 

@@ -56,7 +56,7 @@ class PayrollLineItem(Base, CreatedAtMixin):
     worker_net        = Column(Numeric(12, 2), nullable=False)
     gs_net            = Column(Numeric(12, 2), nullable=False)
     partner_net       = Column(Numeric(12, 2), nullable=False)
-    exception_flags   = Column(JSONB, nullable=False, server_default="'[]'")
+    exception_flags   = Column(JSONB, nullable=False, server_default=text("'[]'"))
 
     # Relationships
     payroll_period = relationship("PayrollPeriod", back_populates="line_items")

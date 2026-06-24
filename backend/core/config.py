@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
     # ── Database ──────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql://gs_user:gs_pass@localhost:5432/globalsolutions"
+    DATABASE_URL: str = "postgresql://postgres:122333@localhost:5432/workforceallocationdb"
 
     # ── Firebase Admin ────────────────────────────────────────
     FIREBASE_CREDENTIALS_PATH: str = "./firebase-service-account.json"

@@ -34,7 +34,7 @@ class Session(Base, TimestampMixin):
     payroll_approval_state = Column(PayrollSessionType, nullable=False, server_default="pending")
     payroll_period_id      = Column(UUID(as_uuid=True), ForeignKey("payroll_periods.id"),      nullable=True)
     admin_notes            = Column(Text, nullable=True)
-    type_specific_fields   = Column(JSONB, nullable=False, server_default="'{}'")
+    type_specific_fields   = Column(JSONB, nullable=False, server_default=text("'{}'"))
 
     # Relationships
     worker             = relationship("Worker",            back_populates="sessions")
