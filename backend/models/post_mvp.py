@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, Integer, String, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -26,12 +26,10 @@ class SessionTicket(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     session_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="sessions.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False, index=True),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     description: str = Field(sa_column=Column(Text, nullable=False))
     status: TicketStatusEnum = Field(
@@ -40,8 +38,7 @@ class SessionTicket(SQLModel, table=True):
     )
     resolved_by: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),
     )
     created_at: Optional[datetime] = Field(
         default=None,
@@ -66,8 +63,7 @@ class KnowledgeBaseArticle(SQLModel, table=True):
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
     created_by: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=False),
     )
     created_at: Optional[datetime] = Field(
         default=None,

@@ -1,0 +1,47 @@
+services:
+
+  # ── Guacamole daemon (does the actual RDP/VNC protocol work) ──────────────
+  guacd:
+    image: guacamole/guacd:latest
+    restart: unless-stopped
+    networks:
+      - guac_net
+
+  # ── Dedicated PostgreSQL for Guacamole (separate from app DB) ─────────────
+  guac_db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: guacamole_db
+      POSTGRES_USER: guacamole_user
+      POSTGRES_PASSWORD: guacamole_pass
+    volumes:
+      - guac_db_data:/var/lib/postgresql/data
+      - ./guacamole_initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
+    networks:
+      - guac_net
+
+  # ── Guacamole web app (port 8080 on your machine) ─────────────────────────
+  guacamole:
+    image: guacamole/guacamole:latest
+    restart: unless-stopped
+    depends_on:
+      - guacd
+      - guac_db
+    environment:
+      GUACD_HOSTNAME: guacd
+      POSTGRESQL_HOSTNAME: guac_db
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USER: guacamole_user
+      POSTGRESQL_PASSWORD: guacamole_pass
+    ports:
+      - "8080:8080"
+    networks:
+      - guac_net
+
+networks:
+  guac_net:
+    driver: bridge
+
+volumes:
+  guac_db_data:

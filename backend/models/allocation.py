@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, Index, String, text
+from sqlalchemy import Column, DateTime, ForeignKey, Index, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -39,16 +39,13 @@ class Allocation(SQLModel, table=True):
     )
     shift_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="shifts.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("shifts.id"), nullable=True),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     rdp_resource_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="rdp_resources.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("rdp_resources.id"), nullable=False, index=True),
     )
     claimed_at: Optional[datetime] = Field(
         default=None,
@@ -72,4 +69,4 @@ class Allocation(SQLModel, table=True):
     shift: Optional[Shift] = Relationship(back_populates="allocation")
     worker: Optional[Worker] = Relationship(back_populates="allocations")
     rdp_resource: Optional[RDPResource] = Relationship(back_populates="allocations")
-    session: Optional[Session] = Relationship(back_populates="allocation", uselist=False)
+    session: Optional[Session] = Relationship(back_populates="allocation", sa_relationship_kwargs={"uselist": False})

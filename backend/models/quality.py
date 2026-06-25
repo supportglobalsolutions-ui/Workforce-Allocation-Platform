@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Numeric, SmallInteger, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -44,23 +44,19 @@ class QualityIndicatorRating(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     indicator_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="quality_indicators.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("quality_indicators.id"), nullable=False),
     )
     score: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     reason_note: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     rated_by: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=False),
     )
     session_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="sessions.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("sessions.id"), nullable=True),
     )
     created_at: Optional[datetime] = Field(
         default=None,
@@ -84,8 +80,7 @@ class QualityCompositeScore(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     mcq_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     subjective_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))

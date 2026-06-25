@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, Numeric, String, text
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -31,8 +31,7 @@ class PayrollPeriod(SQLModel, table=True):
     status: PayrollPeriodStatusEnum = Field(sa_column=Column(PayrollPeriodStatus, nullable=False))
     approved_by: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),
     )
     export_generated_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
@@ -64,16 +63,13 @@ class PayrollLineItem(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     payroll_period_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="payroll_periods.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=False, index=True),
     )
     session_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="sessions.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("sessions.id"), nullable=False),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     session_type: str = Field(sa_column=Column(SessionTypeType, nullable=False))
     gross_amount: Decimal = Field(sa_column=Column(Numeric(12, 2), nullable=False))

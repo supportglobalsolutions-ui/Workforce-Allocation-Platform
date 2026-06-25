@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, String, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -30,8 +30,7 @@ class RDPResource(SQLModel, table=True):
     status: RdpStatusEnum = Field(sa_column=Column(RdpStatusType, nullable=False))
     assigned_worker_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=True),
     )
     guacamole_connection_id: Optional[str] = Field(
         default=None, sa_column=Column(String(128), nullable=True)

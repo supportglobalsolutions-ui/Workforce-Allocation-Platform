@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, Integer, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -42,29 +42,24 @@ class Session(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     session_type: SessionTypeEnum = Field(sa_column=Column(SessionTypeType, nullable=False))
     allocation_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="allocations.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("allocations.id"), nullable=True),
     )
     rdp_resource_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="rdp_resources.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("rdp_resources.id"), nullable=True),
     )
     partner_entity_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="partner_entities.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=True),
     )
     partner_arrangement_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="partner_arrangements.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=True),
     )
     start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     end_time: Optional[datetime] = Field(
@@ -82,8 +77,7 @@ class Session(SQLModel, table=True):
     )
     payroll_period_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="payroll_periods.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True),
     )
     admin_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     type_specific_fields: Optional[dict[str, Any]] = Field(

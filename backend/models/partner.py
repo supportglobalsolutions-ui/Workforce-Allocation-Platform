@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, Numeric, String, Text, text
+from sqlalchemy import CheckConstraint, Column, Date, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -53,8 +53,7 @@ class PartnerArrangement(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     partner_entity_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="partner_entities.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=False),
     )
     worker_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     gs_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
@@ -85,8 +84,7 @@ class PartnerClientOverride(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     partner_arrangement_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="partner_arrangements.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=False),
     )
     client_name: str = Field(sa_column=Column(String(255), nullable=False))
     worker_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))

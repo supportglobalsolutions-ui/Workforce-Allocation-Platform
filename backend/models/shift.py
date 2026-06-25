@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -25,21 +25,18 @@ class Shift(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     rdp_resource_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="rdp_resources.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("rdp_resources.id"), nullable=True),
     )
     scheduled_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     scheduled_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     status: ShiftStatusEnum = Field(sa_column=Column(ShiftStatusType, nullable=False))
     approved_by: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),
     )
     approved_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
@@ -63,4 +60,4 @@ class Shift(SQLModel, table=True):
         back_populates="approved_shifts",
         sa_relationship_kwargs={"foreign_keys": "[Shift.approved_by]"},
     )
-    allocation: Optional[Allocation] = Relationship(back_populates="shift", uselist=False)
+    allocation: Optional[Allocation] = Relationship(back_populates="shift", sa_relationship_kwargs={"uselist": False})

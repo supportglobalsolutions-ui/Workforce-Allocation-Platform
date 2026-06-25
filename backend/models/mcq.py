@@ -5,7 +5,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, Integer, Numeric, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -26,8 +26,7 @@ class McqAssessmentSet(SQLModel, table=True):
     passing_score_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, default=True))
     created_by: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=False),
     )
 
     creator: Optional[AdminUser] = Relationship(back_populates="created_assessments")
@@ -46,8 +45,7 @@ class McqQuestion(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     assessment_set_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="mcq_assessment_sets.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("mcq_assessment_sets.id"), nullable=False, index=True),
     )
     prompt: str = Field(sa_column=Column(Text, nullable=False))
     options: Optional[list[Any]] = Field(
@@ -68,12 +66,10 @@ class McqResult(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     worker_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=False, index=True),
     )
     assessment_set_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="mcq_assessment_sets.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("mcq_assessment_sets.id"), nullable=False),
     )
     score_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     passed: bool = Field(sa_column=Column(Boolean, nullable=False))
@@ -98,12 +94,10 @@ class McqResultAnswer(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
     mcq_result_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
-        foreign_key="mcq_results.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("mcq_results.id"), nullable=False, index=True),
     )
     question_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="mcq_questions.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("mcq_questions.id"), nullable=False),
     )
     selected_option_key: str = Field(sa_column=Column(String(8), nullable=False))
     is_correct: bool = Field(sa_column=Column(Boolean, nullable=False))

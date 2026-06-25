@@ -4,7 +4,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, String, text
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -38,14 +38,12 @@ class Worker(SQLModel, table=True):
     )
     admin_user_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True, unique=True),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True, unique=True),
     )
     worker_type: WorkerTypeEnum = Field(sa_column=Column(WorkerTypeType, nullable=False))
     partner_entity_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
-        foreign_key="partner_entities.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=True),
     )
     display_name: str = Field(sa_column=Column(String(255), nullable=False))
     country: str = Field(sa_column=Column(String(64), nullable=False))

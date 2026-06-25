@@ -5,7 +5,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, Date, DateTime, Numeric, String, Text, text
+from sqlalchemy import Column, Date, DateTime, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -25,8 +25,7 @@ class RateTableEntry(SQLModel, table=True):
     )
     worker_id: Optional[uuid.UUID] = Field(
         default=None,
-        sa_column=Column(PGUUID(as_uuid=True), nullable=True, index=True),
-        foreign_key="workers.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=True, index=True),
     )
     pay_tier: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
     rate_type: RateTypeEnum = Field(sa_column=Column(RateTypeType, nullable=False))
@@ -36,8 +35,7 @@ class RateTableEntry(SQLModel, table=True):
     effective_to: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
     change_reason: str = Field(sa_column=Column(Text, nullable=False))
     approved_by: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), nullable=False),
-        foreign_key="admin_users.id",
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=False),
     )
     created_at: Optional[datetime] = Field(
         default=None,
