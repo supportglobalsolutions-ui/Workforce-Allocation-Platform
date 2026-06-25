@@ -1,25 +1,30 @@
+from __future__ import annotations
+
 import uuid
-from sqlalchemy import Column, String, ForeignKey, Index, text
-from sqlalchemy.dialects.postgresql import UUID
-from .types import TIMESTAMPTZ
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import TYPE_CHECKING, Optional
 
-from .base import Base
-from .enums import ReleaseReasonType
-from .mixins import CreatedAtMixin
+from sqlalchemy import Column, DateTime, Index, String, text
+from sqlalchemy.dialects.postgresql import UUID as PGUUID
+from sqlmodel import Field, Relationship, SQLModel
+
+from .enums import ReleaseReasonEnum, ReleaseReasonType
+
+if TYPE_CHECKING:
+    from .rdp_machine import RDPResource
+    from .session import Session
+    from .shift import Shift
+    from .worker import Worker
 
 
-class Allocation(Base, CreatedAtMixin):
+class Allocation(SQLModel, table=True):
     """
-    Atomic RDP claim record. The partial unique index below enforces the
-    double-claim prevention rule: only one open (released_at IS NULL) allocation
-    per RDP resource at any time.
+    Atomic RDP claim record. The partial unique index enforces double-claim
+    prevention: only one open (released_at IS NULL) allocation per RDP resource.
     """
+
     __tablename__ = "allocations"
     __table_args__ = (
-        # ── CRITICAL: double-claim prevention ──────────────────────────────────
-        # Only one open allocation (released_at IS NULL) per rdp_resource at a time.
-        # A second concurrent claim will fail here even if the Redis lock is bypassed.
         Index(
             "uq_allocations_active_rdp",
             "rdp_resource_id",
@@ -28,17 +33,43 @@ class Allocation(Base, CreatedAtMixin):
         ),
     )
 
-    id              = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
-    shift_id        = Column(UUID(as_uuid=True), ForeignKey("shifts.id"),       nullable=True)
-    worker_id       = Column(UUID(as_uuid=True), ForeignKey("workers.id"),      nullable=False, index=True)
-    rdp_resource_id = Column(UUID(as_uuid=True), ForeignKey("rdp_resources.id"), nullable=False, index=True)
-    claimed_at      = Column(TIMESTAMPTZ, nullable=False, server_default=text("now()"))
-    released_at     = Column(TIMESTAMPTZ, nullable=True)
-    release_reason  = Column(ReleaseReasonType, nullable=True)
-    guacamole_token = Column(String(512), nullable=True)
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    shift_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), nullable=True),
+        foreign_key="shifts.id",
+    )
+    worker_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
+        foreign_key="workers.id",
+    )
+    rdp_resource_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), nullable=False, index=True),
+        foreign_key="rdp_resources.id",
+    )
+    claimed_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
+    )
+    released_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    release_reason: Optional[ReleaseReasonEnum] = Field(
+        default=None, sa_column=Column(ReleaseReasonType, nullable=True)
+    )
+    guacamole_token: Optional[str] = Field(
+        default=None, sa_column=Column(String(512), nullable=True)
+    )
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
 
     # Relationships
-    shift        = relationship("Shift",       back_populates="allocation")
-    worker       = relationship("Worker",      back_populates="allocations")
-    rdp_resource = relationship("RDPResource", back_populates="allocations")
-    session      = relationship("Session",     back_populates="allocation", uselist=False)
+    shift: Optional[Shift] = Relationship(back_populates="allocation")
+    worker: Optional[Worker] = Relationship(back_populates="allocations")
+    rdp_resource: Optional[RDPResource] = Relationship(back_populates="allocations")
+    session: Optional[Session] = Relationship(back_populates="allocation", uselist=False)

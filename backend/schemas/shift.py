@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+
+from pydantic import ConfigDict
+from sqlmodel import SQLModel
+
 from models.enums import ShiftStatusEnum
 
 
-class ShiftBase(BaseModel):
+class ShiftBase(SQLModel):
     worker_id:       UUID
     rdp_resource_id: Optional[UUID] = None
     scheduled_start: datetime
@@ -17,12 +20,12 @@ class ShiftCreate(ShiftBase):
     pass
 
 
-class ShiftUpdate(BaseModel):
-    rdp_resource_id:  Optional[UUID]           = None
-    status:           Optional[ShiftStatusEnum] = None
-    approved_by:      Optional[UUID]           = None
-    approved_at:      Optional[datetime]        = None
-    rejection_reason: Optional[str]            = None
+class ShiftUpdate(SQLModel):
+    rdp_resource_id:  Optional[UUID]            = None
+    status:           Optional[ShiftStatusEnum]  = None
+    approved_by:      Optional[UUID]            = None
+    approved_at:      Optional[datetime]         = None
+    rejection_reason: Optional[str]             = None
 
 
 class ShiftResponse(ShiftBase):

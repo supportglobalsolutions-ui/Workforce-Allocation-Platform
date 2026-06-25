@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
@@ -14,12 +14,12 @@ from .deps import apply_update, get_worker_for_user
 router = APIRouter()
 
 
-def _scoped_sessions_query(db: Session, current_user: dict):
-    query = db.query(WorkSession)
+def _scoped_stmt(current_user: dict, db: Session):
+    stmt = select(WorkSession)
     if current_user.get("role") not in {"admin", "super_admin"}:
         worker = get_worker_for_user(db, current_user)
-        query = query.filter(WorkSession.worker_id == worker.id)
-    return query
+        stmt = stmt.where(WorkSession.worker_id == worker.id)
+    return stmt
 
 
 @router.get("", response_model=list[SessionResponse])
@@ -29,10 +29,11 @@ def list_sessions(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    query = _scoped_sessions_query(db, current_user)
+    stmt = _scoped_stmt(current_user, db)
     if session_type:
-        query = query.filter(WorkSession.session_type == session_type)
-    return query.order_by(WorkSession.start_time.desc()).limit(limit).all()
+        stmt = stmt.where(WorkSession.session_type == session_type)
+    stmt = stmt.order_by(WorkSession.start_time.desc()).limit(limit)
+    return db.exec(stmt).all()
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -41,7 +42,8 @@ def get_session(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    session = _scoped_sessions_query(db, current_user).filter(WorkSession.id == session_id).first()
+    stmt = _scoped_stmt(current_user, db).where(WorkSession.id == session_id)
+    session = db.exec(stmt).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
     return session
@@ -76,14 +78,15 @@ def update_session(
     current_user: dict = Depends(require_user),
 ):
     if current_user.get("role") in {"admin", "super_admin"}:
-        session = db.query(WorkSession).filter(WorkSession.id == session_id).first()
+        session = db.exec(select(WorkSession).where(WorkSession.id == session_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
-        session = (
-            db.query(WorkSession)
-            .filter(WorkSession.id == session_id, WorkSession.worker_id == worker.id)
-            .first()
-        )
+        session = db.exec(
+            select(WorkSession).where(
+                WorkSession.id == session_id,
+                WorkSession.worker_id == worker.id,
+            )
+        ).first()
 
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
@@ -97,6 +100,7 @@ def update_session(
             )
 
     apply_update(session, body)
+    db.add(session)
     db.commit()
     db.refresh(session)
     return session
@@ -108,7 +112,8 @@ def heartbeat_session(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    session = _scoped_sessions_query(db, current_user).filter(WorkSession.id == session_id).first()
+    stmt = _scoped_stmt(current_user, db).where(WorkSession.id == session_id)
+    session = db.exec(stmt).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
@@ -116,6 +121,7 @@ def heartbeat_session(
     fields["last_heartbeat_at"] = datetime.utcnow().isoformat()
     session.type_specific_fields = fields
 
+    db.add(session)
     db.commit()
     db.refresh(session)
     return session

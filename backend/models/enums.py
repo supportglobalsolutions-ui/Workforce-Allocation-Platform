@@ -1,6 +1,6 @@
 """
 All PostgreSQL-native enums for the GlobalSolutions platform.
-Each Python enum is paired with a SQLAlchemy Enum type for use in Column definitions.
+Python enums are used directly with SQLModel/SQLAlchemy sa_column definitions.
 """
 import enum
 import sqlalchemy as sa
@@ -65,17 +65,17 @@ class ShiftStatusEnum(str, enum.Enum):
 # ── allocations ────────────────────────────────────────────────────────────────
 
 class ReleaseReasonEnum(str, enum.Enum):
-    completed          = "completed"
-    force_released     = "force_released"
-    abandoned          = "abandoned"
-    timed_out          = "timed_out"
+    completed      = "completed"
+    force_released = "force_released"
+    abandoned      = "abandoned"
+    timed_out      = "timed_out"
 
 
 # ── sessions ───────────────────────────────────────────────────────────────────
 
 class SessionTypeEnum(str, enum.Enum):
-    gs_rdp              = "gs_rdp"
-    partner_multilog    = "partner_multilog"
+    gs_rdp               = "gs_rdp"
+    partner_multilog     = "partner_multilog"
     third_party_platform = "third_party_platform"
 
 
@@ -124,21 +124,20 @@ class TicketStatusEnum(str, enum.Enum):
     resolved     = "resolved"
 
 
-# ── SQLAlchemy Enum type objects ───────────────────────────────────────────────
-# Reuse these in Column() definitions to avoid re-declaring names.
+# ── SQLAlchemy Enum type objects (used in sa_column definitions) ───────────────
 
-AdminRoleType        = sa.Enum(AdminRoleEnum,        name="admin_role_enum",         create_type=True)
-AccountStatusType    = sa.Enum(AccountStatusEnum,    name="account_status_enum",     create_type=True)
-WorkerTypeType       = sa.Enum(WorkerTypeEnum,        name="worker_type_enum",        create_type=True)
-WorkerStatusType     = sa.Enum(WorkerStatusEnum,      name="worker_status_enum",      create_type=True)
-EntityStatusType     = sa.Enum(EntityStatusEnum,      name="entity_status_enum",      create_type=True)
-RdpStatusType        = sa.Enum(RdpStatusEnum,         name="rdp_status_enum",         create_type=True)
-ShiftStatusType      = sa.Enum(ShiftStatusEnum,       name="shift_status_enum",       create_type=True)
-ReleaseReasonType    = sa.Enum(ReleaseReasonEnum,     name="release_reason_enum",     create_type=True)
-SessionTypeType      = sa.Enum(SessionTypeEnum,       name="session_type_enum",       create_type=True)
-SessionCloseType     = sa.Enum(SessionCloseEnum,      name="session_close_enum",      create_type=True)
-PayrollSessionType   = sa.Enum(PayrollSessionEnum,    name="payroll_session_enum",    create_type=True)
-RateTypeType         = sa.Enum(RateTypeEnum,          name="rate_type_enum",          create_type=True)
-PayrollPeriodStatus  = sa.Enum(PayrollPeriodStatusEnum, name="payroll_period_enum",   create_type=True)
-IndicatorInputType   = sa.Enum(IndicatorInputEnum,    name="indicator_input_enum",    create_type=True)
-TicketStatusType     = sa.Enum(TicketStatusEnum,      name="ticket_status_enum",      create_type=True)
+AdminRoleType        = sa.Enum(AdminRoleEnum,          name="admin_role_enum",         create_type=True)
+AccountStatusType    = sa.Enum(AccountStatusEnum,      name="account_status_enum",     create_type=True)
+WorkerTypeType       = sa.Enum(WorkerTypeEnum,          name="worker_type_enum",        create_type=True)
+WorkerStatusType     = sa.Enum(WorkerStatusEnum,        name="worker_status_enum",      create_type=True)
+EntityStatusType     = sa.Enum(EntityStatusEnum,        name="entity_status_enum",      create_type=True)
+RdpStatusType        = sa.Enum(RdpStatusEnum,           name="rdp_status_enum",         create_type=True)
+ShiftStatusType      = sa.Enum(ShiftStatusEnum,         name="shift_status_enum",       create_type=True)
+ReleaseReasonType    = sa.Enum(ReleaseReasonEnum,       name="release_reason_enum",     create_type=True)
+SessionTypeType      = sa.Enum(SessionTypeEnum,         name="session_type_enum",       create_type=True)
+SessionCloseType     = sa.Enum(SessionCloseEnum,        name="session_close_enum",      create_type=True)
+PayrollSessionType   = sa.Enum(PayrollSessionEnum,      name="payroll_session_enum",    create_type=True)
+RateTypeType         = sa.Enum(RateTypeEnum,            name="rate_type_enum",          create_type=True)
+PayrollPeriodStatus  = sa.Enum(PayrollPeriodStatusEnum, name="payroll_period_enum",     create_type=True)
+IndicatorInputType   = sa.Enum(IndicatorInputEnum,      name="indicator_input_enum",    create_type=True)
+TicketStatusType     = sa.Enum(TicketStatusEnum,        name="ticket_status_enum",      create_type=True)

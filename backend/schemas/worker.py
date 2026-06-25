@@ -1,11 +1,14 @@
 from datetime import date, datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, ConfigDict
-from models.enums import WorkerTypeEnum, WorkerStatusEnum
+
+from pydantic import ConfigDict
+from sqlmodel import SQLModel
+
+from models.enums import WorkerStatusEnum, WorkerTypeEnum
 
 
-class WorkerBase(BaseModel):
+class WorkerBase(SQLModel):
     worker_type:       WorkerTypeEnum
     partner_entity_id: Optional[UUID] = None
     display_name:      str
@@ -20,12 +23,12 @@ class WorkerCreate(WorkerBase):
     pass
 
 
-class WorkerUpdate(BaseModel):
-    display_name:      Optional[str]              = None
-    country:           Optional[str]              = None
-    pay_tier:          Optional[str]              = None
-    status:            Optional[WorkerStatusEnum]  = None
-    partner_entity_id: Optional[UUID]             = None
+class WorkerUpdate(SQLModel):
+    display_name:      Optional[str]             = None
+    country:           Optional[str]             = None
+    pay_tier:          Optional[str]             = None
+    status:            Optional[WorkerStatusEnum] = None
+    partner_entity_id: Optional[UUID]            = None
 
 
 class WorkerResponse(WorkerBase):

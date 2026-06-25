@@ -11,6 +11,14 @@ class Settings(BaseSettings):
     # ── Database ──────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://postgres:122333@localhost:5432/workforceallocationdb"
 
+    # ── Redis ─────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # ── Apache Guacamole ──────────────────────────────────────
+    GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
+    GUACAMOLE_USERNAME: str = "guacadmin"
+    GUACAMOLE_PASSWORD: str = "guacadmin"
+
     # ── Firebase Admin ────────────────────────────────────────
     FIREBASE_CREDENTIALS_PATH: str = "./firebase-service-account.json"
     FIREBASE_PROJECT_ID: str = ""

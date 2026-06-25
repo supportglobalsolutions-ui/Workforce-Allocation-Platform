@@ -1,10 +1,13 @@
 from uuid import UUID
 
+import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from core.database import get_db
+from core.guacamole import GuacamoleClient
 from core.permissions import require_admin, require_user
+from core.redis import get_redis
 from models.allocation import Allocation
 from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
@@ -19,7 +22,7 @@ def list_rdp_resources(
     db: Session = Depends(get_db),
     _: dict = Depends(require_user),
 ):
-    return db.query(RDPResource).order_by(RDPResource.nickname).all()
+    return db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()
 
 
 @router.get("/{rdp_id}", response_model=RDPResourceResponse)
@@ -28,7 +31,7 @@ def get_rdp_resource(
     db: Session = Depends(get_db),
     _: dict = Depends(require_user),
 ):
-    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
     return resource
@@ -54,11 +57,12 @@ def update_rdp_resource(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
     apply_update(resource, body)
+    db.add(resource)
     db.commit()
     db.refresh(resource)
     return resource
@@ -70,10 +74,16 @@ def claim_rdp_resource(
     shift_id: UUID | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
+    redis_client: redis_lib.Redis = Depends(get_redis),
 ):
-    """Claim an online-free RDP machine and create an open allocation."""
+    """
+    Claim an online-free RDP machine.
+    - Redis SETNX lock prevents race conditions at the application layer.
+    - The partial unique index on allocations provides the hard DB-level stop.
+    - Guacamole token is fetched and stored; claim succeeds even if Guacamole is down.
+    """
     worker = get_worker_for_user(db, current_user)
-    resource = db.query(RDPResource).filter(RDPResource.id == rdp_id).first()
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
@@ -83,21 +93,46 @@ def claim_rdp_resource(
             detail=f"RDP resource is not claimable (status={resource.status})",
         )
 
-    allocation = Allocation(
-        worker_id=worker.id,
-        rdp_resource_id=resource.id,
-        shift_id=shift_id,
-    )
-    resource.status = RdpStatusEnum.assigned
-    resource.assigned_worker_id = worker.id
+    lock_key = f"rdp:claim:{rdp_id}"
+    acquired = redis_client.set(lock_key, "1", ex=30, nx=True)
+    if not acquired:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="RDP resource is currently being claimed — try again in a moment",
+        )
 
-    db.add(allocation)
-    db.commit()
-    db.refresh(allocation)
+    try:
+        guacamole_url: str | None = None
+        guacamole_token: str | None = None
 
-    return {
-        "allocation_id": allocation.id,
-        "rdp_resource_id": resource.id,
-        "worker_id": worker.id,
-        "status": resource.status.value,
-    }
+        if resource.guacamole_connection_id:
+            try:
+                guac = GuacamoleClient(redis_client)
+                guacamole_token = guac.get_token()
+                guacamole_url = guac.get_connection_url(resource.guacamole_connection_id)
+            except Exception:
+                pass  # Guacamole unavailable — claim still succeeds
+
+        allocation = Allocation(
+            worker_id=worker.id,
+            rdp_resource_id=resource.id,
+            shift_id=shift_id,
+            guacamole_token=guacamole_token,
+        )
+        resource.status = RdpStatusEnum.assigned
+        resource.assigned_worker_id = worker.id
+
+        db.add(allocation)
+        db.add(resource)
+        db.commit()
+        db.refresh(allocation)
+
+        return {
+            "allocation_id":   str(allocation.id),
+            "rdp_resource_id": str(resource.id),
+            "worker_id":       str(worker.id),
+            "status":          resource.status.value,
+            "guacamole_url":   guacamole_url,
+        }
+    finally:
+        redis_client.delete(lock_key)

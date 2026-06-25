@@ -1,5 +1,1 @@
-from sqlalchemy.orm import DeclarativeBase
-
-
-class Base(DeclarativeBase):
-    pass
+from sqlmodel import SQLModel  # noqa: F401 — exposes SQLModel.metadata for Alembic

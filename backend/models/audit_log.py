@@ -1,34 +1,50 @@
+from __future__ import annotations
+
 import uuid
-from sqlalchemy import Column, String, Text, ForeignKey, text
-from sqlalchemy.dialects.postgresql import UUID, JSONB, INET
-from .types import TIMESTAMPTZ
-from sqlalchemy.orm import relationship
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Optional
 
-from .base import Base
+from sqlalchemy import Column, DateTime, String, Text, text
+from sqlalchemy.dialects.postgresql import INET, JSONB, UUID as PGUUID
+from sqlmodel import Field, Relationship, SQLModel
+
+if TYPE_CHECKING:
+    from .admin_users import AdminUser
 
 
-class AuditLog(Base):
+class AuditLog(SQLModel, table=True):
     """
     Immutable append-only audit trail.
 
     !! APPLICATION ROLES MUST NOT BE GRANTED UPDATE OR DELETE ON THIS TABLE !!
-    Enforce at the PostgreSQL level:
+    Enforce at PostgreSQL level:
         REVOKE UPDATE, DELETE ON audit_log FROM app_role;
-    The FastAPI application must only ever INSERT rows via AuditService.
-    All material actions (claims, force-releases, payroll approval, etc.) must
-    write an entry here before the transaction commits.
     """
+
     __tablename__ = "audit_log"
 
-    id             = Column(UUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()"), default=uuid.uuid4)
-    actor_id       = Column(UUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True, index=True)
-    action         = Column(String(64),  nullable=False, index=True)
-    target_type    = Column(String(64),  nullable=False, index=True)
-    target_id      = Column(UUID(as_uuid=True), nullable=False)
-    previous_value = Column(JSONB, nullable=True)
-    new_value      = Column(JSONB, nullable=True)
-    reason_note    = Column(Text, nullable=True)
-    ip_address     = Column(INET, nullable=True)
-    created_at     = Column(TIMESTAMPTZ, nullable=False, server_default=text("now()"), index=True)
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    actor_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), nullable=True, index=True),
+        foreign_key="admin_users.id",
+    )
+    action: str = Field(sa_column=Column(String(64), nullable=False, index=True))
+    target_type: str = Field(sa_column=Column(String(64), nullable=False, index=True))
+    target_id: uuid.UUID = Field(sa_column=Column(PGUUID(as_uuid=True), nullable=False))
+    previous_value: Optional[Any] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    new_value: Optional[Any] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    reason_note: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    ip_address: Optional[str] = Field(default=None, sa_column=Column(INET, nullable=True))
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), index=True),
+    )
 
-    actor = relationship("AdminUser", back_populates="audit_entries", foreign_keys=[actor_id])
+    actor: Optional[AdminUser] = Relationship(
+        back_populates="audit_entries",
+        sa_relationship_kwargs={"foreign_keys": "[AuditLog.actor_id]"},
+    )

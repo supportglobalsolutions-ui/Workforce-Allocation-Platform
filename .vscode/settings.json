@@ -6,9 +6,10 @@
             "server": "localhost",
             "port": 5432,
             "driver": "PostgreSQL",
-            "name": "workforce",
+            "name": "worforcedevelopment",
             "database": "workforceallocationdb",
             "username": "postgres",
+            "connectionTimeout": 30,
             "password": "122333"
         }
     ]

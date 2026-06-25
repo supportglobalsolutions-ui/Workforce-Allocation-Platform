@@ -2,11 +2,14 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, field_validator
+
+from pydantic import ConfigDict, field_validator
+from sqlmodel import SQLModel
+
 from models.enums import PayrollPeriodStatusEnum, SessionTypeEnum
 
 
-class PayrollPeriodBase(BaseModel):
+class PayrollPeriodBase(SQLModel):
     label:      str
     start_date: date
     end_date:   date
@@ -18,7 +21,7 @@ class PayrollPeriodCreate(PayrollPeriodBase):
     pass
 
 
-class PayrollPeriodUpdate(BaseModel):
+class PayrollPeriodUpdate(SQLModel):
     status:              Optional[PayrollPeriodStatusEnum] = None
     approved_by:         Optional[UUID]                   = None
     export_generated_at: Optional[datetime]               = None
@@ -35,7 +38,7 @@ class PayrollPeriodResponse(PayrollPeriodBase):
 
 # ── PayrollLineItem ────────────────────────────────────────────────────────────
 
-class PayrollLineItemBase(BaseModel):
+class PayrollLineItemBase(SQLModel):
     payroll_period_id: UUID
     session_id:        UUID
     worker_id:         UUID
@@ -64,7 +67,7 @@ class PayrollLineItemCreate(PayrollLineItemBase):
     pass
 
 
-class PayrollLineItemUpdate(BaseModel):
+class PayrollLineItemUpdate(SQLModel):
     exception_flags: Optional[list[Any]] = None
 
 

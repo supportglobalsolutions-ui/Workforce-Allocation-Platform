@@ -1,5 +1,4 @@
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker, Session
+from sqlmodel import create_engine, Session, SQLModel  # noqa: F401
 
 from .config import settings
 
@@ -11,13 +10,8 @@ engine = create_engine(
     max_overflow=20,
 )
 
-SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
-
 
 def get_db():
-    """FastAPI dependency — yields a SQLAlchemy session and guarantees close."""
-    db: Session = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
+    """FastAPI dependency — yields a SQLModel Session and guarantees close."""
+    with Session(engine) as session:
+        yield session

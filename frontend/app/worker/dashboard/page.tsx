@@ -1,15 +1,64 @@
 'use client';
 
 import Link from 'next/link';
+import { useEffect, useState } from 'react';
+import { Clock, Monitor, PenLine, Play, Star, Trophy } from 'lucide-react';
+
 import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
 import StatusBadge from '@/components/platform/StatusBadge';
-import { Trophy, Star, Clock, Monitor, PenLine, Play } from 'lucide-react';
-import { sessions } from '@/lib/mock-data';
+import { api } from '@/lib/api';
 
-const recentSessions = sessions.slice(0, 4);
+interface WorkSession {
+  id: string;
+  session_type: string;
+  start_time: string;
+  duration_minutes: number | null;
+  close_status: string | null;
+  rdp_resource_id: string | null;
+}
+
+interface QualityScore {
+  composite_score: number;
+  global_rank: number | null;
+  session_streak_days: number | null;
+}
+
+const TYPE_LABELS: Record<string, string> = {
+  gs_rdp: 'GS RDP',
+  partner_multilog: 'Partner Multilog',
+  third_party_platform: 'Third Party',
+};
+
+function formatDuration(minutes: number | null): string {
+  if (!minutes) return '—';
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
 
 export default function WorkerDashboard() {
+  const [sessions, setSessions] = useState<WorkSession[]>([]);
+  const [totalSessions, setTotalSessions] = useState(0);
+  const [quality, setQuality] = useState<QualityScore | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    Promise.all([
+      api.get<WorkSession[]>('/sessions?limit=200'),
+      api.get<QualityScore | null>('/quality/me'),
+    ])
+      .then(([sessionList, qualityScore]) => {
+        setTotalSessions(sessionList.length);
+        setSessions(sessionList.slice(0, 4));
+        setQuality(qualityScore);
+      })
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
+      .finally(() => setLoading(false));
+  }, []);
+
+  if (loading) return <p className="text-theme-muted text-sm mt-4">Loading...</p>;
+  if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
+
   return (
     <div className="max-w-5xl">
       <PageHeader
@@ -18,9 +67,23 @@ export default function WorkerDashboard() {
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-8">
-        <KpiCard label="Rank" value="#3" change="+2 this week" icon={Trophy} accent="gold" />
-        <KpiCard label="Quality" value="96.4" icon={Star} />
-        <KpiCard label="Sessions" value="247" change="+12 this month" icon={Clock} />
+        <KpiCard
+          label="Rank"
+          value={quality?.global_rank != null ? `#${quality.global_rank}` : '—'}
+          icon={Trophy}
+          accent="gold"
+        />
+        <KpiCard
+          label="Quality"
+          value={quality?.composite_score != null ? Number(quality.composite_score).toFixed(1) : '—'}
+          icon={Star}
+        />
+        <KpiCard
+          label="Sessions"
+          value={totalSessions === 200 ? '200+' : String(totalSessions)}
+          change={`+${sessions.length} recent`}
+          icon={Clock}
+        />
       </div>
 
       <div className="flex flex-wrap gap-3 mb-8">
@@ -46,15 +109,23 @@ export default function WorkerDashboard() {
           </Link>
         </div>
         <div className="divide-y divide-white/[0.06]">
-          {recentSessions.map((s) => (
-            <div key={s.id} className="flex items-center justify-between py-3 text-sm gap-4">
-              <div className="min-w-0">
-                <p className="text-white font-medium truncate">{s.machine}</p>
-                <p className="text-xs text-theme-muted">{s.date} · {s.duration}</p>
+          {sessions.length === 0 ? (
+            <p className="text-xs text-theme-muted py-3">No sessions yet.</p>
+          ) : (
+            sessions.map((s) => (
+              <div key={s.id} className="flex items-center justify-between py-3 text-sm gap-4">
+                <div className="min-w-0">
+                  <p className="text-white font-medium truncate">
+                    {TYPE_LABELS[s.session_type] ?? s.session_type}
+                  </p>
+                  <p className="text-xs text-theme-muted">
+                    {new Date(s.start_time).toLocaleDateString()} · {formatDuration(s.duration_minutes)}
+                  </p>
+                </div>
+                <StatusBadge status={s.close_status ?? 'pending'} />
               </div>
-              <StatusBadge status={s.status as string} />
-            </div>
-          ))}
+            ))
+          )}
         </div>
       </section>
     </div>

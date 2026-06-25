@@ -2,13 +2,16 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict, field_validator
+
+from pydantic import ConfigDict, field_validator
+from sqlmodel import SQLModel
+
 from models.enums import EntityStatusEnum
 
 
-class PartnerEntityBase(BaseModel):
+class PartnerEntityBase(SQLModel):
     name:   str
-    notes:  Optional[str] = None
+    notes:  Optional[str]  = None
     status: EntityStatusEnum
 
 
@@ -16,10 +19,10 @@ class PartnerEntityCreate(PartnerEntityBase):
     pass
 
 
-class PartnerEntityUpdate(BaseModel):
-    name:   Optional[str]              = None
-    notes:  Optional[str]              = None
-    status: Optional[EntityStatusEnum]  = None
+class PartnerEntityUpdate(SQLModel):
+    name:   Optional[str]             = None
+    notes:  Optional[str]             = None
+    status: Optional[EntityStatusEnum] = None
 
 
 class PartnerEntityResponse(PartnerEntityBase):
@@ -30,7 +33,7 @@ class PartnerEntityResponse(PartnerEntityBase):
 
 # ── PartnerArrangement ─────────────────────────────────────────────────────────
 
-class PartnerArrangementBase(BaseModel):
+class PartnerArrangementBase(SQLModel):
     partner_entity_id: UUID
     worker_pct:        Decimal
     gs_pct:            Decimal
@@ -54,12 +57,12 @@ class PartnerArrangementCreate(PartnerArrangementBase):
     pass
 
 
-class PartnerArrangementUpdate(BaseModel):
-    worker_pct:     Optional[Decimal] = None
-    gs_pct:         Optional[Decimal] = None
-    partner_pct:    Optional[Decimal] = None
-    effective_to:   Optional[date]    = None
-    notes:          Optional[str]     = None
+class PartnerArrangementUpdate(SQLModel):
+    worker_pct:   Optional[Decimal] = None
+    gs_pct:       Optional[Decimal] = None
+    partner_pct:  Optional[Decimal] = None
+    effective_to: Optional[date]    = None
+    notes:        Optional[str]     = None
 
 
 class PartnerArrangementResponse(PartnerArrangementBase):
@@ -69,7 +72,7 @@ class PartnerArrangementResponse(PartnerArrangementBase):
 
 # ── PartnerClientOverride ──────────────────────────────────────────────────────
 
-class PartnerClientOverrideBase(BaseModel):
+class PartnerClientOverrideBase(SQLModel):
     partner_arrangement_id: UUID
     client_name:            str
     worker_pct:             Decimal
@@ -93,12 +96,12 @@ class PartnerClientOverrideCreate(PartnerClientOverrideBase):
     pass
 
 
-class PartnerClientOverrideUpdate(BaseModel):
-    client_name:  Optional[str]     = None
-    worker_pct:   Optional[Decimal] = None
-    gs_pct:       Optional[Decimal] = None
-    partner_pct:  Optional[Decimal] = None
-    notes:        Optional[str]     = None
+class PartnerClientOverrideUpdate(SQLModel):
+    client_name: Optional[str]     = None
+    worker_pct:  Optional[Decimal] = None
+    gs_pct:      Optional[Decimal] = None
+    partner_pct: Optional[Decimal] = None
+    notes:       Optional[str]     = None
 
 
 class PartnerClientOverrideResponse(PartnerClientOverrideBase):

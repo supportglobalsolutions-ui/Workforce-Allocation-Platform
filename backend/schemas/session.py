@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
-from models.enums import SessionTypeEnum, SessionCloseEnum, PayrollSessionEnum
+
+from pydantic import ConfigDict
+from sqlmodel import SQLModel
+
+from models.enums import PayrollSessionEnum, SessionCloseEnum, SessionTypeEnum
 
 
-class SessionBase(BaseModel):
+class SessionBase(SQLModel):
     worker_id:              UUID
     session_type:           SessionTypeEnum
     allocation_id:          Optional[UUID] = None
@@ -20,14 +23,14 @@ class SessionCreate(SessionBase):
     pass
 
 
-class SessionUpdate(BaseModel):
-    end_time:              Optional[datetime]           = None
-    duration_minutes:      Optional[int]               = None
-    close_status:          Optional[SessionCloseEnum]   = None
-    payroll_approval_state: Optional[PayrollSessionEnum] = None
-    payroll_period_id:     Optional[UUID]              = None
-    admin_notes:           Optional[str]               = None
-    type_specific_fields:  Optional[dict[str, Any]]    = None
+class SessionUpdate(SQLModel):
+    end_time:               Optional[datetime]            = None
+    duration_minutes:       Optional[int]                 = None
+    close_status:           Optional[SessionCloseEnum]    = None
+    payroll_approval_state: Optional[PayrollSessionEnum]  = None
+    payroll_period_id:      Optional[UUID]                = None
+    admin_notes:            Optional[str]                 = None
+    type_specific_fields:   Optional[dict[str, Any]]      = None
 
 
 class SessionResponse(SessionBase):

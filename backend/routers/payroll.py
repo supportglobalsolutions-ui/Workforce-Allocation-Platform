@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin
@@ -19,14 +19,12 @@ from .deps import apply_update
 router = APIRouter()
 
 
-# ── Payroll periods ───────────────────────────────────────────────────────────
-
 @router.get("/periods", response_model=list[PayrollPeriodResponse])
 def list_payroll_periods(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    return db.query(PayrollPeriod).order_by(PayrollPeriod.start_date.desc()).all()
+    return db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).all()
 
 
 @router.get("/periods/{period_id}", response_model=PayrollPeriodResponse)
@@ -35,7 +33,7 @@ def get_payroll_period(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    period = db.query(PayrollPeriod).filter(PayrollPeriod.id == period_id).first()
+    period = db.exec(select(PayrollPeriod).where(PayrollPeriod.id == period_id)).first()
     if not period:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payroll period not found")
     return period
@@ -61,17 +59,16 @@ def update_payroll_period(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    period = db.query(PayrollPeriod).filter(PayrollPeriod.id == period_id).first()
+    period = db.exec(select(PayrollPeriod).where(PayrollPeriod.id == period_id)).first()
     if not period:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payroll period not found")
 
     apply_update(period, body)
+    db.add(period)
     db.commit()
     db.refresh(period)
     return period
 
-
-# ── Payroll line items ────────────────────────────────────────────────────────
 
 @router.get("/line-items", response_model=list[PayrollLineItemResponse])
 def list_payroll_line_items(
@@ -80,12 +77,12 @@ def list_payroll_line_items(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    query = db.query(PayrollLineItem)
+    stmt = select(PayrollLineItem)
     if payroll_period_id:
-        query = query.filter(PayrollLineItem.payroll_period_id == payroll_period_id)
+        stmt = stmt.where(PayrollLineItem.payroll_period_id == payroll_period_id)
     if worker_id:
-        query = query.filter(PayrollLineItem.worker_id == worker_id)
-    return query.order_by(PayrollLineItem.created_at.desc()).all()
+        stmt = stmt.where(PayrollLineItem.worker_id == worker_id)
+    return db.exec(stmt.order_by(PayrollLineItem.created_at.desc())).all()
 
 
 @router.post("/line-items", response_model=PayrollLineItemResponse, status_code=status.HTTP_201_CREATED)
@@ -108,11 +105,12 @@ def update_payroll_line_item(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    item = db.query(PayrollLineItem).filter(PayrollLineItem.id == item_id).first()
+    item = db.exec(select(PayrollLineItem).where(PayrollLineItem.id == item_id)).first()
     if not item:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payroll line item not found")
 
     apply_update(item, body)
+    db.add(item)
     db.commit()
     db.refresh(item)
     return item

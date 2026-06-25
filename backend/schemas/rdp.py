@@ -1,11 +1,14 @@
 from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
-from pydantic import BaseModel, ConfigDict
+
+from pydantic import ConfigDict
+from sqlmodel import SQLModel
+
 from models.enums import RdpStatusEnum
 
 
-class RDPResourceBase(BaseModel):
+class RDPResourceBase(SQLModel):
     nickname:                str
     country:                 str
     client_group:            str
@@ -20,7 +23,7 @@ class RDPResourceCreate(RDPResourceBase):
     pass
 
 
-class RDPResourceUpdate(BaseModel):
+class RDPResourceUpdate(SQLModel):
     status:                  Optional[RdpStatusEnum] = None
     assigned_worker_id:      Optional[UUID]          = None
     guacamole_connection_id: Optional[str]           = None

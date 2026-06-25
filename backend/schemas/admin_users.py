@@ -1,24 +1,27 @@
 from datetime import datetime
 from typing import Optional
 from uuid import UUID
-from pydantic import BaseModel, EmailStr, ConfigDict
-from models.enums import AdminRoleEnum, AccountStatusEnum
+
+from pydantic import ConfigDict, EmailStr
+from sqlmodel import SQLModel
+
+from models.enums import AccountStatusEnum, AdminRoleEnum
 
 
-class AdminUserBase(BaseModel):
+class AdminUserBase(SQLModel):
     firebase_uid:  str
     email:         EmailStr
     role:          AdminRoleEnum
     display_name:  str
-    country_scope: Optional[str] = None
-    status:        AccountStatusEnum = AccountStatusEnum.active
+    country_scope: Optional[str]       = None
+    status:        AccountStatusEnum   = AccountStatusEnum.active
 
 
 class AdminUserCreate(AdminUserBase):
     pass
 
 
-class AdminUserUpdate(BaseModel):
+class AdminUserUpdate(SQLModel):
     display_name:  Optional[str]              = None
     country_scope: Optional[str]              = None
     status:        Optional[AccountStatusEnum] = None

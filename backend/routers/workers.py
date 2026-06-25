@@ -1,7 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
@@ -29,6 +29,7 @@ def update_my_worker(
 ):
     worker = get_worker_for_user(db, current_user)
     apply_update(worker, body)
+    db.add(worker)
     db.commit()
     db.refresh(worker)
     return worker
@@ -39,7 +40,7 @@ def list_workers(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    return db.query(Worker).order_by(Worker.display_name).all()
+    return db.exec(select(Worker).order_by(Worker.display_name)).all()
 
 
 @router.get("/{worker_id}", response_model=WorkerResponse)
@@ -49,7 +50,7 @@ def get_worker(
     current_user: dict = Depends(require_user),
 ):
     if current_user.get("role") in {"admin", "super_admin"}:
-        worker = db.query(Worker).filter(Worker.id == worker_id).first()
+        worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
         if worker.id != worker_id:
@@ -80,11 +81,12 @@ def update_worker(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    worker = db.query(Worker).filter(Worker.id == worker_id).first()
+    worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
 
     apply_update(worker, body)
+    db.add(worker)
     db.commit()
     db.refresh(worker)
     return worker

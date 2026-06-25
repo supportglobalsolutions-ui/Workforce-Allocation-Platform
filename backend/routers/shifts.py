@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy.orm import Session
+from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
@@ -14,12 +14,12 @@ from .deps import apply_update, get_worker_for_user
 router = APIRouter()
 
 
-def _scoped_shifts_query(db: Session, current_user: dict):
-    query = db.query(Shift)
+def _scoped_stmt(current_user: dict, db: Session):
+    stmt = select(Shift)
     if current_user.get("role") not in {"admin", "super_admin"}:
         worker = get_worker_for_user(db, current_user)
-        query = query.filter(Shift.worker_id == worker.id)
-    return query
+        stmt = stmt.where(Shift.worker_id == worker.id)
+    return stmt
 
 
 @router.get("", response_model=list[ShiftResponse])
@@ -29,12 +29,12 @@ def list_shifts(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    query = _scoped_shifts_query(db, current_user)
+    stmt = _scoped_stmt(current_user, db)
     if status_filter:
-        query = query.filter(Shift.status == status_filter)
+        stmt = stmt.where(Shift.status == status_filter)
     if upcoming:
-        query = query.filter(Shift.scheduled_start >= datetime.utcnow())
-    return query.order_by(Shift.scheduled_start).all()
+        stmt = stmt.where(Shift.scheduled_start >= datetime.utcnow())
+    return db.exec(stmt.order_by(Shift.scheduled_start)).all()
 
 
 @router.get("/{shift_id}", response_model=ShiftResponse)
@@ -43,7 +43,9 @@ def get_shift(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    shift = _scoped_shifts_query(db, current_user).filter(Shift.id == shift_id).first()
+    shift = db.exec(
+        _scoped_stmt(current_user, db).where(Shift.id == shift_id)
+    ).first()
     if not shift:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shift not found")
     return shift
@@ -78,14 +80,12 @@ def update_shift(
     current_user: dict = Depends(require_user),
 ):
     if current_user.get("role") in {"admin", "super_admin"}:
-        shift = db.query(Shift).filter(Shift.id == shift_id).first()
+        shift = db.exec(select(Shift).where(Shift.id == shift_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
-        shift = (
-            db.query(Shift)
-            .filter(Shift.id == shift_id, Shift.worker_id == worker.id)
-            .first()
-        )
+        shift = db.exec(
+            select(Shift).where(Shift.id == shift_id, Shift.worker_id == worker.id)
+        ).first()
 
     if not shift:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shift not found")
@@ -99,6 +99,7 @@ def update_shift(
             )
 
     apply_update(shift, body)
+    db.add(shift)
     db.commit()
     db.refresh(shift)
     return shift

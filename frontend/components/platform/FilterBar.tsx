@@ -6,12 +6,14 @@ interface FilterBarProps {
   searchPlaceholder?: string;
   filters?: { label: string; options: string[] }[];
   onSearch?: (value: string) => void;
+  onFilterChange?: (label: string, value: string) => void;
 }
 
 export default function FilterBar({
   searchPlaceholder = 'Search...',
   filters = [],
   onSearch,
+  onFilterChange,
 }: FilterBarProps) {
   return (
     <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -27,6 +29,7 @@ export default function FilterBar({
       {filters.map((f) => (
         <select
           key={f.label}
+          onChange={(e) => onFilterChange?.(f.label, e.target.value)}
           className="px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40"
         >
           <option value="">{f.label}</option>
