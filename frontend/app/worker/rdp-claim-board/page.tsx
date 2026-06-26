@@ -21,13 +21,16 @@ interface ClaimResult {
   worker_id: string;
   status: string;
   guacamole_url: string | null;
+  guacamole_error?: string | null;
 }
 
 export default function RdpClaimBoard() {
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [info, setInfo] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
+  const [releasing, setReleasing] = useState<string | null>(null);
 
   const loadMachines = useCallback(async () => {
     try {
@@ -45,16 +48,37 @@ export default function RdpClaimBoard() {
   const handleClaim = async (machineId: string) => {
     setClaiming(machineId);
     setError(null);
+    setInfo(null);
     try {
       const result = await api.post<ClaimResult>(`/rdp/${machineId}/claim`, {});
       await loadMachines();
       if (result.guacamole_url) {
         window.open(result.guacamole_url, '_blank', 'noopener,noreferrer');
+        setInfo('Claimed — opening remote session in a new tab.');
+      } else {
+        setInfo(
+          `Claimed, but no remote session opened. ${result.guacamole_error ?? 'No Guacamole URL returned.'}`,
+        );
       }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to claim machine');
     } finally {
       setClaiming(null);
+    }
+  };
+
+  const handleRelease = async (machineId: string) => {
+    setReleasing(machineId);
+    setError(null);
+    setInfo(null);
+    try {
+      await api.post(`/rdp/${machineId}/release`, {});
+      await loadMachines();
+      setInfo('Released — machine is available to claim again.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to release machine');
+    } finally {
+      setReleasing(null);
     }
   };
 
@@ -72,6 +96,7 @@ export default function RdpClaimBoard() {
       />
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+      {info && <p className="text-emerald-accent text-sm mb-4">{info}</p>}
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -108,7 +133,16 @@ export default function RdpClaimBoard() {
                   {claiming === m.id ? 'Claiming…' : 'Claim'}
                 </button>
               ) : (
-                <p className="text-xs text-center text-theme-muted py-2">Unavailable</p>
+                <div className="space-y-2">
+                  <p className="text-xs text-center text-theme-muted">Unavailable</p>
+                  <button
+                    onClick={() => handleRelease(m.id)}
+                    disabled={releasing === m.id}
+                    className="btn-secondary w-full text-xs disabled:opacity-50"
+                  >
+                    {releasing === m.id ? 'Releasing…' : 'Release'}
+                  </button>
+                </div>
               )}
             </div>
           ))}

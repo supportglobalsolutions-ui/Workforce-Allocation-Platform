@@ -8,6 +8,12 @@ class Settings(BaseSettings):
     ENVIRONMENT: str = "development"
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
+    # ── Dev-only auth bypass ──────────────────────────────────
+    # When true, requests with no/invalid Firebase token are treated as a fixed
+    # test user. NEVER enable in production. Used only to test flows in isolation.
+    DEV_AUTH_BYPASS: bool = False
+    DEV_AUTH_ROLE: str = "user"  # role of the fake test user: user | admin | super_admin
+
     # ── Database ──────────────────────────────────────────────
     DATABASE_URL: str = "postgresql://postgres:122333@localhost:5432/workforceallocationdb"
 
