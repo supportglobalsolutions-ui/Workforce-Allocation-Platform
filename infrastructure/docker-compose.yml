@@ -1,5 +1,14 @@
 services:
 
+  # ── Redis (RDP claim locking) ──────────────────────────────────────────────
+  redis:
+    image: redis:7-alpine
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - guac_net
+
   # ── Guacamole daemon (does the actual RDP/VNC protocol work) ──────────────
   guacd:
     image: guacamole/guacd:latest
