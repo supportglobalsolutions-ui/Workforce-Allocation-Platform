@@ -74,9 +74,16 @@ export default function RdpClaimBoard() {
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
       {loading ? (
-        <p className="text-theme-muted text-sm">Loading machines...</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+          {[1, 2, 3].map((n) => (
+            <div key={n} className="glass-panel p-5 animate-pulse h-40" />
+          ))}
+        </div>
       ) : machines.length === 0 ? (
-        <p className="text-theme-muted text-sm">No RDP resources available.</p>
+        <div className="glass-panel p-8 text-center">
+          <p className="text-theme-muted text-sm mb-2">No RDP machines in the system yet.</p>
+          <p className="text-xs text-theme-muted">Machines added by an admin will appear here for claiming.</p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {machines.map((m) => (

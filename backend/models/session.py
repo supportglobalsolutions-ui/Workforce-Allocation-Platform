@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
@@ -94,21 +92,21 @@ class Session(SQLModel, table=True):
     )
 
     # Relationships
-    worker: Optional[Worker] = Relationship(back_populates="sessions")
-    allocation: Optional[Allocation] = Relationship(back_populates="session")
-    rdp_resource: Optional[RDPResource] = Relationship(
+    worker: Optional["Worker"] = Relationship(back_populates="sessions")
+    allocation: Optional["Allocation"] = Relationship(back_populates="session")
+    rdp_resource: Optional["RDPResource"] = Relationship(
         back_populates="sessions",
         sa_relationship_kwargs={"foreign_keys": "[Session.rdp_resource_id]"},
     )
-    partner_entity: Optional[PartnerEntity] = Relationship(
+    partner_entity: Optional["PartnerEntity"] = Relationship(
         back_populates="sessions",
         sa_relationship_kwargs={"foreign_keys": "[Session.partner_entity_id]"},
     )
-    partner_arrangement: Optional[PartnerArrangement] = Relationship(
+    partner_arrangement: Optional["PartnerArrangement"] = Relationship(
         back_populates="sessions",
         sa_relationship_kwargs={"foreign_keys": "[Session.partner_arrangement_id]"},
     )
-    payroll_period: Optional[PayrollPeriod] = Relationship(back_populates="sessions")
-    payroll_line_items: list[PayrollLineItem] = Relationship(back_populates="session")
-    quality_ratings: list[QualityIndicatorRating] = Relationship(back_populates="session")
-    tickets: list[SessionTicket] = Relationship(back_populates="session")
+    payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="sessions")
+    payroll_line_items: list["PayrollLineItem"] = Relationship(back_populates="session")
+    quality_ratings: list["QualityIndicatorRating"] = Relationship(back_populates="session")
+    tickets: list["SessionTicket"] = Relationship(back_populates="session")

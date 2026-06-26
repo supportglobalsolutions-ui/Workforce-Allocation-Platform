@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -33,7 +31,7 @@ class QualityIndicator(SQLModel, table=True):
     scale_max: int = Field(sa_column=Column(SmallInteger, nullable=False))
     is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, default=True))
 
-    ratings: list[QualityIndicatorRating] = Relationship(back_populates="indicator")
+    ratings: list["QualityIndicatorRating"] = Relationship(back_populates="indicator")
 
 
 class QualityIndicatorRating(SQLModel, table=True):
@@ -63,13 +61,13 @@ class QualityIndicatorRating(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    worker: Optional[Worker] = Relationship(back_populates="quality_ratings")
-    indicator: Optional[QualityIndicator] = Relationship(back_populates="ratings")
-    rated_by_user: Optional[AdminUser] = Relationship(
+    worker: Optional["Worker"] = Relationship(back_populates="quality_ratings")
+    indicator: Optional["QualityIndicator"] = Relationship(back_populates="ratings")
+    rated_by_user: Optional["AdminUser"] = Relationship(
         back_populates="quality_ratings",
         sa_relationship_kwargs={"foreign_keys": "[QualityIndicatorRating.rated_by]"},
     )
-    session: Optional[Session] = Relationship(back_populates="quality_ratings")
+    session: Optional["Session"] = Relationship(back_populates="quality_ratings")
 
 
 class QualityCompositeScore(SQLModel, table=True):
@@ -95,4 +93,4 @@ class QualityCompositeScore(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
     )
 
-    worker: Optional[Worker] = Relationship(back_populates="composite_scores")
+    worker: Optional["Worker"] = Relationship(back_populates="composite_scores")

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -41,12 +39,12 @@ class PayrollPeriod(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    approver: Optional[AdminUser] = Relationship(
+    approver: Optional["AdminUser"] = Relationship(
         back_populates="approved_payroll",
         sa_relationship_kwargs={"foreign_keys": "[PayrollPeriod.approved_by]"},
     )
-    sessions: list[Session] = Relationship(back_populates="payroll_period")
-    line_items: list[PayrollLineItem] = Relationship(back_populates="payroll_period")
+    sessions: list["Session"] = Relationship(back_populates="payroll_period")
+    line_items: list["PayrollLineItem"] = Relationship(back_populates="payroll_period")
 
 
 class PayrollLineItem(SQLModel, table=True):
@@ -88,6 +86,6 @@ class PayrollLineItem(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    payroll_period: Optional[PayrollPeriod] = Relationship(back_populates="line_items")
-    session: Optional[Session] = Relationship(back_populates="payroll_line_items")
-    worker: Optional[Worker] = Relationship(back_populates="payroll_line_items")
+    payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="line_items")
+    session: Optional["Session"] = Relationship(back_populates="payroll_line_items")
+    worker: Optional["Worker"] = Relationship(back_populates="payroll_line_items")

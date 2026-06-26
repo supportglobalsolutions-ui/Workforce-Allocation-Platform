@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
@@ -43,7 +41,7 @@ class AuditLog(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()"), index=True),
     )
 
-    actor: Optional[AdminUser] = Relationship(
+    actor: Optional["AdminUser"] = Relationship(
         back_populates="audit_entries",
         sa_relationship_kwargs={"foreign_keys": "[AuditLog.actor_id]"},
     )

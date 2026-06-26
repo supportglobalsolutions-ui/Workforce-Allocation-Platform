@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -66,7 +64,7 @@ class Allocation(SQLModel, table=True):
     )
 
     # Relationships
-    shift: Optional[Shift] = Relationship(back_populates="allocation")
-    worker: Optional[Worker] = Relationship(back_populates="allocations")
-    rdp_resource: Optional[RDPResource] = Relationship(back_populates="allocations")
-    session: Optional[Session] = Relationship(back_populates="allocation", sa_relationship_kwargs={"uselist": False})
+    shift: Optional["Shift"] = Relationship(back_populates="allocation")
+    worker: Optional["Worker"] = Relationship(back_populates="allocations")
+    rdp_resource: Optional["RDPResource"] = Relationship(back_populates="allocations")
+    session: Optional["Session"] = Relationship(back_populates="allocation", sa_relationship_kwargs={"uselist": False})

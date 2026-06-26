@@ -1,0 +1,33 @@
+export const STATUS_COLORS: Record<string, string> = {
+  online_free: 'bg-emerald-accent/20 text-emerald-accent border-emerald-accent/30',
+  assigned: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  active: 'bg-blue-500/20 text-blue-400 border-blue-500/30',
+  idle: 'bg-warning/20 text-warning border-warning/30',
+  offline: 'bg-white/10 text-white/50 border-white/10',
+  unhealthy: 'bg-danger/20 text-danger border-danger/30',
+  maintenance: 'bg-gold-accent/20 text-gold-accent border-gold-accent/30',
+  admin_locked: 'bg-purple-500/20 text-purple-400 border-purple-500/30',
+  completed: 'bg-success/20 text-success border-success/30',
+  force_released: 'bg-danger/20 text-danger border-danger/30',
+  pending: 'bg-warning/20 text-warning border-warning/30',
+  approved: 'bg-success/20 text-success border-success/30',
+  inactive: 'bg-white/10 text-white/50 border-white/10',
+  suspended: 'bg-danger/20 text-danger border-danger/30',
+};
+
+export const STATUS_LABELS: Record<string, string> = {
+  online_free: 'Online Free',
+  assigned: 'Assigned',
+  active: 'Active',
+  idle: 'Idle',
+  offline: 'Offline',
+  unhealthy: 'Unhealthy',
+  maintenance: 'Maintenance',
+  admin_locked: 'Locked',
+  completed: 'Completed',
+  force_released: 'Force Released',
+  pending: 'Pending',
+  approved: 'Approved',
+  inactive: 'Inactive',
+  suspended: 'Suspended',
+};

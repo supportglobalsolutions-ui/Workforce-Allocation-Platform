@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from decimal import Decimal
@@ -29,12 +27,12 @@ class McqAssessmentSet(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=False),
     )
 
-    creator: Optional[AdminUser] = Relationship(back_populates="created_assessments")
-    questions: list[McqQuestion] = Relationship(
+    creator: Optional["AdminUser"] = Relationship(back_populates="created_assessments")
+    questions: list["McqQuestion"] = Relationship(
         back_populates="assessment_set",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    results: list[McqResult] = Relationship(back_populates="assessment_set")
+    results: list["McqResult"] = Relationship(back_populates="assessment_set")
 
 
 class McqQuestion(SQLModel, table=True):
@@ -54,8 +52,8 @@ class McqQuestion(SQLModel, table=True):
     correct_option_key: str = Field(sa_column=Column(String(8), nullable=False))
     sort_order: int = Field(default=0, sa_column=Column(Integer, nullable=False, default=0))
 
-    assessment_set: Optional[McqAssessmentSet] = Relationship(back_populates="questions")
-    result_answers: list[McqResultAnswer] = Relationship(back_populates="question")
+    assessment_set: Optional["McqAssessmentSet"] = Relationship(back_populates="questions")
+    result_answers: list["McqResultAnswer"] = Relationship(back_populates="question")
 
 
 class McqResult(SQLModel, table=True):
@@ -78,9 +76,9 @@ class McqResult(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
     )
 
-    worker: Optional[Worker] = Relationship(back_populates="mcq_results")
-    assessment_set: Optional[McqAssessmentSet] = Relationship(back_populates="results")
-    answers: list[McqResultAnswer] = Relationship(
+    worker: Optional["Worker"] = Relationship(back_populates="mcq_results")
+    assessment_set: Optional["McqAssessmentSet"] = Relationship(back_populates="results")
+    answers: list["McqResultAnswer"] = Relationship(
         back_populates="result",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -102,5 +100,5 @@ class McqResultAnswer(SQLModel, table=True):
     selected_option_key: str = Field(sa_column=Column(String(8), nullable=False))
     is_correct: bool = Field(sa_column=Column(Boolean, nullable=False))
 
-    result: Optional[McqResult] = Relationship(back_populates="answers")
-    question: Optional[McqQuestion] = Relationship(back_populates="result_answers")
+    result: Optional["McqResult"] = Relationship(back_populates="answers")
+    question: Optional["McqQuestion"] = Relationship(back_populates="result_answers")

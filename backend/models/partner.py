@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -31,9 +29,9 @@ class PartnerEntity(SQLModel, table=True):
         sa_column=Column(Date, nullable=False, server_default=text("now()")),
     )
 
-    arrangements: list[PartnerArrangement] = Relationship(back_populates="partner_entity")
-    workers: list[Worker] = Relationship(back_populates="partner_entity")
-    sessions: list[Session] = Relationship(
+    arrangements: list["PartnerArrangement"] = Relationship(back_populates="partner_entity")
+    workers: list["Worker"] = Relationship(back_populates="partner_entity")
+    sessions: list["Session"] = Relationship(
         back_populates="partner_entity",
         sa_relationship_kwargs={"foreign_keys": "[Session.partner_entity_id]"},
     )
@@ -62,9 +60,9 @@ class PartnerArrangement(SQLModel, table=True):
     effective_to: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
-    partner_entity: Optional[PartnerEntity] = Relationship(back_populates="arrangements")
-    client_overrides: list[PartnerClientOverride] = Relationship(back_populates="arrangement")
-    sessions: list[Session] = Relationship(
+    partner_entity: Optional["PartnerEntity"] = Relationship(back_populates="arrangements")
+    client_overrides: list["PartnerClientOverride"] = Relationship(back_populates="arrangement")
+    sessions: list["Session"] = Relationship(
         back_populates="partner_arrangement",
         sa_relationship_kwargs={"foreign_keys": "[Session.partner_arrangement_id]"},
     )
@@ -93,4 +91,4 @@ class PartnerClientOverride(SQLModel, table=True):
     effective_from: date = Field(sa_column=Column(Date, nullable=False))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
 
-    arrangement: Optional[PartnerArrangement] = Relationship(back_populates="client_overrides")
+    arrangement: Optional["PartnerArrangement"] = Relationship(back_populates="client_overrides")

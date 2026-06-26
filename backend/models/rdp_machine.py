@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
@@ -49,15 +47,15 @@ class RDPResource(SQLModel, table=True):
     )
 
     # Relationships
-    assigned_worker: Optional[Worker] = Relationship(
+    assigned_worker: Optional["Worker"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[RDPResource.assigned_worker_id]"}
     )
-    shifts: list[Shift] = Relationship(
+    shifts: list["Shift"] = Relationship(
         back_populates="rdp_resource",
         sa_relationship_kwargs={"foreign_keys": "[Shift.rdp_resource_id]"},
     )
-    allocations: list[Allocation] = Relationship(back_populates="rdp_resource")
-    sessions: list[Session] = Relationship(
+    allocations: list["Allocation"] = Relationship(back_populates="rdp_resource")
+    sessions: list["Session"] = Relationship(
         back_populates="rdp_resource",
         sa_relationship_kwargs={"foreign_keys": "[Session.rdp_resource_id]"},
     )

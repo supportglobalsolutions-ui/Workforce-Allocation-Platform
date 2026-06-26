@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -47,26 +45,26 @@ class AdminUser(SQLModel, table=True):
     )
 
     # Relationships
-    workers: list[Worker] = Relationship(
+    workers: list["Worker"] = Relationship(
         back_populates="admin_user",
         sa_relationship_kwargs={"foreign_keys": "[Worker.admin_user_id]"},
     )
-    approved_shifts: list[Shift] = Relationship(
+    approved_shifts: list["Shift"] = Relationship(
         back_populates="approver",
         sa_relationship_kwargs={"foreign_keys": "[Shift.approved_by]"},
     )
-    quality_ratings: list[QualityIndicatorRating] = Relationship(back_populates="rated_by_user")
-    approved_rate_entries: list[RateTableEntry] = Relationship(
+    quality_ratings: list["QualityIndicatorRating"] = Relationship(back_populates="rated_by_user")
+    approved_rate_entries: list["RateTableEntry"] = Relationship(
         back_populates="approver",
         sa_relationship_kwargs={"foreign_keys": "[RateTableEntry.approved_by]"},
     )
-    approved_payroll: list[PayrollPeriod] = Relationship(
+    approved_payroll: list["PayrollPeriod"] = Relationship(
         back_populates="approver",
         sa_relationship_kwargs={"foreign_keys": "[PayrollPeriod.approved_by]"},
     )
-    created_assessments: list[McqAssessmentSet] = Relationship(back_populates="creator")
-    audit_entries: list[AuditLog] = Relationship(
+    created_assessments: list["McqAssessmentSet"] = Relationship(back_populates="creator")
+    audit_entries: list["AuditLog"] = Relationship(
         back_populates="actor",
         sa_relationship_kwargs={"foreign_keys": "[AuditLog.actor_id]"},
     )
-    kb_articles: list[KnowledgeBaseArticle] = Relationship(back_populates="creator")
+    kb_articles: list["KnowledgeBaseArticle"] = Relationship(back_populates="creator")

@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import date, datetime
 from decimal import Decimal
@@ -42,11 +40,11 @@ class RateTableEntry(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    worker: Optional[Worker] = Relationship(
+    worker: Optional["Worker"] = Relationship(
         back_populates="rate_entries",
         sa_relationship_kwargs={"foreign_keys": "[RateTableEntry.worker_id]"},
     )
-    approver: Optional[AdminUser] = Relationship(
+    approver: Optional["AdminUser"] = Relationship(
         back_populates="approved_rate_entries",
         sa_relationship_kwargs={"foreign_keys": "[RateTableEntry.approved_by]"},
     )

@@ -1,7 +1,5 @@
 # post-MVP models — defined so Alembic generates the schema from day one.
 
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -45,8 +43,8 @@ class SessionTicket(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    session: Optional[Session] = Relationship(back_populates="tickets")
-    worker: Optional[Worker] = Relationship(back_populates="session_tickets")
+    session: Optional["Session"] = Relationship(back_populates="tickets")
+    worker: Optional["Worker"] = Relationship(back_populates="session_tickets")
 
 
 class KnowledgeBaseArticle(SQLModel, table=True):
@@ -70,4 +68,4 @@ class KnowledgeBaseArticle(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    creator: Optional[AdminUser] = Relationship(back_populates="kb_articles")
+    creator: Optional["AdminUser"] = Relationship(back_populates="kb_articles")

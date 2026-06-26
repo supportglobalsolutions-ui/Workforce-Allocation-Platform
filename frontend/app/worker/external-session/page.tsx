@@ -33,11 +33,7 @@ export default function ExternalSessionPage() {
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1.5 block">Partner Channel</label>
-            <select className="input-field">
-              <option value="">None (direct platform)</option>
-              <option value="alpha">Partner Alpha</option>
-              <option value="beta">Partner Beta</option>
-            </select>
+            <input type="text" placeholder="Partner name (if applicable)" className="input-field" />
           </div>
           <div>
             <label className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-1.5 block">Platform / Client Name</label>

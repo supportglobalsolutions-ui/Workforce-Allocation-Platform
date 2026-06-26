@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
@@ -48,16 +46,16 @@ class Shift(SQLModel, table=True):
     )
 
     # Relationships
-    worker: Optional[Worker] = Relationship(
+    worker: Optional["Worker"] = Relationship(
         back_populates="shifts",
         sa_relationship_kwargs={"foreign_keys": "[Shift.worker_id]"},
     )
-    rdp_resource: Optional[RDPResource] = Relationship(
+    rdp_resource: Optional["RDPResource"] = Relationship(
         back_populates="shifts",
         sa_relationship_kwargs={"foreign_keys": "[Shift.rdp_resource_id]"},
     )
-    approver: Optional[AdminUser] = Relationship(
+    approver: Optional["AdminUser"] = Relationship(
         back_populates="approved_shifts",
         sa_relationship_kwargs={"foreign_keys": "[Shift.approved_by]"},
     )
-    allocation: Optional[Allocation] = Relationship(back_populates="shift", sa_relationship_kwargs={"uselist": False})
+    allocation: Optional["Allocation"] = Relationship(back_populates="shift", sa_relationship_kwargs={"uselist": False})

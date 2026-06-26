@@ -1,11 +1,17 @@
+import logging
+import traceback
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from core.config import settings
 from core.firebase_admin import init_firebase
 from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, workers
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -29,6 +35,12 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception on %s %s:\n%s", request.method, request.url, traceback.format_exc())
+    return JSONResponse(status_code=500, content={"detail": str(exc), "type": type(exc).__name__})
 
 
 @app.get("/health")

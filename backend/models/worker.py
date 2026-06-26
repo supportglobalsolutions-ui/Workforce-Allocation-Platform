@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
@@ -60,23 +58,23 @@ class Worker(SQLModel, table=True):
     )
 
     # Relationships
-    admin_user: Optional[AdminUser] = Relationship(
+    admin_user: Optional["AdminUser"] = Relationship(
         back_populates="workers",
         sa_relationship_kwargs={"foreign_keys": "[Worker.admin_user_id]"},
     )
-    partner_entity: Optional[PartnerEntity] = Relationship(back_populates="workers")
-    shifts: list[Shift] = Relationship(
+    partner_entity: Optional["PartnerEntity"] = Relationship(back_populates="workers")
+    shifts: list["Shift"] = Relationship(
         back_populates="worker",
         sa_relationship_kwargs={"foreign_keys": "[Shift.worker_id]"},
     )
-    allocations: list[Allocation] = Relationship(back_populates="worker")
-    sessions: list[Session] = Relationship(back_populates="worker")
-    rate_entries: list[RateTableEntry] = Relationship(
+    allocations: list["Allocation"] = Relationship(back_populates="worker")
+    sessions: list["Session"] = Relationship(back_populates="worker")
+    rate_entries: list["RateTableEntry"] = Relationship(
         back_populates="worker",
         sa_relationship_kwargs={"foreign_keys": "[RateTableEntry.worker_id]"},
     )
-    payroll_line_items: list[PayrollLineItem] = Relationship(back_populates="worker")
-    quality_ratings: list[QualityIndicatorRating] = Relationship(back_populates="worker")
-    composite_scores: list[QualityCompositeScore] = Relationship(back_populates="worker")
-    mcq_results: list[McqResult] = Relationship(back_populates="worker")
-    session_tickets: list[SessionTicket] = Relationship(back_populates="worker")
+    payroll_line_items: list["PayrollLineItem"] = Relationship(back_populates="worker")
+    quality_ratings: list["QualityIndicatorRating"] = Relationship(back_populates="worker")
+    composite_scores: list["QualityCompositeScore"] = Relationship(back_populates="worker")
+    mcq_results: list["McqResult"] = Relationship(back_populates="worker")
+    session_tickets: list["SessionTicket"] = Relationship(back_populates="worker")
