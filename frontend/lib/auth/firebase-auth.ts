@@ -15,12 +15,38 @@ import {
 } from './config';
 import { api } from '@/lib/api';
 
+// ── Dev bypass (development only) ─────────────────────────────────────────────
+const DEV_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
+const DEV_ROLE   = (process.env.NEXT_PUBLIC_DEV_AUTH_ROLE ?? 'super_admin') as AuthRole;
+const DEV_KEY    = 'dev_auth_session';
+
+function makeDevSession(): AuthSession {
+  return {
+    uid:            'dev-test-user',
+    email:          'dev.test@local.dev',
+    displayName:    'Dev User',
+    authRole:       DEV_ROLE,
+    primaryPortal:  ROLE_TO_PORTAL[DEV_ROLE],
+    allowedPortals: ROLE_ALLOWED_PORTALS[DEV_ROLE],
+  };
+}
+// ──────────────────────────────────────────────────────────────────────────────
+
 export async function signIn(email: string, password: string): Promise<AuthSession> {
+  if (DEV_BYPASS) {
+    const session = makeDevSession();
+    localStorage.setItem(DEV_KEY, JSON.stringify(session));
+    return session;
+  }
   const { user } = await signInWithEmailAndPassword(auth, email, password);
   return sessionFromUser(user);
 }
 
 export async function signOut(): Promise<void> {
+  if (DEV_BYPASS) {
+    localStorage.removeItem(DEV_KEY);
+    return;
+  }
   await fbSignOut(auth);
 }
 
@@ -40,6 +66,11 @@ export async function sessionFromUser(user: User): Promise<AuthSession> {
 export function subscribeAuthState(
   callback: (session: AuthSession | null) => void,
 ): () => void {
+  if (DEV_BYPASS) {
+    const stored = localStorage.getItem(DEV_KEY);
+    callback(stored ? (JSON.parse(stored) as AuthSession) : null);
+    return () => {};
+  }
   return onAuthStateChanged(auth, async (user) => {
     if (!user) { callback(null); return; }
     try { callback(await sessionFromUser(user)); }

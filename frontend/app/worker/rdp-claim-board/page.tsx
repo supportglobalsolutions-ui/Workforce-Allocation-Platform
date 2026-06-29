@@ -49,18 +49,24 @@ export default function RdpClaimBoard() {
     setClaiming(machineId);
     setError(null);
     setInfo(null);
+    // Open the tab immediately (synchronous, inside the click event) so the
+    // browser doesn't block it as a popup. We'll navigate it once the claim
+    // API responds.
+    const tab = window.open('', '_blank');
     try {
       const result = await api.post<ClaimResult>(`/rdp/${machineId}/claim`, {});
       await loadMachines();
-      if (result.guacamole_url) {
-        window.open(result.guacamole_url, '_blank', 'noopener,noreferrer');
-        setInfo('Claimed — opening remote session in a new tab.');
+      if (result.guacamole_url && tab) {
+        tab.location.href = result.guacamole_url;
+        setInfo('Claimed — remote session opened in a new tab.');
       } else {
+        tab?.close();
         setInfo(
           `Claimed, but no remote session opened. ${result.guacamole_error ?? 'No Guacamole URL returned.'}`,
         );
       }
     } catch (e) {
+      tab?.close();
       setError(e instanceof Error ? e.message : 'Failed to claim machine');
     } finally {
       setClaiming(null);

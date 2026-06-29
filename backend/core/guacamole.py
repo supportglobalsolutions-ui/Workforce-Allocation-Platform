@@ -34,7 +34,7 @@ class GuacamoleClient:
             data = resp.json()
 
         token: str = data["authToken"]
-        data_source: str = data.get("dataSource", "mysql")
+        data_source: str = data.get("dataSource", "postgresql")
         self._redis.setex(_CACHE_KEY, _CACHE_TTL, f"{token}:{data_source}")
         return token, data_source
 
