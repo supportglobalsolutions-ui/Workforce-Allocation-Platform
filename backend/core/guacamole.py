@@ -16,12 +16,7 @@ class GuacamoleClient:
         self._redis = redis_client
         self._base = settings.GUACAMOLE_URL.rstrip("/")
 
-    def _get_token(self) -> tuple[str, str]:
-        cached = self._redis.get(_CACHE_KEY)
-        if cached:
-            token, data_source = cached.decode().split(":", 1)
-            return token, data_source
-
+    def _fetch_fresh_token(self) -> tuple[str, str]:
         with httpx.Client(timeout=10.0) as client:
             resp = client.post(
                 f"{self._base}/api/tokens",
@@ -32,11 +27,26 @@ class GuacamoleClient:
             )
             resp.raise_for_status()
             data = resp.json()
-
         token: str = data["authToken"]
         data_source: str = data.get("dataSource", "postgresql")
         self._redis.setex(_CACHE_KEY, _CACHE_TTL, f"{token}:{data_source}")
         return token, data_source
+
+    def _get_token(self) -> tuple[str, str]:
+        cached = self._redis.get(_CACHE_KEY)
+        if cached:
+            token, data_source = cached.decode().split(":", 1)
+            # Validate the cached token is still accepted by Guacamole.
+            with httpx.Client(timeout=5.0) as client:
+                check = client.get(
+                    f"{self._base}/api/session/data/{data_source}/self",
+                    params={"token": token},
+                )
+            if check.status_code == 200:
+                return token, data_source
+            # Token rejected (e.g. Guacamole restarted) — clear cache and re-fetch.
+            self._redis.delete(_CACHE_KEY)
+        return self._fetch_fresh_token()
 
     def get_connection_url(self, connection_id: str) -> str:
         """Build the Guacamole web-client URL for a connection."""

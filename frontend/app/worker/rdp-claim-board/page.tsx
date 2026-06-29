@@ -49,10 +49,19 @@ export default function RdpClaimBoard() {
     setClaiming(machineId);
     setError(null);
     setInfo(null);
-    // Open the tab immediately (synchronous, inside the click event) so the
-    // browser doesn't block it as a popup. We'll navigate it once the claim
-    // API responds.
+    // Open the tab synchronously (inside the click event) so the browser
+    // doesn't block it as a popup. Show a loading screen immediately so
+    // the user never sees a blank tab or a bare URL.
     const tab = window.open('', '_blank');
+    if (tab) {
+      tab.document.write(
+        '<!DOCTYPE html><html><head><title>Opening session…</title>' +
+        '<style>body{margin:0;background:#0d1117;color:#6ee7b7;font-family:sans-serif;' +
+        'display:flex;align-items:center;justify-content:center;height:100vh;font-size:1rem;}</style>' +
+        '</head><body>Opening remote session…</body></html>'
+      );
+      tab.document.close();
+    }
     try {
       const result = await api.post<ClaimResult>(`/rdp/${machineId}/claim`, {});
       await loadMachines();
