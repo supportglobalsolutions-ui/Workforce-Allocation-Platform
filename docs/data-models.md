@@ -34,6 +34,8 @@ Phase 0 requires a confirmed ERD before production build begins so that session 
 
 PostgreSQL holds the canonical record. Firebase mirrors live state written by the FastAPI backend. If Firebase is unavailable, historical data remains intact; if PostgreSQL is unavailable, new actions are rejected to protect integrity.
 
+**Team standard for new data:** [storage-decision-guide.md](storage-decision-guide.md)
+
 ---
 
 ## How to read this document — scope layers

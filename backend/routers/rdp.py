@@ -14,6 +14,7 @@ from models.allocation import Allocation
 from models.enums import RdpStatusEnum, ReleaseReasonEnum
 from models.rdp_machine import RDPResource
 from schemas.rdp import RDPResourceCreate, RDPResourceResponse, RDPResourceUpdate
+from services.firebase_mirror import mirror_rdp_status
 from .deps import apply_update, get_worker_for_user
 
 logger = logging.getLogger(__name__)
@@ -50,6 +51,7 @@ def create_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
+    mirror_rdp_status(resource)
     return resource
 
 
@@ -68,6 +70,7 @@ def update_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
+    mirror_rdp_status(resource)
     return resource
 
 
@@ -96,7 +99,7 @@ def claim_rdp_resource(
             detail=f"RDP resource is not claimable (status={resource.status})",
         )
 
-    lock_key = f"rdp:claim:{rdp_id}"
+    lock_key = f"lock:rdp:{rdp_id}"
     acquired = redis_client.set(lock_key, "1", ex=30, nx=True)
     if not acquired:
         raise HTTPException(
@@ -133,6 +136,7 @@ def claim_rdp_resource(
         db.add(resource)
         db.commit()
         db.refresh(allocation)
+        mirror_rdp_status(resource)
 
         return {
             "allocation_id":   str(allocation.id),
@@ -175,5 +179,6 @@ def release_rdp_resource(
     resource.assigned_worker_id = None
     db.add(resource)
     db.commit()
+    mirror_rdp_status(resource)
 
     return {"rdp_resource_id": str(rdp_id), "status": resource.status.value}

@@ -2,13 +2,16 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
+import redis as redis_lib
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
+from core.redis import get_redis
 from models.session import Session as WorkSession
 from schemas.session import SessionCreate, SessionResponse, SessionUpdate
+from services.firebase_mirror import delete_active_session, mirror_active_session
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -67,6 +70,8 @@ def create_session(
     db.add(session)
     db.commit()
     db.refresh(session)
+    if session.end_time is None:
+        mirror_active_session(db, session)
     return session
 
 
@@ -103,6 +108,10 @@ def update_session(
     db.add(session)
     db.commit()
     db.refresh(session)
+    if session.end_time is None:
+        mirror_active_session(db, session)
+    else:
+        delete_active_session(session.id)
     return session
 
 
@@ -111,17 +120,23 @@ def heartbeat_session(
     session_id: UUID,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
+    redis_client: redis_lib.Redis = Depends(get_redis),
 ):
     stmt = _scoped_stmt(current_user, db).where(WorkSession.id == session_id)
     session = db.exec(stmt).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
+    now = datetime.utcnow()
     fields = dict(session.type_specific_fields or {})
-    fields["last_heartbeat_at"] = datetime.utcnow().isoformat()
+    fields["last_heartbeat_at"] = now.isoformat()
     session.type_specific_fields = fields
 
     db.add(session)
     db.commit()
     db.refresh(session)
+
+    redis_client.set(f"heartbeat:session:{session_id}", now.isoformat(), ex=3600)
+    if session.end_time is None:
+        mirror_active_session(db, session)
     return session

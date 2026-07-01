@@ -21,9 +21,25 @@ export const storage: FirebaseStorage = getStorage(app);
 
 export default app;
 
+/** Canonical Firestore mirror paths — see docs/data-models.md Appendix B */
 export const COLLECTIONS = {
-  SESSIONS:      'sessions',
-  WORKER_STATUS: 'worker_status',
-  NOTIFICATIONS: 'notifications',
-  AUDIT_EVENTS:  'audit_events',
+  RDP_STATUS:           'rdp_status',
+  ACTIVE_SESSIONS:      'active_sessions',
+  SHIFT_NOTIFICATIONS:  'shift_notifications',
+  SHIFT_NOTIFICATION_ITEMS: 'notifications',
+  LEADERBOARD:          'leaderboard',
+  LEADERBOARD_CURRENT:  'current_period',
+  SYSTEM_ALERTS:        'system_alerts',
 } as const;
+
+/** @deprecated PostgreSQL is source of truth — do not read or write these collections */
+export const DEPRECATED_COLLECTIONS = [
+  'users',
+  'sessions',
+  'worker_status',
+  'notifications',
+  'audit_events',
+  'payroll',
+  'rdp_machines',
+  'partners',
+] as const;

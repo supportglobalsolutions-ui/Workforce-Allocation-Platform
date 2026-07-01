@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import traceback
 from contextlib import asynccontextmanager
@@ -9,6 +10,7 @@ from fastapi.responses import JSONResponse
 from core.config import settings
 from core.firebase_admin import init_firebase
 from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, workers
+from services.leaderboard_sync import run_leaderboard_sync_loop
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -17,7 +19,13 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_firebase()
+    sync_task = asyncio.create_task(run_leaderboard_sync_loop())
     yield
+    sync_task.cancel()
+    try:
+        await sync_task
+    except asyncio.CancelledError:
+        pass
 
 
 app = FastAPI(

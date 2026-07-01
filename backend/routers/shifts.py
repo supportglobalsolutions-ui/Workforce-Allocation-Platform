@@ -7,8 +7,10 @@ from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
+from models.enums import ShiftStatusEnum
 from models.shift import Shift
 from schemas.shift import ShiftCreate, ShiftResponse, ShiftUpdate
+from services.firebase_mirror import mirror_shift_status_change
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -90,6 +92,8 @@ def update_shift(
     if not shift:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Shift not found")
 
+    previous_status: ShiftStatusEnum = shift.status
+
     if current_user.get("role") not in {"admin", "super_admin"}:
         restricted = {"status", "approved_by", "approved_at", "rejection_reason"}
         if restricted & body.model_dump(exclude_unset=True).keys():
@@ -102,4 +106,5 @@ def update_shift(
     db.add(shift)
     db.commit()
     db.refresh(shift)
+    mirror_shift_status_change(db, shift, previous_status)
     return shift

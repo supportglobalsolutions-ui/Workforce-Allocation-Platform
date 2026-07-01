@@ -107,7 +107,7 @@ globalsolutions-platform/
 │   │   ├── quality_engine.py       ← 50/50 composite score
 │   │   ├── session_engine.py       ← session rules, heartbeat
 │   │   ├── audit_service.py        ← write-only audit entries
-│   │   └── firebase_sync.py        ← mirror state to Firebase
+│   │   └── firebase_mirror.py      ← mirror state to Firebase (PG commit first)
 │   └── migrations/                 ← Alembic DB migrations
 │       └── versions/
 ├── infrastructure/
