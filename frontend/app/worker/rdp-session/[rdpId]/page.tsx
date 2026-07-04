@@ -3,12 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { ExternalLink } from 'lucide-react';
 
-import RdpViewer from '@/components/rdp/RdpViewer';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
-import { endRdpConnection } from '@/lib/rdp';
+import { endRdpConnection, openRdpDesktopTab } from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -27,6 +27,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [startedAt] = useState(() => Date.now());
+  const [desktopOpened, setDesktopOpened] = useState(false);
 
   useEffect(() => {
     api.get<RDPResource>(`/rdp/${rdpId}`)
@@ -42,14 +43,26 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     return () => clearInterval(t);
   }, [startedAt]);
 
+  // Open the remote desktop in a separate tab once (bigger screen, platform stays here).
   useEffect(() => {
-    const onBeforeUnload = (e: BeforeUnloadEvent) => {
-      e.preventDefault();
-      e.returnValue = '';
-    };
-    window.addEventListener('beforeunload', onBeforeUnload);
-    return () => window.removeEventListener('beforeunload', onBeforeUnload);
-  }, []);
+    if (loading || !machine) return;
+    const key = `rdp-desktop-auto-${rdpId}`;
+    if (sessionStorage.getItem(key)) return;
+    const tab = openRdpDesktopTab(rdpId);
+    if (tab) {
+      sessionStorage.setItem(key, '1');
+      setDesktopOpened(true);
+    }
+  }, [loading, machine, rdpId]);
+
+  const handleOpenDesktop = useCallback(() => {
+    const tab = openRdpDesktopTab(rdpId);
+    if (tab) {
+      setDesktopOpened(true);
+    } else {
+      setError('Pop-up blocked — allow pop-ups for this site, then click Open desktop again.');
+    }
+  }, [rdpId]);
 
   const handleEndConnection = useCallback(async () => {
     if (ending) return;
@@ -57,6 +70,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     setError(null);
     try {
       await endRdpConnection(rdpId);
+      sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
       router.push('/worker/rdp-claim-board');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to end connection');
@@ -84,7 +98,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-6rem)] max-w-7xl">
+    <div className="max-w-3xl">
       <PageHeader
         title={machine?.nickname ?? 'Remote session'}
         description={`${machine?.country ?? ''} · ${machine?.client_group ?? ''}`.trim()}
@@ -96,30 +110,39 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         }
       />
 
-      {error && <p className="text-danger text-sm mb-3">{error}</p>}
+      {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
-      <div className="flex-1 min-h-0 rounded-lg border border-white/10 overflow-hidden mb-4">
-        <RdpViewer rdpId={rdpId} className="h-full min-h-[480px]" />
+      <div className="glass-panel p-6 mb-6 space-y-4">
+        <p className="text-sm text-white">
+          Your remote desktop opens in a <strong>separate tab</strong> so you get the full screen.
+          Keep this page open to end the session when you are finished.
+        </p>
+        <button
+          type="button"
+          onClick={handleOpenDesktop}
+          className="btn-primary text-sm inline-flex items-center gap-2"
+        >
+          <ExternalLink size={16} />
+          {desktopOpened ? 'Re-open desktop tab' : 'Open desktop tab'}
+        </button>
+        <p className="text-xs text-theme-muted">
+          In the desktop tab, use <strong>Full screen</strong> for maximum space, and{' '}
+          <strong>Exit full screen</strong> to return to the browser window.
+        </p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-4">
-        <p className="text-xs text-theme-muted max-w-xl">
-          Use the remote desktop below. When finished, click End Connection — this releases the
-          machine and disconnects your session. Do not use browser back without ending the session.
-        </p>
-        <div className="flex gap-2">
-          <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
-            Claim board
-          </Link>
-          <button
-            type="button"
-            onClick={handleEndConnection}
-            disabled={ending}
-            className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30 disabled:opacity-50"
-          >
-            {ending ? 'Ending…' : 'End Connection'}
-          </button>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
+          Claim board
+        </Link>
+        <button
+          type="button"
+          onClick={handleEndConnection}
+          disabled={ending}
+          className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30 disabled:opacity-50"
+        >
+          {ending ? 'Ending…' : 'End Connection'}
+        </button>
       </div>
     </div>
   );

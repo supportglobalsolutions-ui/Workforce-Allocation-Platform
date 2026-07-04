@@ -50,14 +50,22 @@ export default function RdpClaimBoard() {
     setInfo(null);
     try {
       const result = await claimRdp(machineId);
-      if (result.guacamole_error && !result.guacamole_viewer_path) {
-        setInfo(
-          `Claimed, but remote desktop may not open: ${result.guacamole_error}`,
-        );
+      if (result.resumed) {
+        setInfo(`Resuming your existing session on this machine.`);
+      } else if (result.guacamole_error && !result.guacamole_viewer_path) {
+        setInfo(`Claimed, but remote desktop may not open: ${result.guacamole_error}`);
       }
       router.push(`/worker/rdp-session/${machineId}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to claim machine');
+      const msg = e instanceof Error ? e.message : 'Failed to claim machine';
+      if (msg.includes('already have an open session')) {
+        const active = await getMyActiveRdp().catch(() => null);
+        if (active?.rdp_resource_id) {
+          router.push(`/worker/rdp-session/${active.rdp_resource_id}`);
+          return;
+        }
+      }
+      setError(msg);
     } finally {
       setClaiming(null);
     }

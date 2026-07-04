@@ -11,13 +11,14 @@ export interface MyActiveRdp {
 
 export interface ClaimResult {
   allocation_id: string;
-  session_id: string;
+  session_id: string | null;
   rdp_resource_id: string;
   worker_id: string;
   status: string;
   guacamole_url: string | null;
   guacamole_viewer_path: string | null;
   guacamole_error?: string | null;
+  resumed?: boolean;
 }
 
 export interface TunnelInfo {
@@ -44,3 +45,9 @@ export const endRdpConnection = (rdpId: string) =>
 
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
+
+/** Open the dedicated remote-desktop tab (full viewport + fullscreen controls). */
+export function openRdpDesktopTab(rdpId: string): Window | null {
+  const url = `/worker/rdp-session/${rdpId}/desktop`;
+  return window.open(url, `rdp-desktop-${rdpId}`, 'noopener,noreferrer');
+}

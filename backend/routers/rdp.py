@@ -67,6 +67,154 @@ def _close_open_sessions_for_rdp(db: Session, rdp_id: UUID) -> list[UUID]:
     return closed_ids
 
 
+def _open_allocation(db: Session, rdp_id: UUID) -> Allocation | None:
+    return db.exec(
+        select(Allocation).where(
+            Allocation.rdp_resource_id == rdp_id,
+            Allocation.released_at.is_(None),
+        )
+    ).first()
+
+
+def _repair_rdp_state(db: Session, resource: RDPResource) -> bool:
+    """
+    Fix inconsistent RDP rows after a partial claim/release failure.
+    Returns True if the resource row was updated.
+    """
+    open_alloc = _open_allocation(db, resource.id)
+    busy_statuses = {
+        RdpStatusEnum.assigned,
+        RdpStatusEnum.active,
+        RdpStatusEnum.idle,
+    }
+    repaired = False
+    now = _utc_now()
+
+    if open_alloc is None and resource.status in busy_statuses:
+        resource.status = RdpStatusEnum.online_free
+        resource.assigned_worker_id = None
+        resource.status_changed_at = now
+        db.add(resource)
+        _close_open_sessions_for_rdp(db, resource.id)
+        repaired = True
+    elif open_alloc is not None:
+        if resource.status == RdpStatusEnum.online_free or resource.assigned_worker_id != open_alloc.worker_id:
+            resource.status = RdpStatusEnum.active
+            resource.assigned_worker_id = open_alloc.worker_id
+            resource.status_changed_at = now
+            db.add(resource)
+            repaired = True
+
+    if repaired:
+        db.commit()
+        db.refresh(resource)
+    return repaired
+
+
+def _guacamole_viewer_paths(
+    redis_client: redis_lib.Redis, connection_id: str
+) -> tuple[str | None, str | None, str | None, str | None]:
+    """Returns (url, viewer_path, token, error)."""
+    try:
+        guac = GuacamoleClient(redis_client)
+        token = guac.get_token()
+        url = guac.get_connection_url(connection_id)
+        viewer_path = guac.get_proxied_connection_path(connection_id)
+        return url, viewer_path, token, None
+    except Exception as exc:
+        err = f"{type(exc).__name__}: {exc}"
+        return None, None, None, err
+
+
+def _build_claim_payload(
+    *,
+    allocation: Allocation,
+    work_session: WorkSession | None,
+    resource: RDPResource,
+    worker_id: UUID,
+    guacamole_url: str | None,
+    guacamole_viewer_path: str | None,
+    guacamole_error: str | None,
+    resumed: bool = False,
+) -> dict:
+    return {
+        "allocation_id": str(allocation.id),
+        "session_id": str(work_session.id) if work_session else None,
+        "rdp_resource_id": str(resource.id),
+        "worker_id": str(worker_id),
+        "status": resource.status.value,
+        "guacamole_url": guacamole_url,
+        "guacamole_viewer_path": guacamole_viewer_path,
+        "guacamole_error": guacamole_error,
+        "resumed": resumed,
+    }
+
+
+def _resume_existing_claim(
+    db: Session,
+    redis_client: redis_lib.Redis,
+    *,
+    resource: RDPResource,
+    allocation: Allocation,
+    worker_id: UUID,
+) -> dict:
+    """Return claim payload for an allocation the worker already holds."""
+    if resource.assigned_worker_id != worker_id:
+        resource.assigned_worker_id = worker_id
+    if resource.status == RdpStatusEnum.online_free:
+        resource.status = RdpStatusEnum.active
+    resource.status_changed_at = _utc_now()
+    db.add(resource)
+
+    work_session = db.exec(
+        select(WorkSession).where(
+            WorkSession.allocation_id == allocation.id,
+            WorkSession.end_time.is_(None),
+        )
+    ).first()
+    if not work_session:
+        work_session = db.exec(
+            select(WorkSession).where(
+                WorkSession.rdp_resource_id == resource.id,
+                WorkSession.worker_id == worker_id,
+                WorkSession.end_time.is_(None),
+            )
+        ).first()
+    if not work_session:
+        now = _utc_now()
+        work_session = WorkSession(
+            worker_id=worker_id,
+            session_type=SessionTypeEnum.gs_rdp,
+            allocation_id=allocation.id,
+            rdp_resource_id=resource.id,
+            start_time=now,
+            type_specific_fields={},
+        )
+        db.add(work_session)
+
+    db.commit()
+    db.refresh(resource)
+    if work_session:
+        db.refresh(work_session)
+
+    guacamole_url, guacamole_viewer_path, _, guacamole_error = (None, None, None, None)
+    if resource.guacamole_connection_id:
+        guacamole_url, guacamole_viewer_path, _, guacamole_error = _guacamole_viewer_paths(
+            redis_client, resource.guacamole_connection_id
+        )
+
+    return _build_claim_payload(
+        allocation=allocation,
+        work_session=work_session,
+        resource=resource,
+        worker_id=worker_id,
+        guacamole_url=guacamole_url,
+        guacamole_viewer_path=guacamole_viewer_path,
+        guacamole_error=guacamole_error,
+        resumed=True,
+    )
+
+
 def _end_rdp_connection(
     db: Session,
     resource: RDPResource,
@@ -137,6 +285,8 @@ def get_my_active_rdp(
     resource = db.get(RDPResource, alloc.rdp_resource_id)
     if not resource:
         return None
+
+    _repair_rdp_state(db, resource)
 
     work_session = db.exec(
         select(WorkSession).where(
@@ -278,6 +428,33 @@ def claim_rdp_resource(
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
+    _repair_rdp_state(db, resource)
+
+    open_on_this = _open_allocation(db, resource.id)
+    if open_on_this:
+        if open_on_this.worker_id == worker.id:
+            return _resume_existing_claim(
+                db, redis_client, resource=resource, allocation=open_on_this, worker_id=worker.id
+            )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This machine is in use by another worker",
+        )
+
+    other_open = db.exec(
+        select(Allocation).where(
+            Allocation.worker_id == worker.id,
+            Allocation.released_at.is_(None),
+        )
+    ).first()
+    if other_open:
+        other_resource = db.get(RDPResource, other_open.rdp_resource_id)
+        name = other_resource.nickname if other_resource else str(other_open.rdp_resource_id)
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"You already have an open session on {name}. End that connection first.",
+        )
+
     if resource.status != RdpStatusEnum.online_free:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -301,16 +478,13 @@ def claim_rdp_resource(
         if not resource.guacamole_connection_id:
             guacamole_error = "Machine has no guacamole_connection_id configured."
         else:
-            try:
-                guac = GuacamoleClient(redis_client)
-                guacamole_token = guac.get_token()
-                guacamole_url = guac.get_connection_url(resource.guacamole_connection_id)
-                guacamole_viewer_path = guac.get_proxied_connection_path(
-                    resource.guacamole_connection_id
+            guacamole_url, guacamole_viewer_path, guacamole_token, guacamole_error = (
+                _guacamole_viewer_paths(redis_client, resource.guacamole_connection_id)
+            )
+            if guacamole_error:
+                logger.warning(
+                    "Guacamole URL fetch failed for rdp %s: %s", rdp_id, guacamole_error
                 )
-            except Exception as exc:
-                guacamole_error = f"{type(exc).__name__}: {exc}"
-                logger.warning("Guacamole URL fetch failed for rdp %s: %s", rdp_id, guacamole_error)
 
         now = _utc_now()
         allocation = Allocation(
@@ -326,9 +500,10 @@ def claim_rdp_resource(
         work_session = WorkSession(
             worker_id=worker.id,
             session_type=SessionTypeEnum.gs_rdp,
-            allocation_id=None,  # set after allocation flush
+            allocation_id=None,
             rdp_resource_id=resource.id,
             start_time=now,
+            type_specific_fields={},
         )
 
         db.add(allocation)
@@ -343,16 +518,16 @@ def claim_rdp_resource(
         background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
         background_tasks.add_task(mirror_active_session_by_id, work_session.id)
 
-        return {
-            "allocation_id": str(allocation.id),
-            "session_id": str(work_session.id),
-            "rdp_resource_id": str(resource.id),
-            "worker_id": str(worker.id),
-            "status": resource.status.value,
-            "guacamole_url": guacamole_url,
-            "guacamole_viewer_path": guacamole_viewer_path,
-            "guacamole_error": guacamole_error,
-        }
+        return _build_claim_payload(
+            allocation=allocation,
+            work_session=work_session,
+            resource=resource,
+            worker_id=worker.id,
+            guacamole_url=guacamole_url,
+            guacamole_viewer_path=guacamole_viewer_path,
+            guacamole_error=guacamole_error,
+            resumed=False,
+        )
     finally:
         redis_client.delete(lock_key)
 
@@ -370,6 +545,8 @@ def end_rdp_connection(
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+
+    _repair_rdp_state(db, resource)
 
     is_admin = current_user.get("role") in {"admin", "super_admin"}
     result = _end_rdp_connection(

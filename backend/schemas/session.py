@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from sqlmodel import SQLModel
 
 from models.enums import PayrollSessionEnum, SessionCloseEnum, SessionTypeEnum
@@ -43,5 +43,10 @@ class SessionResponse(SessionBase):
     payroll_approval_state: PayrollSessionEnum
     payroll_period_id:      Optional[UUID]
     admin_notes:            Optional[str]
-    created_at:             datetime
-    updated_at:             datetime
+    created_at:             Optional[datetime] = None
+    updated_at:             Optional[datetime] = None
+
+    @field_validator("type_specific_fields", mode="before")
+    @classmethod
+    def _default_type_fields(cls, v: Any) -> dict[str, Any]:
+        return v if isinstance(v, dict) else {}
