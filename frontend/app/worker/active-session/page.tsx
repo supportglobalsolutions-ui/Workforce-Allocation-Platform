@@ -2,10 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { Wifi, Heart, Monitor } from 'lucide-react';
 import { api } from '@/lib/api';
+import { endRdpConnection } from '@/lib/rdp';
 
 interface WorkSession {
   id: string;
@@ -30,10 +32,12 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function ActiveSessionPage() {
+  const router = useRouter();
   const [session, setSession] = useState<WorkSession | null>(null);
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [ending, setEnding] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
   useEffect(() => {
@@ -70,6 +74,19 @@ export default function ActiveSessionPage() {
 
   const heartbeat = session?.type_specific_fields?.last_heartbeat_at ? 'Active' : '—';
 
+  const handleEndSession = async () => {
+    if (!session?.rdp_resource_id || ending) return;
+    setEnding(true);
+    setError(null);
+    try {
+      await endRdpConnection(session.rdp_resource_id);
+      router.push('/worker/rdp-claim-board');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to end session');
+      setEnding(false);
+    }
+  };
+
   if (loading) return <p className="text-theme-muted text-sm mt-4">Loading session...</p>;
   if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
 
@@ -99,9 +116,33 @@ export default function ActiveSessionPage() {
         <div className="glass-panel p-8 text-center">
           <p className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-4">Session Timer</p>
           <p className="text-5xl md:text-6xl font-black font-mono text-emerald-accent text-glow-emerald">{h}:{m}:{s}</p>
-          <button className="btn-secondary mt-8 w-full max-w-xs mx-auto border-danger/30 text-danger hover:bg-danger/10">
-            End Session
-          </button>
+          {session.rdp_resource_id ? (
+            <div className="mt-8 space-y-2 max-w-xs mx-auto">
+              <Link
+                href={`/worker/rdp-session/${session.rdp_resource_id}`}
+                className="btn-primary w-full text-sm block text-center"
+              >
+                Open remote desktop
+              </Link>
+              <button
+                type="button"
+                onClick={handleEndSession}
+                disabled={ending}
+                className="btn-secondary w-full border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-50"
+              >
+                {ending ? 'Ending…' : 'End Session'}
+              </button>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={handleEndSession}
+              disabled={ending || !session.rdp_resource_id}
+              className="btn-secondary mt-8 w-full max-w-xs mx-auto border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-50"
+            >
+              {ending ? 'Ending…' : 'End Session'}
+            </button>
+          )}
         </div>
         <div className="space-y-4">
           <div className="glass-panel p-6">

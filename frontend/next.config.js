@@ -20,12 +20,17 @@ const nextConfig = {
   },
   async rewrites() {
     const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const guacamoleUrl = process.env.NEXT_PUBLIC_GUACAMOLE_URL || 'http://localhost:8080/guacamole';
     return [
       {
         // Proxy /api/:path* → backend :path*
-        // e.g. /api/auth/users → http://localhost:8000/auth/users
         source: '/api/:path*',
         destination: `${backendUrl}/:path*`,
+      },
+      {
+        // Same-origin Guacamole embed (Phase 1 iframe fallback)
+        source: '/remote/:path*',
+        destination: `${guacamoleUrl}/:path*`,
       },
     ];
   },

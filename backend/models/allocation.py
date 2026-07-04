@@ -58,6 +58,9 @@ class Allocation(SQLModel, table=True):
     guacamole_token: Optional[str] = Field(
         default=None, sa_column=Column(String(512), nullable=True)
     )
+    guacamole_active_connection_id: Optional[str] = Field(
+        default=None, sa_column=Column(String(128), nullable=True)
+    )
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

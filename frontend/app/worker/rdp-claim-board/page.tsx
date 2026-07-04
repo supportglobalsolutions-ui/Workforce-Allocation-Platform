@@ -1,10 +1,13 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
+import { claimRdp, getMyActiveRdp, type MyActiveRdp } from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -15,27 +18,23 @@ interface RDPResource {
   guacamole_connection_id: string | null;
 }
 
-interface ClaimResult {
-  allocation_id: string;
-  rdp_resource_id: string;
-  worker_id: string;
-  status: string;
-  guacamole_url: string | null;
-  guacamole_error?: string | null;
-}
-
 export default function RdpClaimBoard() {
+  const router = useRouter();
   const [machines, setMachines] = useState<RDPResource[]>([]);
+  const [myActive, setMyActive] = useState<MyActiveRdp | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
-  const [releasing, setReleasing] = useState<string | null>(null);
 
   const loadMachines = useCallback(async () => {
     try {
-      const data = await api.get<RDPResource[]>('/rdp');
+      const [data, active] = await Promise.all([
+        api.get<RDPResource[]>('/rdp'),
+        getMyActiveRdp().catch(() => null),
+      ]);
       setMachines(data);
+      setMyActive(active);
     } catch {
       setMachines([]);
     } finally {
@@ -49,51 +48,18 @@ export default function RdpClaimBoard() {
     setClaiming(machineId);
     setError(null);
     setInfo(null);
-    // Open the tab synchronously (inside the click event) so the browser
-    // doesn't block it as a popup. Show a loading screen immediately so
-    // the user never sees a blank tab or a bare URL.
-    const tab = window.open('', '_blank');
-    if (tab) {
-      tab.document.write(
-        '<!DOCTYPE html><html><head><title>Opening session…</title>' +
-        '<style>body{margin:0;background:#0d1117;color:#6ee7b7;font-family:sans-serif;' +
-        'display:flex;align-items:center;justify-content:center;height:100vh;font-size:1rem;}</style>' +
-        '</head><body>Opening remote session…</body></html>'
-      );
-      tab.document.close();
-    }
     try {
-      const result = await api.post<ClaimResult>(`/rdp/${machineId}/claim`, {});
-      await loadMachines();
-      if (result.guacamole_url && tab) {
-        tab.location.href = result.guacamole_url;
-        setInfo('Claimed — remote session opened in a new tab.');
-      } else {
-        tab?.close();
+      const result = await claimRdp(machineId);
+      if (result.guacamole_error && !result.guacamole_viewer_path) {
         setInfo(
-          `Claimed, but no remote session opened. ${result.guacamole_error ?? 'No Guacamole URL returned.'}`,
+          `Claimed, but remote desktop may not open: ${result.guacamole_error}`,
         );
       }
+      router.push(`/worker/rdp-session/${machineId}`);
     } catch (e) {
-      tab?.close();
       setError(e instanceof Error ? e.message : 'Failed to claim machine');
     } finally {
       setClaiming(null);
-    }
-  };
-
-  const handleRelease = async (machineId: string) => {
-    setReleasing(machineId);
-    setError(null);
-    setInfo(null);
-    try {
-      await api.post(`/rdp/${machineId}/release`, {});
-      await loadMachines();
-      setInfo('Released — machine is available to claim again.');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to release machine');
-    } finally {
-      setReleasing(null);
     }
   };
 
@@ -109,6 +75,20 @@ export default function RdpClaimBoard() {
           </span>
         }
       />
+
+      {myActive && (
+        <div className="glass-panel p-4 mb-4 flex flex-wrap items-center justify-between gap-3">
+          <p className="text-sm text-white">
+            You have an open session on <strong>{myActive.nickname}</strong>.
+          </p>
+          <Link
+            href={`/worker/rdp-session/${myActive.rdp_resource_id}`}
+            className="btn-primary text-sm"
+          >
+            Resume session
+          </Link>
+        </div>
+      )}
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
       {info && <p className="text-emerald-accent text-sm mb-4">{info}</p>}
@@ -126,45 +106,49 @@ export default function RdpClaimBoard() {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {machines.map((m) => (
-            <div key={m.id} className="glass-panel p-5">
-              <div className="flex items-start justify-between mb-3">
-                <div>
-                  <p className="text-xs font-mono text-theme-muted">{m.id.slice(0, 8)}…</p>
-                  <h3 className="text-base font-bold text-white">{m.nickname}</h3>
+          {machines.map((m) => {
+            const isMine =
+              myActive?.rdp_resource_id === m.id &&
+              (m.status === 'assigned' || m.status === 'active');
+            return (
+              <div key={m.id} className="glass-panel p-5">
+                <div className="flex items-start justify-between mb-3">
+                  <div>
+                    <p className="text-xs font-mono text-theme-muted">{m.id.slice(0, 8)}…</p>
+                    <h3 className="text-base font-bold text-white">{m.nickname}</h3>
+                  </div>
+                  <StatusBadge status={m.status} />
                 </div>
-                <StatusBadge status={m.status} />
-              </div>
-              <div className="flex justify-between text-xs text-theme-muted mb-4">
-                <span>{m.country}</span>
-                <span>{m.client_group}</span>
-              </div>
-              {m.status === 'online_free' ? (
-                <button
-                  onClick={() => handleClaim(m.id)}
-                  disabled={claiming === m.id}
-                  className="btn-primary w-full text-sm disabled:opacity-50"
-                >
-                  {claiming === m.id ? 'Claiming…' : 'Claim'}
-                </button>
-              ) : m.status === 'assigned' || m.status === 'active' ? (
-                <div className="space-y-2">
-                  <p className="text-xs text-center text-theme-muted">In use</p>
+                <div className="flex justify-between text-xs text-theme-muted mb-4">
+                  <span>{m.country}</span>
+                  <span>{m.client_group}</span>
+                </div>
+                {m.status === 'online_free' ? (
                   <button
-                    onClick={() => handleRelease(m.id)}
-                    disabled={releasing === m.id}
-                    className="btn-secondary w-full text-xs disabled:opacity-50"
+                    onClick={() => handleClaim(m.id)}
+                    disabled={claiming === m.id || !!myActive}
+                    className="btn-primary w-full text-sm disabled:opacity-50"
+                    title={myActive ? 'End your current session before claiming another machine' : undefined}
                   >
-                    {releasing === m.id ? 'Releasing…' : 'Release'}
+                    {claiming === m.id ? 'Claiming…' : 'Claim'}
                   </button>
-                </div>
-              ) : (
-                <p className="text-xs text-center text-theme-muted capitalize">
-                  {m.status.replace('_', ' ')}
-                </p>
-              )}
-            </div>
-          ))}
+                ) : isMine ? (
+                  <Link
+                    href={`/worker/rdp-session/${m.id}`}
+                    className="btn-primary w-full text-sm text-center block"
+                  >
+                    Open session
+                  </Link>
+                ) : m.status === 'assigned' || m.status === 'active' ? (
+                  <p className="text-xs text-center text-theme-muted">In use by another worker</p>
+                ) : (
+                  <p className="text-xs text-center text-theme-muted capitalize">
+                    {m.status.replace('_', ' ')}
+                  </p>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
     </div>

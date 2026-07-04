@@ -7,12 +7,13 @@ import { signIn, signOut, subscribeAuthState } from './firebase-auth';
 import { clearAuthRoleCookie, setAuthRoleCookie } from './cookies';
 import { getFirebaseAuthErrorMessage } from './errors';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
+import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 
 interface AuthContextValue {
   session: AuthSession | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
-  logout: () => void;
+  logout: () => Promise<void>;
   canAccess: (portal: PortalRole) => boolean;
 }
 
@@ -49,6 +50,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const logout = useCallback(async () => {
+    try {
+      const active = await getMyActiveRdp();
+      if (active?.rdp_resource_id) {
+        const confirmed = window.confirm(
+          'You have an open RDP connection. End connection and log out?',
+        );
+        if (!confirmed) return;
+        await endRdpConnection(active.rdp_resource_id);
+      }
+    } catch {
+      // If active check fails, still allow logout
+    }
     await signOut();
     clearAuthRoleCookie();
     setSession(null);

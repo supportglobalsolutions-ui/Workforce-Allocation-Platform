@@ -48,14 +48,65 @@ class GuacamoleClient:
             self._redis.delete(_CACHE_KEY)
         return self._fetch_fresh_token()
 
-    def get_connection_url(self, connection_id: str) -> str:
-        """Build the Guacamole web-client URL for a connection."""
-        token, data_source = self._get_token()
-        client_id = base64.b64encode(
+    def _client_id(self, connection_id: str) -> str:
+        _, data_source = self._get_token()
+        return base64.b64encode(
             f"{connection_id}\0c\0{data_source}".encode()
         ).decode()
-        return f"{self._base}/#/client/{client_id}?token={token}"
+
+    def get_connection_url(self, connection_id: str) -> str:
+        """Build the Guacamole web-client URL for a connection."""
+        token, _ = self._get_token()
+        return f"{self._base}/#/client/{self._client_id(connection_id)}?token={token}"
+
+    def get_proxied_connection_path(
+        self, connection_id: str, *, proxy_prefix: str = "/remote"
+    ) -> str:
+        """Same as get_connection_url but for embedding via Next.js /remote proxy."""
+        token, _ = self._get_token()
+        return f"{proxy_prefix}/#/client/{self._client_id(connection_id)}?token={token}"
+
+    def get_tunnel_params(self, connection_id: str) -> tuple[str, str]:
+        """Return (connect, token) for guacamole-common-js HTTPTunnel."""
+        token, data_source = self._get_token()
+        connect = base64.b64encode(
+            f"{connection_id}\0c\0{data_source}".encode()
+        ).decode()
+        return connect, token
 
     def get_token(self) -> str:
         token, _ = self._get_token()
         return token
+
+    def list_active_connections(self) -> dict[str, dict]:
+        token, data_source = self._get_token()
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{self._base}/api/session/data/{data_source}/activeConnections",
+                params={"token": token},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    def kill_active_connections(self, connection_id: str) -> int:
+        """Terminate all Guacamole sessions for a connection. Returns count killed."""
+        token, data_source = self._get_token()
+        actives = self.list_active_connections()
+        to_kill = [
+            active_id
+            for active_id, meta in actives.items()
+            if str(meta.get("connectionIdentifier")) == str(connection_id)
+        ]
+        if not to_kill:
+            return 0
+        patch = [{"op": "remove", "path": f"/{active_id}"} for active_id in to_kill]
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.patch(
+                f"{self._base}/api/session/data/{data_source}/activeConnections",
+                params={"token": token},
+                json=patch,
+                headers={"Content-Type": "application/json"},
+            )
+            resp.raise_for_status()
+        return len(to_kill)
