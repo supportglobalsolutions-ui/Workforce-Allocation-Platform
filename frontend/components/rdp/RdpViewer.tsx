@@ -13,10 +13,12 @@ export interface RdpViewerHandle {
 interface RdpViewerProps {
   rdpId: string;
   className?: string;
+  /** Called when the Guacamole connection reaches state DISCONNECTED. Parent can close the window or navigate. */
+  onDisconnect?: () => void;
 }
 
 const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer(
-  { rdpId, className = '' },
+  { rdpId, className = '', onDisconnect },
   ref,
 ) {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -44,10 +46,13 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
 
     (async () => {
       try {
-        const Guacamole = (await import('guacamole-common-js')).default;
-
-        const idToken = await auth.currentUser?.getIdToken();
-        if (!idToken) throw new Error('Not signed in.');
+        // Fetch Guacamole module and Firebase token in parallel.
+        const [Guacamole, idToken] = await Promise.all([
+          import('guacamole-common-js').then((m) => m.default),
+          auth.currentUser
+            ? auth.currentUser.getIdToken()
+            : Promise.reject(new Error('Not signed in.')),
+        ]);
 
         // Build WS URL: backend proxies to Guacamole, keeping the Guacamole
         // auth token server-side. Only the Firebase ID token crosses the wire.
@@ -73,6 +78,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
             setError(null);
           } else if (state === 5) {
             setStatus('disconnected');
+            onDisconnect?.();
           }
         };
 
@@ -181,7 +187,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           Connecting to remote desktop…
         </div>
       )}
-      {status === 'disconnected' && !error && (
+      {status === 'disconnected' && !error && !onDisconnect && (
         <div className="absolute inset-0 flex items-center justify-center bg-black/90 text-theme-muted text-sm p-6 text-center">
           Session disconnected. You can close this tab.
         </div>

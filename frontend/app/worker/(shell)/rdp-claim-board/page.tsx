@@ -44,10 +44,21 @@ export default function RdpClaimBoard() {
 
   useEffect(() => { loadMachines(); }, [loadMachines]);
 
+  // Refresh when any session ends in another tab (desktop or session page).
+  useEffect(() => {
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel('rdp-events');
+      ch.onmessage = () => loadMachines();
+    } catch { /* ignore */ }
+    return () => { try { ch?.close(); } catch { /* ignore */ } };
+  }, [loadMachines]);
+
   const handleClaim = async (machineId: string) => {
     setClaiming(machineId);
     setError(null);
     setInfo(null);
+    let navigated = false;
     try {
       const result = await claimRdp(machineId);
       if (result.resumed) {
@@ -55,19 +66,21 @@ export default function RdpClaimBoard() {
       } else if (result.guacamole_error && !result.guacamole_viewer_path) {
         setInfo(`Claimed, but remote desktop may not open: ${result.guacamole_error}`);
       }
+      navigated = true;
       router.push(`/worker/rdp-session/${machineId}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Failed to claim machine';
       if (msg.includes('already have an open session')) {
         const active = await getMyActiveRdp().catch(() => null);
         if (active?.rdp_resource_id) {
+          navigated = true;
           router.push(`/worker/rdp-session/${active.rdp_resource_id}`);
-          return;
         }
       }
-      setError(msg);
+      if (!navigated) setError(msg);
     } finally {
-      setClaiming(null);
+      // Keep "Claiming…" on the button while navigating — only reset on failure
+      if (!navigated) setClaiming(null);
     }
   };
 
