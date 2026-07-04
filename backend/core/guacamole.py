@@ -40,7 +40,7 @@ class GuacamoleClient:
         if cached:
             token, data_source = cached.decode().split(":", 1)
             # Validate the cached token is still accepted by Guacamole.
-            with httpx.Client(timeout=5.0) as client:
+            with httpx.Client(timeout=15.0) as client:
                 check = client.get(
                     f"{self._base}/api/session/data/{data_source}/self",
                     params={"token": token},
@@ -69,13 +69,14 @@ class GuacamoleClient:
         token, _ = self._get_token()
         return f"{proxy_prefix}/#/client/{self._client_id(connection_id)}?token={token}"
 
-    def get_tunnel_params(self, connection_id: str) -> tuple[str, str]:
-        """Return (connect, token) for guacamole-common-js HTTPTunnel."""
+    def get_tunnel_connect_info(self, connection_id: str) -> dict[str, str]:
+        """Auth token + identifiers for guacamole-common-js tunnel connect data."""
         token, data_source = self._get_token()
-        connect = base64.b64encode(
-            f"{connection_id}\0c\0{data_source}".encode()
-        ).decode()
-        return connect, token
+        return {
+            "token": token,
+            "data_source": data_source,
+            "connection_id": str(connection_id),
+        }
 
     def get_token(self) -> str:
         token, _ = self._get_token()

@@ -43,7 +43,7 @@ export default function SessionHistoryPage() {
 
   const rows = sessions.map((s) => ({
     id: s.id,
-    date: new Date(s.start_time).toLocaleDateString(),
+    date: new Date(s.start_time).toLocaleString(),
     machine: s.rdp_resource_id ? `RDP ${s.rdp_resource_id.slice(0, 8)}…` : '—',
     duration: formatDuration(s.duration_minutes),
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
@@ -77,7 +77,7 @@ export default function SessionHistoryPage() {
       ) : (
         <DataTable
           columns={[
-            { key: 'date', header: 'Date' },
+            { key: 'date', header: 'Date & Time' },
             { key: 'machine', header: 'Machine / Platform' },
             { key: 'duration', header: 'Duration' },
             { key: 'type', header: 'Type' },

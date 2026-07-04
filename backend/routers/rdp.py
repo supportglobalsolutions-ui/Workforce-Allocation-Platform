@@ -1,11 +1,14 @@
 import logging
 from datetime import datetime, timezone
+from urllib.parse import unquote
 from uuid import UUID
 
+import httpx
 import redis as redis_lib
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
-from fastapi.responses import Response
+from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
+from starlette.background import BackgroundTask
 
 from core.config import settings
 from core.database import get_db
@@ -394,38 +397,73 @@ async def proxy_guacamole_tunnel(
     current_user: dict = Depends(require_user),
 ):
     """
-    Proxy Guacamole HTTP tunnel for guacamole-common-js custom viewer.
-    Requires connect + token query params from tunnel-info.
+    Proxy the Guacamole HTTP tunnel for the guacamole-common-js viewer.
+    Streams responses so remote-desktop frames arrive in real time.
+    Auth: Firebase Bearer token (sent by the viewer as an extra tunnel header).
     """
     _ = current_user
     guac_base = settings.GUACAMOLE_URL.rstrip("/")
     query = str(request.url.query)
+    if query:
+        # Guacamole matches the raw query string ("connect", "read:<uuid>", ...).
+        # Proxies (e.g. Next.js rewrites) may percent-encode it or append "=",
+        # so restore the original form before forwarding.
+        query = unquote(query)
+        if query.endswith("=") and "&" not in query and "=" not in query[:-1]:
+            query = query[:-1]
     target = f"{guac_base}/tunnel"
     if query:
         target = f"{target}?{query}"
 
-    import httpx
+    fwd_headers = {
+        k: v for k, v in request.headers.items() if k.lower() == "content-type"
+    }
+    body = await request.body()
 
-    async with httpx.AsyncClient(timeout=60.0) as client:
-        if request.method == "GET":
-            upstream = await client.get(target)
-        else:
-            body = await request.body()
-            upstream = await client.post(
-                target,
-                content=body,
-                headers={
-                    k: v
-                    for k, v in request.headers.items()
-                    if k.lower() in {"content-type", "guacamole-tunnel-token"}
-                },
-            )
+    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None, write=None, pool=None))
+    try:
+        upstream_req = client.build_request(
+            request.method, target, content=body, headers=fwd_headers
+        )
+        upstream = await client.send(upstream_req, stream=True)
+    except Exception:
+        await client.aclose()
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Guacamole tunnel is unreachable",
+        )
 
-    excluded = {"transfer-encoding", "connection", "content-encoding"}
+    excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
     resp_headers = {
         k: v for k, v in upstream.headers.items() if k.lower() not in excluded
     }
-    return Response(content=upstream.content, status_code=upstream.status_code, headers=resp_headers)
+
+    if upstream.status_code >= 400:
+        err_body = await upstream.aread()
+        await upstream.aclose()
+        await client.aclose()
+        logger.warning(
+            "Guacamole tunnel %s -> %s: %s",
+            query or request.method,
+            upstream.status_code,
+            err_body[:500],
+        )
+        return StreamingResponse(
+            iter([err_body]),
+            status_code=upstream.status_code,
+            headers=resp_headers,
+        )
+
+    async def _close() -> None:
+        await upstream.aclose()
+        await client.aclose()
+
+    return StreamingResponse(
+        upstream.aiter_raw(),
+        status_code=upstream.status_code,
+        headers=resp_headers,
+        background=BackgroundTask(_close),
+    )
 
 
 @router.get("/{rdp_id}", response_model=RDPResourceResponse)
@@ -682,9 +720,10 @@ def get_rdp_tunnel_info(
         )
 
     guac = GuacamoleClient(redis_client)
-    connect, token = guac.get_tunnel_params(resource.guacamole_connection_id)
+    info = guac.get_tunnel_connect_info(resource.guacamole_connection_id)
     return {
         "tunnel_url": "/api/rdp/tunnel",
-        "connect": connect,
-        "token": token,
+        "token": info["token"],
+        "data_source": info["data_source"],
+        "connection_id": info["connection_id"],
     }

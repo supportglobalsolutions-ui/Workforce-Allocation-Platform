@@ -23,8 +23,9 @@ export interface ClaimResult {
 
 export interface TunnelInfo {
   tunnel_url: string;
-  connect: string;
   token: string;
+  data_source: string;
+  connection_id: string;
 }
 
 export interface EndConnectionResult {
