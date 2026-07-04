@@ -1,1 +1,0 @@
-SELECT * FROM rdp_resources;so for ow thers 1 and im still eeing 

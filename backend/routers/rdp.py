@@ -61,7 +61,12 @@ def _close_open_sessions_for_rdp(db: Session, rdp_id: UUID) -> list[UUID]:
             start = work_session.start_time
             if start.tzinfo is None:
                 start = start.replace(tzinfo=timezone.utc)
-            work_session.duration_minutes = max(0, int((now - start).total_seconds() // 60))
+            elif start.tzinfo != timezone.utc:
+                start = start.astimezone(timezone.utc)
+            end_utc = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
+            work_session.duration_minutes = max(0, int((end_utc - start).total_seconds() // 60))
+        if work_session.type_specific_fields is None:
+            work_session.type_specific_fields = {}
         db.add(work_session)
         closed_ids.append(work_session.id)
     return closed_ids
@@ -223,6 +228,7 @@ def _end_rdp_connection(
     worker_id: UUID | None = None,
     require_owner: bool = True,
 ) -> dict:
+    db.refresh(resource)
     open_allocs = db.exec(
         select(Allocation).where(
             Allocation.rdp_resource_id == resource.id,
@@ -230,8 +236,61 @@ def _end_rdp_connection(
         )
     ).all()
 
+    # Sync status with an open allocation (partial claim/release drift).
+    if open_allocs:
+        owner_id = open_allocs[0].worker_id
+        if resource.assigned_worker_id != owner_id:
+            resource.assigned_worker_id = owner_id
+        if resource.status == RdpStatusEnum.online_free:
+            resource.status = RdpStatusEnum.active
+            resource.status_changed_at = _utc_now()
+            db.add(resource)
+
+    owns_via_alloc = (
+        worker_id is not None and any(a.worker_id == worker_id for a in open_allocs)
+    )
+    owns_via_assignment = (
+        worker_id is not None and resource.assigned_worker_id == worker_id
+    )
+
+    # Orphan: machine marked busy but no open allocation — close stray sessions and reset.
+    if not open_allocs and resource.status != RdpStatusEnum.online_free:
+        if require_owner and worker_id is not None and resource.assigned_worker_id not in (
+            None,
+            worker_id,
+        ):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You do not have an open claim on this machine",
+            )
+        closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
+        now = _utc_now()
+        resource.status = RdpStatusEnum.online_free
+        resource.assigned_worker_id = None
+        resource.status_changed_at = now
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+        return {
+            "rdp_resource_id": str(resource.id),
+            "status": resource.status.value,
+            "released": True,
+            "guacamole_disconnected": False,
+            "closed_session_ids": [str(sid) for sid in closed_session_ids],
+            "repaired_orphan": True,
+        }
+
     if require_owner and worker_id is not None:
-        if not open_allocs or all(a.worker_id != worker_id for a in open_allocs):
+        if not owns_via_alloc and not owns_via_assignment:
+            if resource.status == RdpStatusEnum.online_free and not open_allocs:
+                return {
+                    "rdp_resource_id": str(resource.id),
+                    "status": resource.status.value,
+                    "released": False,
+                    "guacamole_disconnected": False,
+                    "closed_session_ids": [],
+                    "already_released": True,
+                }
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="You do not have an open claim on this machine",
@@ -241,7 +300,11 @@ def _end_rdp_connection(
 
     now = _utc_now()
     for alloc in open_allocs:
-        if worker_id is not None and alloc.worker_id != worker_id and require_owner:
+        if (
+            worker_id is not None
+            and alloc.worker_id != worker_id
+            and require_owner
+        ):
             continue
         alloc.released_at = now
         alloc.release_reason = ReleaseReasonEnum.completed
@@ -251,8 +314,10 @@ def _end_rdp_connection(
 
     resource.status = RdpStatusEnum.online_free
     resource.assigned_worker_id = None
+    resource.status_changed_at = now
     db.add(resource)
     db.commit()
+    db.refresh(resource)
 
     return {
         "rdp_resource_id": str(resource.id),
@@ -541,27 +606,35 @@ def end_rdp_connection(
     redis_client: redis_lib.Redis = Depends(get_redis),
 ):
     """Release DB claim, close work session, and disconnect live Guacamole session."""
-    worker = get_worker_for_user(db, current_user)
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    try:
+        worker = get_worker_for_user(db, current_user)
+        resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+        if not resource:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
-    _repair_rdp_state(db, resource)
+        is_admin = current_user.get("role") in {"admin", "super_admin"}
+        result = _end_rdp_connection(
+            db,
+            resource,
+            redis_client,
+            worker_id=worker.id,
+            require_owner=not is_admin,
+        )
 
-    is_admin = current_user.get("role") in {"admin", "super_admin"}
-    result = _end_rdp_connection(
-        db,
-        resource,
-        redis_client,
-        worker_id=worker.id,
-        require_owner=not is_admin,
-    )
+        background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
+        for sid in result.get("closed_session_ids", []):
+            background_tasks.add_task(delete_active_session, UUID(str(sid)))
 
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
-    for sid in result.get("closed_session_ids", []):
-        background_tasks.add_task(delete_active_session, UUID(sid))
-
-    return result
+        return result
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("end-connection failed for rdp %s: %s", rdp_id, exc)
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to end connection: {type(exc).__name__}",
+        ) from exc
 
 
 @router.post("/{rdp_id}/release")

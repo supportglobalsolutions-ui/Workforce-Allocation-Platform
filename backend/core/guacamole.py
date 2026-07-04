@@ -1,9 +1,12 @@
 import base64
+import logging
 
 import httpx
 import redis as redis_lib
 
 from .config import settings
+
+logger = logging.getLogger(__name__)
 
 _CACHE_KEY = "guac:auth"
 _CACHE_TTL = 2700  # 45 min (tokens expire after 60 min)
@@ -87,26 +90,34 @@ class GuacamoleClient:
             )
             resp.raise_for_status()
             data = resp.json()
-        return data if isinstance(data, dict) else {}
+        if isinstance(data, dict):
+            return data
+        return {}
 
     def kill_active_connections(self, connection_id: str) -> int:
         """Terminate all Guacamole sessions for a connection. Returns count killed."""
-        token, data_source = self._get_token()
-        actives = self.list_active_connections()
-        to_kill = [
-            active_id
-            for active_id, meta in actives.items()
-            if str(meta.get("connectionIdentifier")) == str(connection_id)
-        ]
-        if not to_kill:
+        try:
+            token, data_source = self._get_token()
+            actives = self.list_active_connections()
+            to_kill: list[str] = []
+            for active_id, meta in actives.items():
+                if not isinstance(meta, dict):
+                    continue
+                cid = meta.get("connectionIdentifier") or meta.get("connectionID")
+                if cid is not None and str(cid) == str(connection_id):
+                    to_kill.append(str(active_id))
+            if not to_kill:
+                return 0
+            patch = [{"op": "remove", "path": f"/{active_id}"} for active_id in to_kill]
+            with httpx.Client(timeout=10.0) as client:
+                resp = client.patch(
+                    f"{self._base}/api/session/data/{data_source}/activeConnections",
+                    params={"token": token},
+                    json=patch,
+                    headers={"Content-Type": "application/json"},
+                )
+                resp.raise_for_status()
+            return len(to_kill)
+        except Exception as exc:
+            logger.warning("Guacamole kill_active_connections failed: %s", exc)
             return 0
-        patch = [{"op": "remove", "path": f"/{active_id}"} for active_id in to_kill]
-        with httpx.Client(timeout=10.0) as client:
-            resp = client.patch(
-                f"{self._base}/api/session/data/{data_source}/activeConnections",
-                params={"token": token},
-                json=patch,
-                headers={"Content-Type": "application/json"},
-            )
-            resp.raise_for_status()
-        return len(to_kill)
