@@ -94,13 +94,10 @@ The fastest way to answer "what runs where". Each row maps a folder to the techn
 | `backend/alembic.ini` | Alembic | Implemented | Migration config; points `sqlalchemy.url` at PostgreSQL |
 | `backend/routers/` | FastAPI routers | Implemented | `auth.py`, `workers.py`, `shifts.py`, `rdp.py`, `sessions.py`, `payroll.py`, `quality.py`, `leaderboard.py`, `audit.py` |
 | `backend/schemas/` | Pydantic | Implemented | Request/response shapes (`*Create`, `*Update`, `*Response`) separate from ORM models |
-| `backend/services/` | Python business logic | Planned | RDP state machine, payroll/quality engines, firebase sync |
+| `backend/services/` | Python business logic | Implemented | `firebase_mirror.py` (Firestore writes after PG commits), `rdp_health.py` (Uptime Kuma webhook handler), `leaderboard_sync.py` (background loop every 5 min), `rdp_state_machine.py`, `payroll_engine.py`, `quality_engine.py`, `session_engine.py` |
 | `infrastructure/nginx/` | Nginx | Planned | Only `README.md` placeholder committed |
-| `infrastructure/redis/` | Redis | Planned | `redis.conf` described in README, not yet committed |
-| `infrastructure/postgres/` | PostgreSQL | Planned | `init.sql` seed described in README, not yet committed |
-| `infrastructure/guacamole/` | Apache Guacamole | Planned | Config described in README, not yet committed |
-| `infrastructure/uptime-kuma/` | Uptime Kuma | Planned | RDP monitoring config, not yet committed |
-| `docker-compose.yml` | Docker Compose | Planned | Referenced across docs; file not yet committed |
+| `infrastructure/docker-compose.yml` | Docker Compose | Implemented | Runs Redis, Guacamole (guacd + web + its own Postgres), and Uptime Kuma. **Does not include the main app PostgreSQL** — run that separately. |
+| `infrastructure/uptime-kuma/` | Uptime Kuma | Implemented | Included in docker-compose; listens on port 3001; sends TCP heartbeat webhooks to the backend |
 | `docs/` | Markdown | Implemented | Specs: `data-models.md`, `tech-stack.md`, `worker-layer-setup.md` (Phase 1 worker build runbook), etc. |
 
 ---
@@ -136,16 +133,15 @@ Confirmed in `backend/requirements.txt`.
 | :--- | :--- | :--- | :--- | :--- |
 | **FastAPI** | 0.111 | Implemented | `backend/main.py`, `core/security.py` | HTTP API framework; CORS, dependency injection, `/health`, auto docs at `/docs` |
 | **Uvicorn** | 0.29 | Declared | run target for `main.py` | ASGI server (run command not yet scripted) |
-| **SQLAlchemy** | 2.0.30 | Implemented | `backend/models/**`, `core/database.py`, `migrations/env.py` | Declarative ORM (`DeclarativeBase`, `Column`, `relationship`); engine + session in `database.py` |
+| **SQLModel** | 0.0.21 | Implemented | `backend/models/**`, `migrations/env.py` | ORM layer — combines SQLAlchemy and Pydantic; all entity models inherit from `SQLModel, table=True` |
+| **SQLAlchemy** | 2.0.30 | Implemented | `core/database.py`, underlying SQLModel | Engine + session in `database.py`; raw column/type definitions used inside SQLModel fields |
 | **Alembic** | 1.13.1 | Implemented | `backend/alembic.ini`, `backend/migrations/env.py`, `migrations/versions/` | Schema migrations; `target_metadata = Base.metadata`, `compare_type=True`; reads `DATABASE_URL` env |
 | **psycopg2-binary** | 2.9.9 | Implemented | DB driver for `DATABASE_URL` | PostgreSQL driver used by the engine |
 | **Pydantic** | 2.7.1 | Implemented | `backend/schemas/**`, `routers/auth.py` | API request/response validation (`*Create`, `*Update`, `*Response`) |
 | **pydantic-settings** | 2.2.1 | Implemented | `backend/core/config.py` | Loads settings from `.env` (`DATABASE_URL`, Firebase, CORS, JWT) |
 | **email-validator** | 2.1.1 | Declared | worker email fields | Email format validation |
-| **python-jose[cryptography]** | 3.3.0 | Implemented | `backend/core/security.py` | JWT encode/decode for access tokens |
-| **passlib[bcrypt]** | 1.7.4 | Implemented | `backend/core/security.py` | Password hashing (`bcrypt`) |
-| **python-multipart** | 0.0.9 | Declared | form/file uploads | Required for FastAPI form parsing |
-| **firebase-admin** | 6.5.0 | Declared | (backend Firebase sync) | Server-side Firebase writes; **not yet wired** into `main.py` or services |
+| **passlib[bcrypt]** | 1.7.4 | Implemented | `backend/core/security.py` | Password hashing (`bcrypt`) — used for any local credential storage |
+| **firebase-admin** | 6.5.0 | Implemented | `backend/core/firebase_admin.py`, `core/security.py` | Token verification (`verify_id_token`), user management (create, approve, reject, list, set custom claims), Firestore writes via services |
 | **python-dotenv** | 1.0.1 | Declared | local env loading | `.env` loading helper |
 | **httpx** | 0.27.0 | Declared | outbound HTTP | Client for external calls (e.g. Guacamole, integrations) |
 
@@ -165,9 +161,9 @@ This means the backend auth approach is **in transition**; reconcile JWT vs Fire
 
 | Store | Status | Where configured | Role in the system |
 | :--- | :--- | :--- | :--- |
-| **PostgreSQL** | Implemented (connection) | `backend/core/config.py` (`DATABASE_URL`), `core/database.py`, `alembic.ini` | Source of truth — all canonical records (workers, sessions, payroll, audit). See `docs/data-models.md` |
-| **Firebase (Firestore)** | Implemented (frontend) / Declared (backend) | `frontend/lib/firebase.ts`; `firebase-admin` declared | Real-time mirror — live RDP board, active sessions, notifications, leaderboard. Not the source of truth |
-| **Redis** | Planned | `infrastructure/redis/redis.conf` (README only) | Distributed RDP claim locks, session heartbeats, claim rate-limiting. **No Redis client in `requirements.txt` yet** and no config committed |
+| **PostgreSQL** | Implemented | `backend/core/config.py` (`DATABASE_URL`), `core/database.py`, `alembic.ini` | Source of truth — all canonical records (workers, sessions, payroll, audit). **Not in docker-compose** — run separately (local install or separate container). See `docs/data-models.md` |
+| **Firebase (Firestore)** | Implemented (frontend + backend) | `frontend/lib/firebase.ts`; `backend/core/firebase_admin.py`; `backend/services/firebase_mirror.py` | Real-time mirror — live RDP board, active sessions, leaderboard. Backend writes after every PostgreSQL commit. Not the source of truth. |
+| **Redis** | Implemented | `backend/core/redis.py`, `backend/core/guacamole.py`, `infrastructure/docker-compose.yml` | Distributed RDP claim locks (`lock:rdp:{id}`, 30s TTL), session heartbeats (`heartbeat:session:{id}`), Guacamole token cache. Runs via docker-compose (port 6379). |
 
 ### How each maps to the data model
 
@@ -187,12 +183,11 @@ All of the following are described in `README.md` (Deployment Architecture) but 
 
 | Technology | Status | Intended location | Role |
 | :--- | :--- | :--- | :--- |
-| **Docker Compose** | Planned | `docker-compose.yml` (root) | Orchestrates all containers on a single VPS |
-| **Nginx** | Planned | `infrastructure/nginx/` | Reverse proxy + TLS termination (ports 80/443) |
-| **Apache Guacamole + guacd** | Planned | `infrastructure/guacamole/` | Browser-based RDP gateway; issues session tokens, holds RDP credentials |
-| **Uptime Kuma** | Planned | `infrastructure/uptime-kuma/` | Independent RDP machine monitoring (TCP ping), alerts (port 3001) |
-| **Health monitor** | Planned | (Python worker container) | Polls RDP machines every 30s, updates PostgreSQL + Firebase status |
-| **PostgreSQL seed** | Planned | `infrastructure/postgres/init.sql` | Initial schema/seed for local bring-up |
+| **Docker Compose** | Implemented | `infrastructure/docker-compose.yml` | Runs Redis, Guacamole (guacd + web + dedicated Postgres), and Uptime Kuma. Main app PostgreSQL is **not** in this file — run it separately. |
+| **Apache Guacamole + guacd** | Implemented | `infrastructure/docker-compose.yml`, `backend/core/guacamole.py` | Browser-based RDP gateway (port 8080). Backend fetches token + builds connection URL. Guacamole uses its own dedicated Postgres (`guac_db`). |
+| **Uptime Kuma** | Implemented | `infrastructure/docker-compose.yml`, `backend/routers/uptime_kuma.py`, `backend/services/rdp_health.py` | TCP port 3389 monitoring for RDP machines (port 3001). Sends webhook to backend on up/down events. Match monitors to machines by nickname. |
+| **Nginx** | Planned | `infrastructure/nginx/` | Reverse proxy + TLS termination (ports 80/443) — config not yet committed |
+| **Health monitor** | Planned | (Python worker container) | Polls RDP machines every 30s, updates PostgreSQL + Firebase status — not yet implemented |
 
 ---
 
@@ -224,11 +219,10 @@ All of the following are described in `README.md` (Deployment Architecture) but 
 
 ## 9. Known doc-vs-code gaps to reconcile
 
-1. **ORM naming** — README says "SQLAlchemy ORM models"; code uses **SQLAlchemy 2.0 declarative** models in `backend/models/` with **separate Pydantic schemas** in `backend/schemas/`. Some older docs may still mention SQLModel — treat the code as authoritative.
-2. **Auth mechanism** — README/charter say Firebase Auth; backend code currently uses **local JWT + bcrypt**. `firebase-admin` is declared but unused.
-3. **Firebase product** — Some docs say "Realtime Database"; `frontend/lib/firebase.ts` uses **Firestore**.
-4. **Backend services** — `services/` (RDP state machine, payroll engine, firebase sync) are planned but not yet committed; routers call ORM directly for now.
-5. **Infrastructure** — `docker-compose.yml` and most `infrastructure/*` configs are described but not yet committed; only `infrastructure/nginx/README.md` exists.
+1. **ORM** — Models use **SQLModel** (not plain SQLAlchemy). SQLModel wraps SQLAlchemy + Pydantic; all entity models are `class Foo(SQLModel, table=True)`. Older docs that say "SQLAlchemy ORM models" are slightly off.
+2. **Firebase product** — Some docs say "Realtime Database"; `frontend/lib/firebase.ts` and the backend both use **Firestore**.
+3. **Main app PostgreSQL** — Not in `docker-compose.yml`. You run it separately (local Postgres install or your own container). `DATABASE_URL` in `.env` points to it.
+4. **python-jose removed** — Older docs mention JWT/python-jose. Authentication is now entirely Firebase — `firebase-admin` verifies ID tokens server-side; `python-jose` is no longer in `requirements.txt`.
 
 ---
 

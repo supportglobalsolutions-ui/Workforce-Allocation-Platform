@@ -28,9 +28,9 @@ Phase 0 requires a confirmed ERD before production build begins so that session 
 
 | Layer | Technology | Role |
 | :--- | :--- | :--- |
-| **Source of truth** | PostgreSQL | Permanent, auditable, financially accurate records |
-| **Real-time display** | Firebase | Live RDP board, active sessions, notifications, leaderboard |
-| **Distributed locking** | Redis | Atomic RDP claim locks, session heartbeat state |
+| **Source of truth** | PostgreSQL | Permanent, auditable, financially accurate records. Run separately — not in docker-compose. |
+| **Real-time display** | Firebase (Firestore) | Live RDP board, active sessions, leaderboard. Backend mirrors here after every PostgreSQL commit. |
+| **Distributed locking** | Redis | Atomic RDP claim locks (30s TTL), session heartbeat state, Guacamole token cache. Runs in docker-compose. |
 
 PostgreSQL holds the canonical record. Firebase mirrors live state written by the FastAPI backend. If Firebase is unavailable, historical data remains intact; if PostgreSQL is unavailable, new actions are rejected to protect integrity.
 
@@ -683,7 +683,9 @@ GlobalSolutions RDP machines managed through the 8-state machine.
 | `health_notes` | `TEXT` | NULL | Admin/ops notes |
 | `risk_flags` | `JSONB` | default `'[]'` | Structured risk markers |
 | `last_health_check_at` | `TIMESTAMPTZ` | NULL | Last Uptime Kuma / port check |
-| `status_changed_at` | `TIMESTAMPTZ` | NOT NULL | Last state transition |
+| `monitor_host` | `VARCHAR(255)` | NULL | IP or hostname for Uptime Kuma TCP monitor |
+| `monitor_port` | `INTEGER` | NULL, default `3389` | Port for Uptime Kuma TCP monitor |
+| `status_changed_at` | `TIMESTAMPTZ` | NOT NULL, default `now()` | Last state transition timestamp |
 
 **RDP status enum (`rdp_status_enum`):**
 
