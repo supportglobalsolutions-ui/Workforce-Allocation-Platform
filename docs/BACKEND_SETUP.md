@@ -73,14 +73,17 @@ Wait 30 seconds then run:
 docker compose ps
 ```
 
-You should see 4 containers all showing `Up` or `running`:
+You should see 5 containers all showing `Up` or `running`:
 
 ```
-infrastructure-redis-1        Up
-infrastructure-guacd-1        Up
-infrastructure-guac_db-1      Up
-infrastructure-guacamole-1    Up
+infrastructure-redis-1          Up
+infrastructure-guacd-1          Up
+infrastructure-guac_db-1        Up
+infrastructure-guacamole-1      Up
+infrastructure-uptime-kuma-1    Up
 ```
+
+Uptime Kuma UI: **http://localhost:3001** — see `infrastructure/uptime-kuma/README.md` for RDP TCP heartbeat setup and webhook configuration.
 
 If any show `Exit` — the `guacamole_initdb.sql` file is probably missing or corrupted.
 Run `docker compose down -v` and repeat the two commands above.

@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, String, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -40,6 +40,12 @@ class RDPResource(SQLModel, table=True):
     )
     last_health_check_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    monitor_host: Optional[str] = Field(
+        default=None, sa_column=Column(String(255), nullable=True)
+    )
+    monitor_port: Optional[int] = Field(
+        default=3389, sa_column=Column(Integer, nullable=True)
     )
     status_changed_at: Optional[datetime] = Field(
         default=None,

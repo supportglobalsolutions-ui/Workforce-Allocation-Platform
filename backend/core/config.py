@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     FIREBASE_PROJECT_ID: str = ""
     FIREBASE_DATABASE_URL: str = ""
 
+    # ── Uptime Kuma (RDP TCP heartbeat) ─────────────────────
+    UPTIME_KUMA_URL: str = "http://localhost:3001"
+    UPTIME_KUMA_WEBHOOK_SECRET: str = ""
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"

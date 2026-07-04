@@ -15,6 +15,7 @@ A full-stack workforce management system for allocating workers to RDP machines,
 | Auth | Firebase Authentication (custom role claims) |
 | RDP Gateway | Apache Guacamole (browser-based RDP) |
 | Claim Locking | Redis (SETNX distributed locks) |
+| RDP Monitoring | Uptime Kuma (TCP port 3389 heartbeat) |
 | Infrastructure | Docker Compose |
 
 ---
@@ -105,7 +106,7 @@ See `docs/BACKEND_SETUP.md` for the full step-by-step guide.
 **Quick start (every session):**
 
 ```powershell
-# Terminal 1 — Docker (Redis + Guacamole)
+# Terminal 1 — Docker (Redis + Guacamole + Uptime Kuma)
 cd infrastructure
 docker compose up -d
 

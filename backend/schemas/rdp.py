@@ -17,6 +17,8 @@ class RDPResourceBase(SQLModel):
     guacamole_connection_id: Optional[str]  = None
     health_notes:            Optional[str]  = None
     risk_flags:              list[Any]      = []
+    monitor_host:            Optional[str]    = None
+    monitor_port:            Optional[int]    = 3389
 
 
 class RDPResourceCreate(RDPResourceBase):
@@ -29,6 +31,8 @@ class RDPResourceUpdate(SQLModel):
     guacamole_connection_id: Optional[str]           = None
     health_notes:            Optional[str]           = None
     risk_flags:              Optional[list[Any]]     = None
+    monitor_host:            Optional[str]           = None
+    monitor_port:            Optional[int]           = None
 
 
 class RDPResourceResponse(RDPResourceBase):

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from core.config import settings
 from core.firebase_admin import init_firebase
-from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, workers
+from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, uptime_kuma, workers
 from services.leaderboard_sync import run_leaderboard_sync_loop
 
 logging.basicConfig(level=logging.DEBUG)
@@ -65,3 +65,4 @@ app.include_router(payroll.router, prefix="/payroll", tags=["payroll"])
 app.include_router(quality.router, prefix="/quality", tags=["quality"])
 app.include_router(leaderboard.router, prefix="/leaderboard", tags=["leaderboard"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
+app.include_router(uptime_kuma.router, prefix="/integrations/uptime-kuma", tags=["integrations"])
