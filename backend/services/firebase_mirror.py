@@ -13,6 +13,7 @@ from typing import Any
 from firebase_admin import firestore
 from sqlmodel import Session, select
 
+from core.database import engine
 from core.firebase_admin import is_firebase_ready
 from core.firestore_collections import (
     ACTIVE_SESSIONS,
@@ -272,3 +273,102 @@ def sync_leaderboard_from_pg(db: Session, *, limit: int = 50) -> None:
         client.collection(LEADERBOARD).document(LEADERBOARD_CURRENT_PERIOD_DOC).set(payload)
 
     _safe_write("leaderboard/current_period", _write)
+
+
+# ── Reconciliation (self-healing) ─────────────────────────────────────────────
+#
+# Individual mirror_* writes are best-effort: if Firestore is briefly unavailable
+# the PG commit still succeeds and the failure is only logged. Over time that lets
+# Firestore drift from PostgreSQL. These reconcile passes re-assert the canonical
+# PG state onto Firestore and prune orphaned docs, so the mirror is eventually
+# consistent even after transient failures.
+
+
+def reconcile_rdp_statuses(db: Session) -> None:
+    """Re-assert /rdp_status/* from PostgreSQL and delete orphaned docs."""
+
+    def _write():
+        client = _get_db()
+        if not client:
+            return
+        resources = db.exec(select(RDPResource)).all()
+        valid_ids = {str(r.id) for r in resources}
+        for resource in resources:
+            payload: dict[str, Any] = {
+                "status": resource.status.value if hasattr(resource.status, "value") else str(resource.status),
+                "worker_id": str(resource.assigned_worker_id) if resource.assigned_worker_id else None,
+                "updated_at": _iso(resource.status_changed_at or _utc_now()),
+            }
+            client.collection(RDP_STATUS).document(str(resource.id)).set(payload, merge=True)
+
+        for doc in client.collection(RDP_STATUS).stream():
+            if doc.id not in valid_ids:
+                doc.reference.delete()
+
+    _safe_write("reconcile rdp_status", _write)
+
+
+def reconcile_active_sessions(db: Session) -> None:
+    """Re-assert /active_sessions/* from open PG sessions and prune closed ones."""
+
+    def _write():
+        client = _get_db()
+        if not client:
+            return
+        open_sessions = db.exec(
+            select(WorkSession).where(WorkSession.end_time.is_(None))
+        ).all()
+        valid_ids = {str(s.id) for s in open_sessions}
+        for session in open_sessions:
+            fields = dict(session.type_specific_fields or {})
+            heartbeat_raw = fields.get("last_heartbeat_at")
+            heartbeat_at = heartbeat_raw if isinstance(heartbeat_raw, str) else _iso(session.start_time)
+            payload: dict[str, Any] = {
+                "worker_id": str(session.worker_id),
+                "firebase_uid": _worker_firebase_uid(db, session.worker_id),
+                "rdp_id": str(session.rdp_resource_id) if session.rdp_resource_id else None,
+                "started_at": _iso(session.start_time),
+                "heartbeat_at": heartbeat_at,
+            }
+            client.collection(ACTIVE_SESSIONS).document(str(session.id)).set(payload, merge=True)
+
+        for doc in client.collection(ACTIVE_SESSIONS).stream():
+            if doc.id not in valid_ids:
+                doc.reference.delete()
+
+    _safe_write("reconcile active_sessions", _write)
+
+
+# ── Background-task wrappers ───────────────────────────────────────────────────
+#
+# FastAPI BackgroundTasks run AFTER the response is sent, once the request's DB
+# session is already closed. These helpers open their own short-lived session and
+# re-fetch by id, so routers can schedule mirroring off the request path without
+# touching a closed session or a detached ORM instance.
+
+
+def mirror_rdp_status_by_id(rdp_id: uuid.UUID) -> None:
+    with Session(engine) as db:
+        resource = db.get(RDPResource, rdp_id)
+        if resource:
+            mirror_rdp_status(resource)
+        else:
+            delete_rdp_status(rdp_id)
+
+
+def mirror_active_session_by_id(session_id: uuid.UUID) -> None:
+    with Session(engine) as db:
+        session = db.get(WorkSession, session_id)
+        if session and session.end_time is None:
+            mirror_active_session(db, session)
+        else:
+            delete_active_session(session_id)
+
+
+def mirror_shift_status_change_by_id(
+    shift_id: uuid.UUID, previous_status: ShiftStatusEnum | None
+) -> None:
+    with Session(engine) as db:
+        shift = db.get(Shift, shift_id)
+        if shift:
+            mirror_shift_status_change(db, shift, previous_status)

@@ -20,6 +20,11 @@ class Settings(BaseSettings):
     # ── Redis ─────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
 
+    # ── Firestore mirror reconciliation ──────────────────────
+    # How often the background loop re-asserts PG state onto Firestore and
+    # prunes orphaned docs, so the mirror self-heals after transient failures.
+    MIRROR_RECONCILE_INTERVAL_SECONDS: int = 300
+
     # ── Apache Guacamole ──────────────────────────────────────
     GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
     GUACAMOLE_USERNAME: str = "guacadmin"

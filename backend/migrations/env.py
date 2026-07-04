@@ -3,8 +3,8 @@ from logging.config import fileConfig
 
 from alembic import context
 from sqlalchemy import engine_from_config, pool
-from models.base import Base
-import models  # noqa: F401 — registers all ORM classes against Base.metadata
+from sqlmodel import SQLModel
+import models  # noqa: F401 — registers all SQLModel table classes
 
 config = context.config
 
@@ -16,7 +16,7 @@ if db_url:
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-target_metadata = Base.metadata
+target_metadata = SQLModel.metadata
 
 
 def run_migrations_offline() -> None:

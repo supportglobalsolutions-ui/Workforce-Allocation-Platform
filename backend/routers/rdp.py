@@ -3,7 +3,7 @@ from datetime import datetime
 from uuid import UUID
 
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -14,7 +14,7 @@ from models.allocation import Allocation
 from models.enums import RdpStatusEnum, ReleaseReasonEnum
 from models.rdp_machine import RDPResource
 from schemas.rdp import RDPResourceCreate, RDPResourceResponse, RDPResourceUpdate
-from services.firebase_mirror import mirror_rdp_status
+from services.firebase_mirror import mirror_rdp_status_by_id
 from .deps import apply_update, get_worker_for_user
 
 logger = logging.getLogger(__name__)
@@ -44,6 +44,7 @@ def get_rdp_resource(
 @router.post("", response_model=RDPResourceResponse, status_code=status.HTTP_201_CREATED)
 def create_rdp_resource(
     body: RDPResourceCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
@@ -51,7 +52,7 @@ def create_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    mirror_rdp_status(resource)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return resource
 
 
@@ -59,6 +60,7 @@ def create_rdp_resource(
 def update_rdp_resource(
     rdp_id: UUID,
     body: RDPResourceUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
@@ -70,13 +72,14 @@ def update_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    mirror_rdp_status(resource)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return resource
 
 
 @router.post("/{rdp_id}/claim", status_code=status.HTTP_201_CREATED)
 def claim_rdp_resource(
     rdp_id: UUID,
+    background_tasks: BackgroundTasks,
     shift_id: UUID | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
@@ -136,7 +139,7 @@ def claim_rdp_resource(
         db.add(resource)
         db.commit()
         db.refresh(allocation)
-        mirror_rdp_status(resource)
+        background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
 
         return {
             "allocation_id":   str(allocation.id),
@@ -153,6 +156,7 @@ def claim_rdp_resource(
 @router.post("/{rdp_id}/release")
 def release_rdp_resource(
     rdp_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
@@ -179,6 +183,6 @@ def release_rdp_resource(
     resource.assigned_worker_id = None
     db.add(resource)
     db.commit()
-    mirror_rdp_status(resource)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
 
     return {"rdp_resource_id": str(rdp_id), "status": resource.status.value}

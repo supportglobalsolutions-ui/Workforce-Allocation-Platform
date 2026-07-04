@@ -147,9 +147,9 @@ export default function RdpClaimBoard() {
                 >
                   {claiming === m.id ? 'Claiming…' : 'Claim'}
                 </button>
-              ) : (
+              ) : m.status === 'assigned' || m.status === 'active' ? (
                 <div className="space-y-2">
-                  <p className="text-xs text-center text-theme-muted">Unavailable</p>
+                  <p className="text-xs text-center text-theme-muted">In use</p>
                   <button
                     onClick={() => handleRelease(m.id)}
                     disabled={releasing === m.id}
@@ -158,6 +158,10 @@ export default function RdpClaimBoard() {
                     {releasing === m.id ? 'Releasing…' : 'Release'}
                   </button>
                 </div>
+              ) : (
+                <p className="text-xs text-center text-theme-muted capitalize">
+                  {m.status.replace('_', ' ')}
+                </p>
               )}
             </div>
           ))}

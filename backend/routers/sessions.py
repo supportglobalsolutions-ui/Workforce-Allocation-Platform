@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 import redis as redis_lib
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -11,7 +11,7 @@ from core.permissions import require_admin, require_user
 from core.redis import get_redis
 from models.session import Session as WorkSession
 from schemas.session import SessionCreate, SessionResponse, SessionUpdate
-from services.firebase_mirror import delete_active_session, mirror_active_session
+from services.firebase_mirror import mirror_active_session_by_id
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -55,6 +55,7 @@ def get_session(
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
 def create_session(
     body: SessionCreate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
@@ -71,7 +72,7 @@ def create_session(
     db.commit()
     db.refresh(session)
     if session.end_time is None:
-        mirror_active_session(db, session)
+        background_tasks.add_task(mirror_active_session_by_id, session.id)
     return session
 
 
@@ -79,6 +80,7 @@ def create_session(
 def update_session(
     session_id: UUID,
     body: SessionUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
@@ -108,16 +110,14 @@ def update_session(
     db.add(session)
     db.commit()
     db.refresh(session)
-    if session.end_time is None:
-        mirror_active_session(db, session)
-    else:
-        delete_active_session(session.id)
+    background_tasks.add_task(mirror_active_session_by_id, session.id)
     return session
 
 
 @router.post("/{session_id}/heartbeat", response_model=SessionResponse)
 def heartbeat_session(
     session_id: UUID,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
     redis_client: redis_lib.Redis = Depends(get_redis),
@@ -138,5 +138,5 @@ def heartbeat_session(
 
     redis_client.set(f"heartbeat:session:{session_id}", now.isoformat(), ex=3600)
     if session.end_time is None:
-        mirror_active_session(db, session)
+        background_tasks.add_task(mirror_active_session_by_id, session.id)
     return session

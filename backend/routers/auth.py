@@ -94,7 +94,7 @@ def create_user(
             role=body.role,
         )
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise http_error_from_firebase(exc) from exc
 
     return {
         "uid": user.uid,
@@ -115,7 +115,7 @@ def approve_user(
     try:
         user = approve_firebase_user(uid)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise http_error_from_firebase(exc) from exc
     return user_to_dict(user)
 
 
@@ -128,7 +128,7 @@ def reject_user(
     try:
         user = reject_firebase_user(uid)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise http_error_from_firebase(exc) from exc
     return user_to_dict(user)
 
 
@@ -155,7 +155,7 @@ def update_user_role(
     try:
         set_user_role(uid, body.role)
     except Exception as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+        raise http_error_from_firebase(exc) from exc
 
     return {"uid": uid, "role": body.role}
 

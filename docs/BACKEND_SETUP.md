@@ -1,5 +1,18 @@
-# How to Run the Backend + RDP
+# Backend Setup Guide
 ## GlobalSolutions — Kelvin's Personal Guide
+
+---
+
+## What you need installed first
+
+| Tool | Why | Download |
+|------|-----|----------|
+| Python 3.12+ | Runs the backend | python.org |
+| PostgreSQL 15+ | Main database | postgresql.org |
+| Docker Desktop | Runs Redis, Guacamole, Uptime Kuma | docker.com/products/docker-desktop |
+| Git | Version control | git-scm.com |
+
+> Install all four before continuing. Restart your PC after Docker Desktop installs.
 
 ---
 
@@ -17,8 +30,8 @@ Guacamole has a built-in admin panel with a default login:
 This is only for you to configure it on your own machine. It is not an online service.
 
 Your actual Windows RDP machine (the one workers connect to) has its own IP address,
-Windows username, and Windows password. You will type those directly into Guacamole
-when you register the connection — that is covered in full below.
+Windows username, and Windows password. You type those directly into Guacamole
+when you register the connection — covered in full below.
 
 ---
 
@@ -26,48 +39,134 @@ when you register the connection — that is covered in full below.
 
 ---
 
-### Make sure Docker Desktop is open
+### 1. Set up the Python virtual environment
 
-1. Look at the bottom-right corner of your screen (the system tray)
-2. Find the Docker whale icon
-3. Right-click it — it should say **Docker Desktop is running**
-4. If you cannot find it, press the Windows key, type `Docker Desktop`, open it
-5. Wait about 60 seconds until the icon stops animating
+```powershell
+cd C:\PROJECTS\Workforce-Allocation-Platform\backend
+python -m venv venv
+venv\Scripts\activate
+pip install -r requirements.txt
+```
+
+Your terminal prompt should show `(venv)` at the start.
+You must activate the venv every time you open a new terminal before running the backend.
+
+If a package fails to build — your Python version is too new for that package's pre-built wheel.
+Make sure you are on Python 3.12+.
 
 ---
 
-### Generate the Guacamole database file
+### 2. Set up your .env file
 
-Guacamole needs a database to store connections and users. This command creates it.
-You only ever run this once. After this, the file stays on your machine forever.
+```powershell
+copy .env.example .env
+```
 
-1. Press `Windows + R`, type `powershell`, press Enter
-2. Run this command:
+Open `.env` and fill in your values:
+
+```env
+# App
+ENVIRONMENT=development
+ALLOWED_ORIGINS=http://localhost:3000
+
+# PostgreSQL — must match your local PostgreSQL setup
+DATABASE_URL=postgresql://postgres:yourpassword@localhost:5432/workforceallocationdb
+
+# Redis — leave as-is if using Docker setup below
+REDIS_URL=redis://localhost:6379/0
+
+# Guacamole — leave as-is if using Docker setup below
+GUACAMOLE_URL=http://localhost:8080/guacamole
+GUACAMOLE_USERNAME=guacadmin
+GUACAMOLE_PASSWORD=guacadmin
+
+# Firebase
+FIREBASE_CREDENTIALS_PATH=./firebase-service-account.json
+FIREBASE_PROJECT_ID=your-firebase-project-id
+FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
+
+# Uptime Kuma webhook secret (set this to anything, same value goes in Uptime Kuma)
+UPTIME_KUMA_WEBHOOK_SECRET=your-secret-here
+
+# Dev only — skip Firebase token verification (never use in production)
+DEV_AUTH_BYPASS=false
+DEV_AUTH_ROLE=user
+```
+
+Place your Firebase service account JSON file at:
+```
+backend/firebase-service-account.json
+```
+Download it from Firebase Console → Project Settings → Service Accounts → Generate new private key.
+
+---
+
+### 3. Create the PostgreSQL database
+
+Open pgAdmin or psql and run:
+
+```sql
+CREATE DATABASE workforceallocationdb;
+```
+
+The user and password must match what you put in `DATABASE_URL`.
+If you use a different user:
+
+```sql
+CREATE USER gs_user WITH PASSWORD 'gs_pass';
+GRANT ALL PRIVILEGES ON DATABASE workforceallocationdb TO gs_user;
+```
+
+---
+
+### 4. Run Alembic migrations
+
+This creates all the tables in your database. Run this from inside `backend/` with venv active.
+
+```powershell
+cd C:\PROJECTS\Workforce-Allocation-Platform\backend
+venv\Scripts\activate
+.\venv\Scripts\alembic upgrade head
+```
+
+Every time a model file changes, a new migration file is added to `migrations/versions/`.
+Run `alembic upgrade head` again to apply it.
+
+Useful migration commands:
+```powershell
+.\venv\Scripts\alembic current        # show which migration you're on
+.\venv\Scripts\alembic downgrade -1   # roll back one migration
+.\venv\Scripts\alembic history        # list all migrations
+```
+
+---
+
+### 5. Generate the Guacamole database file (one time only)
+
+Guacamole needs a database to store connections. This command creates the init file.
 
 ```powershell
 cd C:\PROJECTS\Workforce-Allocation-Platform\infrastructure
 docker run --rm guacamole/guacamole /opt/guacamole/bin/initdb.sh --postgresql | Out-File -Encoding utf8 guacamole_initdb.sql
 ```
 
-3. Docker will download the Guacamole image if it has not already — this can take 2–5 minutes
-4. When the `>` prompt returns, check the file was created:
+Docker downloads the Guacamole image if not already present — takes 2–5 minutes.
+When the prompt returns, confirm the file was created:
 
 ```powershell
 ls guacamole_initdb.sql
 ```
 
-You should see the file listed. If yes, continue.
-
 ---
 
-### Start all Docker containers
+### 6. Start all Docker containers
 
 ```powershell
 cd C:\PROJECTS\Workforce-Allocation-Platform\infrastructure
 docker compose up -d
 ```
 
-Wait 30 seconds then run:
+Wait 30 seconds then check:
 
 ```powershell
 docker compose ps
@@ -83,125 +182,70 @@ infrastructure-guacamole-1      Up
 infrastructure-uptime-kuma-1    Up
 ```
 
-Uptime Kuma UI: **http://localhost:3001** — see `infrastructure/uptime-kuma/README.md` for RDP TCP heartbeat setup and webhook configuration.
+Uptime Kuma UI: **http://localhost:3001**
 
-If any show `Exit` — the `guacamole_initdb.sql` file is probably missing or corrupted.
-Run `docker compose down -v` and repeat the two commands above.
+If any show `Exit` — `guacamole_initdb.sql` is missing or corrupted.
+Run `docker compose down -v` and repeat steps 5 and 6.
 
 ---
 
-### Log into Guacamole and register your RDP machine
+### 7. Register your RDP machine in Guacamole
 
 This is where you enter the details of the actual Windows machine workers will connect to.
-You only do this once per machine.
+Do this once per machine.
 
-1. Open your browser and go to:
+1. Open `http://localhost:8080/guacamole` in your browser
+2. Login: `guacadmin` / `guacadmin`
+3. Top-right corner → click `guacadmin` → **Settings** → **Connections** tab → **New Connection**
+4. Fill in:
+
+   **Name** — a label for the machine, e.g. `Machine-KE-01`
+
+   **Protocol** — select `RDP`
+
+   Scroll down to **Parameters**:
+
+   **Hostname** — IP address of the Windows machine workers will connect to
+
+   **Port** — `3389`
+
+   **Username** — Windows login username of the remote machine
+
+   **Password** — Windows login password of the remote machine
+
+   **Domain** — leave blank unless on Active Directory
+
+   **Security mode** — `Any`
+
+   **Ignore server certificate** — tick this checkbox
+
+5. Click **Save**
+6. Click the connection name in the list. Look at the URL:
    ```
-   http://localhost:8080/guacamole
+   http://localhost:8080/guacamole/#/manage/connections/7
    ```
-
-2. You will see a login screen. Enter:
-   - Username: `guacadmin`
-   - Password: `guacadmin`
-   - Click **Log In**
-
-3. After logging in, look at the **top-right corner** of the page — you will see `guacadmin`
-   Click on it
-
-4. A small dropdown appears. Click **Settings**
-
-5. At the top of the Settings page, click the **Connections** tab
-
-6. On the right side, click **New Connection**
-
-7. A form appears. Fill in every field below exactly:
-
-   **Name**
-   Type a label for this machine. This is just so you can identify it.
-   Example: `Machine-KE-01`
-
-   **Protocol**
-   Click the dropdown and select `RDP`
-
-   **Maximum number of connections** — leave blank
-
-   **Maximum number of connections per user** — leave blank
-
-   Then scroll down to the section called **Parameters**
-
-   **Hostname**
-   Type the IP address of the Windows machine the workers will connect to.
-   This is the IP of the actual remote Windows computer.
-   Example: `192.168.1.50`
-
-   **Port**
-   Type `3389`
-   This is the standard Windows RDP port. Always use 3389 unless someone told you otherwise.
-
-   **Username**
-   Type the Windows login username of the remote machine.
-   This is the username used to log into Windows on that computer.
-   Example: `Administrator` or whatever the Windows username is.
-
-   **Password**
-   Type the Windows login password of the remote machine.
-   This is the password used to log into Windows on that computer.
-
-   **Domain** — leave blank unless the machine is on a company Active Directory domain
-
-   **Security mode** — leave as `Any`
-
-   **Ignore server certificate** — tick this checkbox (this prevents SSL errors on self-signed certs)
-
-8. Scroll to the bottom and click **Save**
-
-9. You will be taken back to the Connections list. You should see `Machine-KE-01` listed.
-
-10. Click on the name `Machine-KE-01` in the list.
-    Look at the URL in your browser address bar. It will look like:
-    ```
-    http://localhost:8080/guacamole/#/manage/connections/7
-    ```
-    The **number at the very end** (in this example `7`) is the **Connection ID**.
-    Write this number down. You need it in the next step.
+   The number at the end (`7`) is the **Connection ID**. Write it down.
 
 ---
 
-### Link the connection ID to your platform database
+### 8. Link the connection ID to the platform database
 
-Your platform's database needs to know that `Machine-KE-01` in the database
-corresponds to connection ID `7` in Guacamole. This is what makes the Claim button
-open the correct Windows desktop.
+Open pgAdmin → `workforceallocationdb` → Query Tool.
 
-1. Open **pgAdmin** (press Windows key, type `pgAdmin`, open it)
-2. In the left panel, expand: **Servers → PostgreSQL → Databases → workforceallocationdb**
-3. Right-click `workforceallocationdb` → click **Query Tool**
-4. First check what machines are in the database — paste and run this:
-
+First check what machines exist:
 ```sql
-SELECT id, nickname, status, guacamole_connection_id
-FROM rdp_resources;
+SELECT id, nickname, status, guacamole_connection_id FROM rdp_resources;
 ```
 
-5. You will see your machines listed. Find the `nickname` of the machine you just
-   registered in Guacamole (e.g. `Machine-KE-01`).
-
-6. Now paste and run this — replacing the values with your actual ones:
-
+Then link the connection:
 ```sql
 UPDATE rdp_resources
 SET guacamole_connection_id = '7'
 WHERE nickname = 'Machine-KE-01';
 ```
+Replace `7` with your connection ID and `Machine-KE-01` with the machine nickname.
 
-   Replace `7` with the connection ID you wrote down from the Guacamole URL.
-   Replace `Machine-KE-01` with the nickname from your database.
-
-7. Click the **Run** button (or press F5).
-   You should see the message `UPDATE 1` at the bottom — that means it worked.
-
-Also make sure the machine status is set to `online_free` so workers can claim it:
-
+Set it to available so workers can claim it:
 ```sql
 UPDATE rdp_resources
 SET status = 'online_free'
@@ -212,86 +256,111 @@ WHERE nickname = 'Machine-KE-01';
 
 ## EVERY SESSION — Run this each time you develop
 
----
-
-### Step 1 — Start Docker
-
-Open PowerShell and run:
-
-```powershell
-cd C:\PROJECTS\Workforce-Allocation-Platform\infrastructure
-docker compose up -d
+```
+1. Open Docker Desktop — wait for "Engine running" (whale icon in system tray)
+2. PowerShell:  cd infrastructure && docker compose up -d
+3. New PowerShell:  cd backend && venv\Scripts\activate && uvicorn main:app --reload --port 8000
+4. New PowerShell:  cd frontend && npm run dev
 ```
 
-Check containers are up:
+Backend runs at `http://localhost:8000` — API docs at `http://localhost:8000/docs`
 
-```powershell
-docker compose ps
-```
+Frontend runs at `http://localhost:3000`
 
-All 4 should show `Up`: redis, guacd, guac_db, guacamole.
+### Background jobs that start with the backend
 
----
-
-### Step 2 — Start the backend
-
-Open a **new** PowerShell window and run:
-
-```powershell
-cd C:\PROJECTS\Workforce-Allocation-Platform\backend
-venv\Scripts\activate
-uvicorn main:app --reload --port 8000
-```
-
-You should see:
-```
-INFO:     Uvicorn running on http://127.0.0.1:8000 (Press CTRL+C to quit)
-```
-
-Leave this window open. The backend is now running at `http://localhost:8000`.
-
----
-
-### Step 3 — Start the frontend
-
-Open another **new** PowerShell window and run:
-
-```powershell
-cd C:\PROJECTS\Workforce-Allocation-Platform\frontend
-npm run dev
-```
-
-Leave this window open. The frontend is now running at `http://localhost:3000`.
-
----
-
-### Step 4 — Test the RDP claim
-
-1. Open your browser and go to `http://localhost:3000`
-2. Log in as a worker account
-3. Go to the **RDP Claim Board** page
-4. You should see your machine listed (e.g. `Machine-KE-01`) with status `online_free`
-5. Click **Claim**
-6. A new browser tab opens automatically showing the Windows desktop inside the browser
-
-If a new tab does not open: the `guacamole_connection_id` in the database is null.
-Go back to the **Link the connection ID** section above and run the SQL update.
+| Job | File | What it does |
+|-----|------|--------------|
+| Leaderboard sync | `services/leaderboard_sync.py` | Every 5 min, refreshes leaderboard in Firestore from `quality_composite_scores` |
+| Mirror reconcile | `services/firebase_mirror.py` | Re-asserts `rdp_status` and `active_sessions` from PostgreSQL so Firestore self-heals after failures |
 
 ---
 
 ## Shutdown
-
-When done for the day:
 
 ```powershell
 cd C:\PROJECTS\Workforce-Allocation-Platform\infrastructure
 docker compose down
 ```
 
-Full reset (wipes Guacamole database — you will need to re-register connections):
-
+Full reset — wipes Guacamole database (you will need to re-register connections):
 ```powershell
 docker compose down -v
+```
+
+---
+
+## Production (Nginx + Gunicorn)
+
+In development you don't need this. In production, Nginx sits in front of the backend for HTTPS.
+
+### Nginx config
+
+Create `/etc/nginx/sites-available/globalsolutions-api`:
+
+```nginx
+server {
+    listen 80;
+    server_name api.yourdomain.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name api.yourdomain.com;
+
+    ssl_certificate     /etc/letsencrypt/live/api.yourdomain.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.yourdomain.com/privkey.pem;
+
+    add_header X-Frame-Options DENY;
+    add_header X-Content-Type-Options nosniff;
+
+    location / {
+        proxy_pass         http://127.0.0.1:8000;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+```bash
+sudo ln -s /etc/nginx/sites-available/globalsolutions-api /etc/nginx/sites-enabled/
+sudo apt install certbot python3-certbot-nginx
+sudo certbot --nginx -d api.yourdomain.com
+sudo nginx -t && sudo systemctl reload nginx
+```
+
+### Run with Gunicorn in production
+
+```bash
+pip install gunicorn
+gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000
+```
+
+Or as a systemd service — create `/etc/systemd/system/globalsolutions-api.service`:
+
+```ini
+[Unit]
+Description=GlobalSolutions API
+After=network.target
+
+[Service]
+User=ubuntu
+WorkingDirectory=/home/ubuntu/Workforce-Allocation-Platform/backend
+Environment="PATH=/home/ubuntu/Workforce-Allocation-Platform/backend/venv/bin"
+ExecStart=/home/ubuntu/Workforce-Allocation-Platform/backend/venv/bin/gunicorn main:app --workers 4 --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+```
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable globalsolutions-api
+sudo systemctl start globalsolutions-api
 ```
 
 ---
@@ -300,10 +369,14 @@ docker compose down -v
 
 | Problem | Fix |
 |---------|-----|
-| Containers show `Exit` after `docker compose up` | `guacamole_initdb.sql` is missing — run the generate command again |
-| `http://localhost:8080/guacamole` shows nothing | Docker Desktop is not running — open it and wait 60 seconds |
+| Containers show `Exit` after `docker compose up` | `guacamole_initdb.sql` is missing — run step 5 again |
+| `http://localhost:8080/guacamole` shows nothing | Docker Desktop not running — open it and wait 60 seconds |
 | Backend crash: Redis connection refused | Run `docker compose up -d` first |
-| Claim button works but no new tab opens | `guacamole_connection_id` is null — run the SQL UPDATE above |
+| Backend crash: PostgreSQL connection refused | PostgreSQL not running — start it from Windows Services or pgAdmin |
+| Claim button works but no new tab opens | `guacamole_connection_id` is null — run the SQL UPDATE in step 8 |
 | Guacamole tab opens but screen is black | Windows Firewall on the remote PC is blocking port 3389 |
 | `venv\Scripts\activate` not found | Run `python -m venv venv` then `pip install -r requirements.txt` |
-| Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v` then regenerate `guacamole_initdb.sql` and `docker compose up -d` |
+| Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v`, regenerate `guacamole_initdb.sql`, then `docker compose up -d` |
+| `ModuleNotFoundError` | Virtual environment not activated — run `venv\Scripts\activate` |
+| `Target database is not up to date` | Run `.\venv\Scripts\alembic upgrade head` |
+| `firebase-service-account.json` not found | Download from Firebase Console and place at `backend/firebase-service-account.json` |

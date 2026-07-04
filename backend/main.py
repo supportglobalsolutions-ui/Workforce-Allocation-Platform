@@ -11,6 +11,7 @@ from core.config import settings
 from core.firebase_admin import init_firebase
 from routers import audit, auth, leaderboard, payroll, quality, rdp, sessions, shifts, uptime_kuma, workers
 from services.leaderboard_sync import run_leaderboard_sync_loop
+from services.mirror_reconcile import run_mirror_reconcile_loop
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -19,13 +20,18 @@ logger = logging.getLogger(__name__)
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     init_firebase()
-    sync_task = asyncio.create_task(run_leaderboard_sync_loop())
+    background_tasks = [
+        asyncio.create_task(run_leaderboard_sync_loop()),
+        asyncio.create_task(run_mirror_reconcile_loop()),
+    ]
     yield
-    sync_task.cancel()
-    try:
-        await sync_task
-    except asyncio.CancelledError:
-        pass
+    for task in background_tasks:
+        task.cancel()
+    for task in background_tasks:
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
 
 
 app = FastAPI(

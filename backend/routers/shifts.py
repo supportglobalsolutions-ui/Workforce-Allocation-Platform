@@ -2,7 +2,7 @@ from datetime import datetime
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -10,7 +10,7 @@ from core.permissions import require_admin, require_user
 from models.enums import ShiftStatusEnum
 from models.shift import Shift
 from schemas.shift import ShiftCreate, ShiftResponse, ShiftUpdate
-from services.firebase_mirror import mirror_shift_status_change
+from services.firebase_mirror import mirror_shift_status_change_by_id
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -78,6 +78,7 @@ def create_shift(
 def update_shift(
     shift_id: UUID,
     body: ShiftUpdate,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
@@ -106,5 +107,5 @@ def update_shift(
     db.add(shift)
     db.commit()
     db.refresh(shift)
-    mirror_shift_status_change(db, shift, previous_status)
+    background_tasks.add_task(mirror_shift_status_change_by_id, shift.id, previous_status)
     return shift
