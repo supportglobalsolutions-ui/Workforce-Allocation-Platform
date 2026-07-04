@@ -36,8 +36,8 @@ export default function RdpClaimBoard() {
     try {
       const data = await api.get<RDPResource[]>('/rdp');
       setMachines(data);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load machines');
+    } catch {
+      setMachines([]);
     } finally {
       setLoading(false);
     }

@@ -19,8 +19,18 @@ depends_on: Union[str, Sequence[str], None] = None
 def upgrade() -> None:
     op.add_column("rdp_resources", sa.Column("monitor_host", sa.String(255), nullable=True))
     op.add_column("rdp_resources", sa.Column("monitor_port", sa.Integer(), nullable=True))
+    op.add_column(
+        "rdp_resources",
+        sa.Column(
+            "status_changed_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.text("now()"),
+        ),
+    )
 
 
 def downgrade() -> None:
+    op.drop_column("rdp_resources", "status_changed_at")
     op.drop_column("rdp_resources", "monitor_port")
     op.drop_column("rdp_resources", "monitor_host")
