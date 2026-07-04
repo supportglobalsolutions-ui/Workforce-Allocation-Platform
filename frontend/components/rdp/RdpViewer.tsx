@@ -1,53 +1,36 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Maximize2, Minimize2 } from 'lucide-react';
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { auth } from '@/lib/firebase';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
+export interface RdpViewerHandle {
+  disconnect: () => void;
+}
+
 interface RdpViewerProps {
   rdpId: string;
   className?: string;
-  /** Show fullscreen toggle overlay (desktop window). */
-  showControls?: boolean;
 }
 
-export default function RdpViewer({
-  rdpId,
-  className = '',
-  showControls = false,
-}: RdpViewerProps) {
+const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer(
+  { rdpId, className = '' },
+  ref,
+) {
   const containerRef = useRef<HTMLDivElement>(null);
   const displayRef = useRef<HTMLDivElement>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const clientRef = useRef<any>(null);
   const [status, setStatus] = useState<ConnectionStatus>('connecting');
   const [error, setError] = useState<string | null>(null);
-  const [isFullscreen, setIsFullscreen] = useState(false);
 
-  useEffect(() => {
-    const onFullscreenChange = () => {
-      setIsFullscreen(document.fullscreenElement === containerRef.current);
-    };
-    document.addEventListener('fullscreenchange', onFullscreenChange);
-    return () => document.removeEventListener('fullscreenchange', onFullscreenChange);
-  }, []);
-
-  const enterFullscreen = useCallback(async () => {
-    try {
-      await containerRef.current?.requestFullscreen();
-    } catch {
-      /* browser may block without user gesture */
-    }
-  }, []);
-
-  const exitFullscreen = useCallback(async () => {
-    if (document.fullscreenElement) {
-      await document.exitFullscreen();
-    }
-  }, []);
+  useImperativeHandle(ref, () => ({
+    disconnect: () => {
+      try { clientRef.current?.disconnect(); } catch { /* ignore */ }
+    },
+  }));
 
   useEffect(() => {
     let mounted = true;
@@ -191,30 +174,6 @@ export default function RdpViewer({
       ref={containerRef}
       className={`relative w-full bg-black overflow-hidden ${className}`}
     >
-      {showControls && (
-        <div className="absolute top-2 right-2 z-20">
-          {isFullscreen ? (
-            <button
-              type="button"
-              onClick={exitFullscreen}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-white bg-black/60 hover:bg-black/80 backdrop-blur-sm"
-            >
-              <Minimize2 size={14} />
-              Exit full screen
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={enterFullscreen}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-medium text-emerald-accent bg-black/60 hover:bg-black/80 backdrop-blur-sm"
-            >
-              <Maximize2 size={14} />
-              Full screen
-            </button>
-          )}
-        </div>
-      )}
-
       <div ref={displayRef} className="w-full h-full min-h-[480px]" />
 
       {status === 'connecting' && (
@@ -234,4 +193,6 @@ export default function RdpViewer({
       )}
     </div>
   );
-}
+});
+
+export default RdpViewer;

@@ -47,8 +47,8 @@ export const endRdpConnection = (rdpId: string) =>
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
 
-/** Open the dedicated remote-desktop tab (full viewport + fullscreen controls). */
+/** Open the dedicated remote-desktop tab (full viewport). Returns the Window so callers can close it later. */
 export function openRdpDesktopTab(rdpId: string): Window | null {
   const url = `/worker/rdp-session/${rdpId}/desktop`;
-  return window.open(url, `rdp-desktop-${rdpId}`, 'noopener,noreferrer');
+  return window.open(url, `rdp-desktop-${rdpId}`);
 }

@@ -115,9 +115,7 @@ export default function RdpClaimBoard() {
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {machines.map((m) => {
-            const isMine =
-              myActive?.rdp_resource_id === m.id &&
-              (m.status === 'assigned' || m.status === 'active');
+            const isMine = myActive?.rdp_resource_id === m.id;
             return (
               <div key={m.id} className="glass-panel p-5">
                 <div className="flex items-start justify-between mb-3">
@@ -131,7 +129,14 @@ export default function RdpClaimBoard() {
                   <span>{m.country}</span>
                   <span>{m.client_group}</span>
                 </div>
-                {m.status === 'online_free' ? (
+                {isMine ? (
+                  <Link
+                    href={`/worker/rdp-session/${m.id}`}
+                    className="btn-primary w-full text-sm text-center block"
+                  >
+                    Open session
+                  </Link>
+                ) : m.status === 'online_free' ? (
                   <button
                     onClick={() => handleClaim(m.id)}
                     disabled={claiming === m.id || !!myActive}
@@ -140,13 +145,6 @@ export default function RdpClaimBoard() {
                   >
                     {claiming === m.id ? 'Claiming…' : 'Claim'}
                   </button>
-                ) : isMine ? (
-                  <Link
-                    href={`/worker/rdp-session/${m.id}`}
-                    className="btn-primary w-full text-sm text-center block"
-                  >
-                    Open session
-                  </Link>
                 ) : m.status === 'assigned' || m.status === 'active' ? (
                   <p className="text-xs text-center text-theme-muted">In use by another worker</p>
                 ) : (

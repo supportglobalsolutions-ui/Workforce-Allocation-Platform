@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ExternalLink } from 'lucide-react';
@@ -24,10 +24,12 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
   const [ending, setEnding] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [startedAt] = useState(() => Date.now());
   const [desktopOpened, setDesktopOpened] = useState(false);
+  const desktopTabRef = useRef<Window | null>(null);
 
   useEffect(() => {
     api.get<RDPResource>(`/rdp/${rdpId}`)
@@ -50,6 +52,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     if (sessionStorage.getItem(key)) return;
     const tab = openRdpDesktopTab(rdpId);
     if (tab) {
+      desktopTabRef.current = tab;
       sessionStorage.setItem(key, '1');
       setDesktopOpened(true);
     }
@@ -58,6 +61,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   const handleOpenDesktop = useCallback(() => {
     const tab = openRdpDesktopTab(rdpId);
     if (tab) {
+      desktopTabRef.current = tab;
       setDesktopOpened(true);
     } else {
       setError('Pop-up blocked — allow pop-ups for this site, then click Open desktop again.');
@@ -71,6 +75,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     try {
       await endRdpConnection(rdpId);
       sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
+      try { desktopTabRef.current?.close(); } catch { /* ignore */ }
       router.push('/worker/rdp-claim-board');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to end connection');
@@ -126,24 +131,48 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
           {desktopOpened ? 'Re-open desktop tab' : 'Open desktop tab'}
         </button>
         <p className="text-xs text-theme-muted">
-          In the desktop tab, use <strong>Full screen</strong> for maximum space, and{' '}
-          <strong>Exit full screen</strong> to return to the browser window.
+          The desktop tab opens in full screen. Use the red button at the top of the screen to disconnect when done.
         </p>
       </div>
 
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
-          Claim board
-        </Link>
-        <button
-          type="button"
-          onClick={handleEndConnection}
-          disabled={ending}
-          className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30 disabled:opacity-50"
-        >
-          {ending ? 'Ending…' : 'End Connection'}
-        </button>
-      </div>
+      {confirmEnd ? (
+        <div className="glass-panel p-5 space-y-3">
+          <p className="text-sm text-white font-semibold">End this session?</p>
+          <p className="text-xs text-theme-muted">
+            This will disconnect the remote desktop and release the machine back to the pool.
+          </p>
+          <div className="flex gap-3">
+            <button
+              type="button"
+              onClick={() => setConfirmEnd(false)}
+              className="btn-secondary text-sm"
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={handleEndConnection}
+              disabled={ending}
+              className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30 disabled:opacity-50"
+            >
+              {ending ? 'Ending…' : 'Yes, end session'}
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
+            Claim board
+          </Link>
+          <button
+            type="button"
+            onClick={() => setConfirmEnd(true)}
+            className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30"
+          >
+            End Connection
+          </button>
+        </div>
+      )}
     </div>
   );
 }

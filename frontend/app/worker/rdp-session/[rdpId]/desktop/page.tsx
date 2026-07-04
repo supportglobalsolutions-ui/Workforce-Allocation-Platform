@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { ChevronDown, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Power } from 'lucide-react';
 
-import RdpViewer from '@/components/rdp/RdpViewer';
+import RdpViewer, { type RdpViewerHandle } from '@/components/rdp/RdpViewer';
 import { api } from '@/lib/api';
+import { endRdpConnection } from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -13,12 +14,15 @@ interface RDPResource {
   client_group: string;
 }
 
-/** Dedicated window/tab for the remote desktop — minimal chrome, full viewport. */
+/** Dedicated full-screen tab for the remote desktop. */
 export default function RdpDesktopPage({ params }: { params: { rdpId: string } }) {
   const rdpId = params.rdpId;
+  const rdpRef = useRef<RdpViewerHandle>(null);
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
-  const [bannerVisible, setBannerVisible] = useState(true);
+  const [showMenu, setShowMenu] = useState(false);
+  const [confirming, setConfirming] = useState(false);
+  const [disconnecting, setDisconnecting] = useState(false);
 
   useEffect(() => {
     document.title = 'Remote desktop';
@@ -31,6 +35,25 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
       .finally(() => setLoading(false));
   }, [rdpId]);
 
+  // Auto-enter browser fullscreen on load.
+  useEffect(() => {
+    document.documentElement.requestFullscreen?.().catch(() => {});
+  }, []);
+
+  const handleDisconnect = useCallback(async () => {
+    if (disconnecting) return;
+    setDisconnecting(true);
+    setShowMenu(false);
+    try {
+      rdpRef.current?.disconnect();
+      await endRdpConnection(rdpId);
+    } catch {
+      // end anyway
+    }
+    sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
+    window.close();
+  }, [disconnecting, rdpId]);
+
   if (loading) {
     return (
       <div className="fixed inset-0 flex items-center justify-center bg-black text-theme-muted text-sm">
@@ -40,41 +63,65 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   }
 
   return (
-    <div className="fixed inset-0 flex flex-col bg-black">
-      {bannerVisible ? (
-        <header className="shrink-0 flex items-center justify-between gap-3 px-4 py-2 border-b border-white/10 bg-[#0d1117]">
-          <div className="min-w-0">
-            <p className="text-sm font-semibold text-white truncate">
-              {machine?.nickname ?? 'Remote desktop'}
-            </p>
-            <p className="text-xs text-theme-muted truncate">
-              When you finish, use <strong>End Connection</strong> on the session page to release the machine, then close this tab.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={() => setBannerVisible(false)}
-            title="Hide this bar"
-            className="shrink-0 inline-flex items-center gap-1 rounded-md px-2.5 py-1.5 text-xs text-theme-muted hover:text-white hover:bg-white/10"
-          >
-            <X size={14} />
-            Hide
-          </button>
-        </header>
-      ) : (
+    <div className="fixed inset-0 bg-black">
+      {/* Backdrop to close menu when clicking outside */}
+      {showMenu && (
+        <div
+          className="fixed inset-0 z-20"
+          onClick={() => { setShowMenu(false); setConfirming(false); }}
+        />
+      )}
+
+      {/* Red disconnect button pinned to top-center */}
+      <div className="absolute top-0 left-1/2 -translate-x-1/2 z-30">
         <button
           type="button"
-          onClick={() => setBannerVisible(true)}
-          title="Show session info"
-          className="absolute top-0 left-1/2 -translate-x-1/2 z-30 inline-flex items-center gap-1 rounded-b-md px-2.5 py-0.5 text-[10px] text-theme-muted bg-black/50 hover:bg-black/80 hover:text-white backdrop-blur-sm"
+          onClick={() => { setShowMenu((v) => !v); setConfirming(false); }}
+          className="flex items-center gap-1.5 rounded-b-lg px-4 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-900/50 transition-colors"
         >
-          <ChevronDown size={12} />
+          <Power size={12} />
           {machine?.nickname ?? 'Session'}
         </button>
-      )}
-      <div className="flex-1 min-h-0">
-        <RdpViewer rdpId={rdpId} className="h-full" showControls />
+
+        {showMenu && (
+          <div className="absolute top-full left-1/2 -translate-x-1/2 mt-1 bg-[#0d1117] border border-white/20 rounded-lg shadow-2xl overflow-hidden min-w-[200px]">
+            {confirming ? (
+              <div className="p-4 space-y-3">
+                <p className="text-sm text-white font-medium">Disconnect session?</p>
+                <p className="text-xs text-theme-muted">This will end the RDP connection and release the machine.</p>
+                <div className="flex gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setConfirming(false)}
+                    className="flex-1 px-3 py-1.5 text-xs rounded-md border border-white/20 text-theme-muted hover:text-white hover:bg-white/10 transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleDisconnect}
+                    disabled={disconnecting}
+                    className="flex-1 px-3 py-1.5 text-xs rounded-md bg-red-600 hover:bg-red-700 text-white font-semibold disabled:opacity-50 transition-colors"
+                  >
+                    {disconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={() => setConfirming(true)}
+                className="w-full flex items-center gap-2.5 px-4 py-3 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
+              >
+                <Power size={15} />
+                Disconnect session
+              </button>
+            )}
+          </div>
+        )}
       </div>
+
+      <RdpViewer ref={rdpRef} rdpId={rdpId} className="h-full" />
     </div>
   );
 }
