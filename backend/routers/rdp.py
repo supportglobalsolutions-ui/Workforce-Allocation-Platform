@@ -1,24 +1,30 @@
+import asyncio
 import logging
+import urllib.parse
 from datetime import datetime, timezone
 from urllib.parse import unquote
 from uuid import UUID
 
 import httpx
 import redis as redis_lib
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+import websockets as ws_lib
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from fastapi.responses import StreamingResponse
 from sqlmodel import Session, select
 from starlette.background import BackgroundTask
 
 from core.config import settings
-from core.database import get_db
+from core.database import engine, get_db
+from core.firebase_admin import verify_firebase_token
 from core.guacamole import GuacamoleClient
 from core.permissions import require_admin, require_user
 from core.redis import get_redis
+from models.admin_users import AdminUser
 from models.allocation import Allocation
 from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, SessionTypeEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
+from models.worker import Worker
 from schemas.rdp import RDPResourceCreate, RDPResourceResponse, RDPResourceUpdate
 from services.firebase_mirror import (
     delete_active_session,
@@ -727,3 +733,144 @@ def get_rdp_tunnel_info(
         "data_source": info["data_source"],
         "connection_id": info["connection_id"],
     }
+
+
+@router.websocket("/{rdp_id}/ws-tunnel")
+async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
+    """
+    WebSocket proxy for guacamole-common-js WebSocketTunnel.
+    The Guacamole auth token never leaves the server — the browser only sends its
+    Firebase ID token (as ?firebaseToken=...) plus display hint params.
+
+    Flow:
+      1. Verify Firebase token from query param (or DEV bypass).
+      2. Confirm the worker has an open allocation for this RDP.
+      3. Fetch Guacamole auth token server-side.
+      4. Open a WebSocket to Guacamole and relay frames bidirectionally.
+    """
+    params = websocket.query_params
+    firebase_token = params.get("firebaseToken")
+
+    # --- 1. Authenticate ---
+    if firebase_token:
+        try:
+            decoded = verify_firebase_token(firebase_token)
+            uid: str = decoded["uid"]
+            role: str = decoded.get("role", "user")
+        except Exception:
+            await websocket.close(code=4001, reason="Invalid auth token")
+            return
+    elif settings.DEV_AUTH_BYPASS and not settings.is_production:
+        uid = "dev-test-user"
+        role = settings.DEV_AUTH_ROLE if settings.DEV_AUTH_ROLE in {"user", "admin", "super_admin"} else "user"
+    else:
+        await websocket.close(code=4001, reason="Missing auth token")
+        return
+
+    # --- 2. Extract display hints (forwarded from guacamole-common-js connect data) ---
+    width = params.get("GUAC_WIDTH", "1024")
+    height = params.get("GUAC_HEIGHT", "768")
+    dpi = params.get("GUAC_DPI", "96")
+    images: list[str] = params.getlist("GUAC_IMAGE") or ["image/png", "image/jpeg"]
+
+    # --- 3. Verify DB state and ownership ---
+    with Session(engine) as db:
+        resource = db.get(RDPResource, rdp_id)
+        if not resource:
+            await websocket.close(code=4004, reason="RDP resource not found")
+            return
+        if not resource.guacamole_connection_id:
+            await websocket.close(code=4002, reason="Machine has no Guacamole connection configured")
+            return
+
+        is_admin = role in {"admin", "super_admin"}
+        is_dev_bypass = uid == "dev-test-user"
+
+        if not is_admin and not is_dev_bypass:
+            admin_user = db.exec(
+                select(AdminUser).where(AdminUser.firebase_uid == uid)
+            ).first()
+            worker = (
+                db.exec(select(Worker).where(Worker.admin_user_id == admin_user.id)).first()
+                if admin_user else None
+            )
+            if not worker:
+                await websocket.close(code=4003, reason="Worker profile not found")
+                return
+
+            open_alloc = db.exec(
+                select(Allocation).where(
+                    Allocation.rdp_resource_id == rdp_id,
+                    Allocation.worker_id == worker.id,
+                    Allocation.released_at.is_(None),
+                )
+            ).first()
+            if not open_alloc:
+                await websocket.close(code=4003, reason="No open claim on this machine")
+                return
+
+        connection_id = resource.guacamole_connection_id
+
+    # --- 4. Fetch Guacamole token server-side ---
+    redis_client = get_redis()
+    try:
+        guac = GuacamoleClient(redis_client)
+        info = guac.get_tunnel_connect_info(connection_id)
+        guac_token = info["token"]
+        data_source = info["data_source"]
+    except Exception as exc:
+        logger.warning("Failed to get Guacamole token for rdp %s: %s", rdp_id, exc)
+        await websocket.close(code=1011, reason="Cannot reach Guacamole server")
+        return
+
+    # --- 5. Build Guacamole WebSocket URL ---
+    guac_base = settings.GUACAMOLE_URL.rstrip("/")
+    guac_ws_base = guac_base.replace("http://", "ws://").replace("https://", "wss://")
+    guac_qs = urllib.parse.urlencode(
+        [
+            ("token", guac_token),
+            ("GUAC_DATA_SOURCE", data_source),
+            ("GUAC_ID", connection_id),
+            ("GUAC_TYPE", "c"),
+            ("GUAC_WIDTH", width),
+            ("GUAC_HEIGHT", height),
+            ("GUAC_DPI", dpi),
+        ]
+        + [("GUAC_IMAGE", img) for img in images]
+    )
+    guac_ws_url = f"{guac_ws_base}/websocket-tunnel?{guac_qs}"
+
+    # --- 6. Accept the browser WebSocket ---
+    await websocket.accept(subprotocol="guacamole")
+
+    # --- 7. Open upstream connection to Guacamole and relay ---
+    async def relay_client_to_guac(guac_ws: ws_lib.ClientConnection) -> None:
+        try:
+            async for data in websocket.iter_text():
+                await guac_ws.send(data)
+        except (WebSocketDisconnect, Exception):
+            pass
+
+    async def relay_guac_to_client(guac_ws: ws_lib.ClientConnection) -> None:
+        try:
+            async for msg in guac_ws:
+                if isinstance(msg, str):
+                    await websocket.send_text(msg)
+                else:
+                    await websocket.send_bytes(msg)
+        except Exception:
+            pass
+
+    try:
+        async with ws_lib.connect(guac_ws_url, subprotocols=["guacamole"]) as guac_ws:
+            c2g = asyncio.create_task(relay_client_to_guac(guac_ws))
+            g2c = asyncio.create_task(relay_guac_to_client(guac_ws))
+            _done, pending = await asyncio.wait([c2g, g2c], return_when=asyncio.FIRST_COMPLETED)
+            for task in pending:
+                task.cancel()
+    except Exception as exc:
+        logger.warning("WS tunnel error for rdp %s: %s", rdp_id, exc)
+        try:
+            await websocket.close(code=1011)
+        except Exception:
+            pass

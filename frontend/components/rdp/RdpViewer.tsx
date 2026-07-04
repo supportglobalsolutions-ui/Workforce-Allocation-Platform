@@ -3,7 +3,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Maximize2, Minimize2 } from 'lucide-react';
 
-import { getRdpTunnelInfo } from '@/lib/rdp';
 import { auth } from '@/lib/firebase';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
@@ -62,17 +61,18 @@ export default function RdpViewer({
 
     (async () => {
       try {
-        const info = await getRdpTunnelInfo(rdpId);
         const Guacamole = (await import('guacamole-common-js')).default;
 
         const idToken = await auth.currentUser?.getIdToken();
         if (!idToken) throw new Error('Not signed in.');
 
-        // Extra headers ride along on every tunnel request (connect/read/write),
-        // satisfying the API's Firebase Bearer auth.
-        const tunnel = new Guacamole.HTTPTunnel(info.tunnel_url, false, {
-          Authorization: `Bearer ${idToken}`,
-        });
+        // Build WS URL: backend proxies to Guacamole, keeping the Guacamole
+        // auth token server-side. Only the Firebase ID token crosses the wire.
+        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+        const wsBase = apiUrl.replace(/^http/, 'ws');
+        const wsTunnelUrl = `${wsBase}/rdp/${rdpId}/ws-tunnel`;
+
+        const tunnel = new Guacamole.WebSocketTunnel(wsTunnelUrl);
         client = new Guacamole.Client(tunnel);
         clientRef.current = client;
 
@@ -146,11 +146,10 @@ export default function RdpViewer({
         const width = Math.max(box?.clientWidth ?? window.innerWidth, 800);
         const height = Math.max(box?.clientHeight ?? window.innerHeight, 600);
 
+        // guacamole-common-js WebSocketTunnel appends connect data as a query string.
+        // The backend strips firebaseToken before forwarding to Guacamole.
         const connectData = new URLSearchParams({
-          token: info.token,
-          GUAC_DATA_SOURCE: info.data_source,
-          GUAC_ID: info.connection_id,
-          GUAC_TYPE: 'c',
+          firebaseToken: idToken,
           GUAC_WIDTH: String(Math.floor(width)),
           GUAC_HEIGHT: String(Math.floor(height)),
           GUAC_DPI: '96',
