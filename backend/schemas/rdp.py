@@ -26,6 +26,9 @@ class RDPResourceCreate(RDPResourceBase):
 
 
 class RDPResourceUpdate(SQLModel):
+    nickname:                Optional[str]           = None
+    country:                 Optional[str]           = None
+    client_group:            Optional[str]           = None
     status:                  Optional[RdpStatusEnum] = None
     assigned_worker_id:      Optional[UUID]          = None
     guacamole_connection_id: Optional[str]           = None

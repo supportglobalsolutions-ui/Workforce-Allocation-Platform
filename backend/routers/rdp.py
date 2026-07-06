@@ -501,6 +501,14 @@ def create_rdp_resource(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    existing = db.exec(
+        select(RDPResource).where(RDPResource.nickname == body.nickname.strip())
+    ).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"An RDP machine with nickname '{body.nickname}' already exists",
+        )
     resource = RDPResource(**body.model_dump())
     db.add(resource)
     db.commit()
@@ -520,6 +528,18 @@ def update_rdp_resource(
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+
+    if body.nickname is not None:
+        nickname = body.nickname.strip()
+        if nickname != resource.nickname:
+            taken = db.exec(
+                select(RDPResource).where(RDPResource.nickname == nickname)
+            ).first()
+            if taken:
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"An RDP machine with nickname '{nickname}' already exists",
+                )
 
     apply_update(resource, body)
     db.add(resource)

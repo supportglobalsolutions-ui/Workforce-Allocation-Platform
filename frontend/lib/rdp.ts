@@ -56,6 +56,54 @@ export const maintenanceRdp = (rdpId: string) =>
 export const forceReleaseRdp = (rdpId: string, reason: string) =>
   api.post<EndConnectionResult & { reason: string }>(`/rdp/${rdpId}/force-release`, { reason });
 
+export interface RdpResource {
+  id: string;
+  nickname: string;
+  country: string;
+  client_group: string;
+  status: string;
+  assigned_worker_id: string | null;
+  guacamole_connection_id: string | null;
+  health_notes: string | null;
+  monitor_host: string | null;
+  monitor_port: number | null;
+  last_health_check_at: string | null;
+  status_changed_at: string;
+}
+
+export interface RdpResourceCreateBody {
+  nickname: string;
+  country: string;
+  client_group: string;
+  status?: string;
+  monitor_host?: string | null;
+  monitor_port?: number | null;
+  guacamole_connection_id?: string | null;
+  health_notes?: string | null;
+}
+
+export interface RdpResourceUpdateBody {
+  nickname?: string;
+  country?: string;
+  client_group?: string;
+  monitor_host?: string | null;
+  monitor_port?: number | null;
+  guacamole_connection_id?: string | null;
+  health_notes?: string | null;
+}
+
+export const listRdpResources = () => api.get<RdpResource[]>('/rdp');
+
+export const createRdpResource = (body: RdpResourceCreateBody) =>
+  api.post<RdpResource>('/rdp', {
+    status: 'online_free',
+    risk_flags: [],
+    ...body,
+  });
+
+export const updateRdpResource = (rdpId: string, body: RdpResourceUpdateBody) =>
+  api.patch<RdpResource>(`/rdp/${rdpId}`, body);
+
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
 
