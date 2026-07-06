@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Download } from 'lucide-react';
 
 import DataTable from '@/components/platform/DataTable';
@@ -18,10 +18,25 @@ interface WorkSession {
   rdp_resource_id: string | null;
 }
 
+interface RDPResource {
+  id: string;
+  nickname: string;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   gs_rdp: 'GS RDP',
   partner_multilog: 'Partner Multilog',
   third_party_platform: 'Third Party',
+};
+
+const TYPE_BY_LABEL: Record<string, string> = Object.fromEntries(
+  Object.entries(TYPE_LABELS).map(([k, v]) => [v, k]),
+);
+
+const STATUS_BY_LABEL: Record<string, string> = {
+  Completed: 'completed',
+  'Force Released': 'force_released',
+  Abandoned: 'abandoned',
 };
 
 function formatDuration(minutes: number | null): string {
@@ -29,22 +44,84 @@ function formatDuration(minutes: number | null): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function isInDateRange(startTime: string, range: string): boolean {
+  if (!range) return true;
+  const start = new Date(startTime);
+  const now = new Date();
+  if (range === 'Last 7 days') {
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 7);
+    return start >= cutoff;
+  }
+  if (range === 'Last 30 days') {
+    const cutoff = new Date(now);
+    cutoff.setDate(cutoff.getDate() - 30);
+    return start >= cutoff;
+  }
+  if (range === 'This period') {
+    const cutoff = new Date(now.getFullYear(), now.getMonth(), 1);
+    return start >= cutoff;
+  }
+  return true;
+}
+
 export default function SessionHistoryPage() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
+  const [machines, setMachines] = useState<RDPResource[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [typeFilter, setTypeFilter] = useState('');
+  const [dateRangeFilter, setDateRangeFilter] = useState('');
 
   useEffect(() => {
-    api.get<WorkSession[]>('/sessions?limit=200')
-      .then(setSessions)
+    Promise.all([
+      api.get<WorkSession[]>('/sessions?limit=200'),
+      api.get<RDPResource[]>('/rdp'),
+    ])
+      .then(([sessionList, machineList]) => {
+        setSessions(sessionList);
+        setMachines(machineList);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load sessions'))
       .finally(() => setLoading(false));
   }, []);
 
-  const rows = sessions.map((s) => ({
+  const machineName = (id: string | null) => {
+    if (!id) return '—';
+    return machines.find((m) => m.id === id)?.nickname ?? id.slice(0, 8) + '…';
+  };
+
+  const filteredSessions = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    const statusValue = statusFilter ? STATUS_BY_LABEL[statusFilter] : '';
+    const typeValue = typeFilter ? TYPE_BY_LABEL[typeFilter] : '';
+
+    return sessions.filter((s) => {
+      if (statusValue && (s.close_status ?? 'pending') !== statusValue) return false;
+      if (typeValue && s.session_type !== typeValue) return false;
+      if (!isInDateRange(s.start_time, dateRangeFilter)) return false;
+
+      if (!q) return true;
+      const machine = machineName(s.rdp_resource_id).toLowerCase();
+      const type = (TYPE_LABELS[s.session_type] ?? s.session_type).toLowerCase();
+      const status = (s.close_status ?? 'pending').replace(/_/g, ' ');
+      const date = new Date(s.start_time).toLocaleString().toLowerCase();
+      return machine.includes(q) || type.includes(q) || status.includes(q) || date.includes(q);
+    });
+  }, [sessions, machines, search, statusFilter, typeFilter, dateRangeFilter]);
+
+  const handleFilterChange = (label: string, value: string) => {
+    if (label === 'Status') setStatusFilter(value);
+    if (label === 'Type') setTypeFilter(value);
+    if (label === 'Date Range') setDateRangeFilter(value);
+  };
+
+  const rows = filteredSessions.map((s) => ({
     id: s.id,
     date: new Date(s.start_time).toLocaleString(),
-    machine: s.rdp_resource_id ? `RDP ${s.rdp_resource_id.slice(0, 8)}…` : '—',
+    machine: machineName(s.rdp_resource_id),
     duration: formatDuration(s.duration_minutes),
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
     status: s.close_status ?? 'pending',
@@ -64,6 +141,8 @@ export default function SessionHistoryPage() {
       />
       <FilterBar
         searchPlaceholder="Search sessions..."
+        onSearch={setSearch}
+        onFilterChange={handleFilterChange}
         filters={[
           { label: 'Status', options: ['Completed', 'Force Released', 'Abandoned'] },
           { label: 'Type', options: ['GS RDP', 'Partner Multilog', 'Third Party'] },

@@ -7,6 +7,7 @@ import { collection, onSnapshot } from 'firebase/firestore';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { api } from '@/lib/api';
 import { db, COLLECTIONS } from '@/lib/firebase';
 import { claimRdp, getMyActiveRdp, type MyActiveRdp } from '@/lib/rdp';
@@ -34,6 +35,7 @@ const STATE_LEGEND: { status: string; label: string; description: string }[] = [
 
 export default function RdpClaimBoard() {
   const router = useRouter();
+  const { session, isLoading: authLoading } = useAuth();
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [myActive, setMyActive] = useState<MyActiveRdp | null>(null);
   const [myWorkerId, setMyWorkerId] = useState<string | null>(null);
@@ -61,31 +63,39 @@ export default function RdpClaimBoard() {
 
   useEffect(() => { loadMachines(); }, [loadMachines]);
 
-  // Firestore realtime status overlay (PostgreSQL remains source of truth).
+  // Firestore realtime status overlay — only after Firebase Auth is ready.
   useEffect(() => {
-    const unsub = onSnapshot(collection(db, COLLECTIONS.RDP_STATUS), (snap) => {
-      const live: Record<string, { status: string; worker_id: string | null }> = {};
-      snap.forEach((doc) => {
-        const data = doc.data();
-        live[doc.id] = {
-          status: String(data.status ?? ''),
-          worker_id: data.worker_id ? String(data.worker_id) : null,
-        };
-      });
-      setMachines((prev) =>
-        prev.map((m) => {
-          const row = live[m.id];
-          if (!row?.status) return m;
-          return {
-            ...m,
-            status: row.status,
-            assigned_worker_id: row.worker_id ?? m.assigned_worker_id,
+    if (authLoading || !session) return;
+
+    const unsub = onSnapshot(
+      collection(db, COLLECTIONS.RDP_STATUS),
+      (snap) => {
+        const live: Record<string, { status: string; worker_id: string | null }> = {};
+        snap.forEach((doc) => {
+          const data = doc.data();
+          live[doc.id] = {
+            status: String(data.status ?? ''),
+            worker_id: data.worker_id ? String(data.worker_id) : null,
           };
-        }),
-      );
-    });
+        });
+        setMachines((prev) =>
+          prev.map((m) => {
+            const row = live[m.id];
+            if (!row?.status) return m;
+            return {
+              ...m,
+              status: row.status,
+              assigned_worker_id: row.worker_id ?? m.assigned_worker_id,
+            };
+          }),
+        );
+      },
+      (err) => {
+        console.warn('rdp_status listener:', err.message);
+      },
+    );
     return () => unsub();
-  }, []);
+  }, [authLoading, session]);
 
   useEffect(() => {
     let ch: BroadcastChannel | null = null;
