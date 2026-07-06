@@ -25,11 +25,20 @@ from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, Ses
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.worker import Worker
-from schemas.rdp import RDPResourceCreate, RDPResourceResponse, RDPResourceUpdate
+from schemas.rdp import (
+    RDPResourceCreate,
+    RDPResourceResponse,
+    RDPResourceUpdate,
+    RdpForceReleaseBody,
+)
 from services.firebase_mirror import (
     delete_active_session,
     mirror_active_session_by_id,
     mirror_rdp_status_by_id,
+)
+from services.rdp_state import (
+    transition_rdp_status,
+    validate_worker_may_claim,
 )
 from .deps import apply_update, get_worker_for_user
 
@@ -236,6 +245,7 @@ def _end_rdp_connection(
     *,
     worker_id: UUID | None = None,
     require_owner: bool = True,
+    release_reason: ReleaseReasonEnum = ReleaseReasonEnum.completed,
 ) -> dict:
     db.refresh(resource)
     open_allocs = db.exec(
@@ -316,7 +326,7 @@ def _end_rdp_connection(
         ):
             continue
         alloc.released_at = now
-        alloc.release_reason = ReleaseReasonEnum.completed
+        alloc.release_reason = release_reason
         db.add(alloc)
 
     closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
@@ -564,11 +574,11 @@ def claim_rdp_resource(
             detail=f"You already have an open session on {name}. End that connection first.",
         )
 
-    if resource.status != RdpStatusEnum.online_free:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"RDP resource is not claimable (status={resource.status})",
-        )
+    approved_shift = validate_worker_may_claim(
+        db, resource, worker.id, shift_id=shift_id
+    )
+    if approved_shift:
+        shift_id = approved_shift.id
 
     lock_key = f"lock:rdp:{rdp_id}"
     acquired = redis_client.set(lock_key, "1", ex=30, nx=True)
@@ -691,6 +701,102 @@ def release_rdp_resource(
 ):
     """Alias for end-connection (backward compatible)."""
     return end_rdp_connection(rdp_id, background_tasks, db, current_user, redis_client)
+
+
+@router.post("/{rdp_id}/lock")
+def lock_rdp_resource(
+    rdp_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Leadership/admin lock — blocks new claims."""
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    transition_rdp_status(db, resource, RdpStatusEnum.admin_locked)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
+    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
+
+
+@router.post("/{rdp_id}/unlock")
+def unlock_rdp_resource(
+    rdp_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Clear admin lock; return to online_free or assigned if worker reserved."""
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    if resource.status != RdpStatusEnum.admin_locked:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"Machine is not locked (status={resource.status.value})",
+        )
+    new_status = (
+        RdpStatusEnum.assigned if resource.assigned_worker_id else RdpStatusEnum.online_free
+    )
+    transition_rdp_status(db, resource, new_status)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
+    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
+
+
+@router.post("/{rdp_id}/maintenance")
+def maintenance_rdp_resource(
+    rdp_id: UUID,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Place machine in maintenance mode."""
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    transition_rdp_status(db, resource, RdpStatusEnum.maintenance)
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
+    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
+
+
+@router.post("/{rdp_id}/force-release")
+def force_release_rdp_resource(
+    rdp_id: UUID,
+    body: RdpForceReleaseBody,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+    redis_client: redis_lib.Redis = Depends(get_redis),
+):
+    """Admin force-release with mandatory reason."""
+    if not body.reason.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Release reason is required",
+        )
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+
+    result = _end_rdp_connection(
+        db,
+        resource,
+        redis_client,
+        worker_id=None,
+        require_owner=False,
+        release_reason=ReleaseReasonEnum.force_released,
+    )
+    db.refresh(resource)
+    note = f"Force release: {body.reason.strip()}"
+    resource.health_notes = f"{resource.health_notes}\n{note}" if resource.health_notes else note
+    db.add(resource)
+    db.commit()
+
+    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
+    for sid in result.get("closed_session_ids", []):
+        background_tasks.add_task(delete_active_session, UUID(str(sid)))
+
+    return {**result, "reason": body.reason.strip()}
 
 
 @router.get("/{rdp_id}/tunnel-info")

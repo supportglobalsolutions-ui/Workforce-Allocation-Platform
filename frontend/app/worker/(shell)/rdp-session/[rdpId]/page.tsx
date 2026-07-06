@@ -8,7 +8,7 @@ import { ExternalLink, Power } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
-import { endRdpConnection, openRdpDesktopTab } from '@/lib/rdp';
+import { endRdpConnection, getMyActiveRdp, openRdpDesktopTab } from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -44,6 +44,28 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     }, 1000);
     return () => clearInterval(t);
   }, [startedAt]);
+
+  // Keep session heartbeat alive for idle / auto-release lifecycle (every 5 min).
+  useEffect(() => {
+    if (loading || !machine) return;
+    let sessionId: string | null = null;
+    const ping = async () => {
+      try {
+        if (!sessionId) {
+          const active = await getMyActiveRdp();
+          sessionId = active?.session_id ?? null;
+        }
+        if (sessionId) {
+          await api.post(`/sessions/${sessionId}/heartbeat`, {});
+        }
+      } catch {
+        /* ignore transient heartbeat errors */
+      }
+    };
+    ping();
+    const hb = setInterval(ping, 5 * 60 * 1000);
+    return () => clearInterval(hb);
+  }, [loading, machine, rdpId]);
 
   // Open the remote desktop in a separate tab once.
   useEffect(() => {

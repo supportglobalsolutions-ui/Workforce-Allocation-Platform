@@ -3,7 +3,7 @@
 **Workforce Session Allocation Platform** — GlobalSolutions
 Progress of the whole platform, mapped to the Project Charter (v1.0).
 
-_Last updated: 2026-07-04_
+_Last updated: 2026-07-06_
 
 **Legend:** Done = built and working · Partial = foundations built, logic/wiring pending · Planned = not started
 
@@ -76,15 +76,24 @@ export (CSV/xlsx) are not implemented yet. Frontend pages exist as scaffolds.
 
 ---
 
-## 5. RDP machine state machine — Done (2 auto-transitions pending)
+## 5. RDP machine state machine — Done
 
-All 8 charter states exist in `RdpStatusEnum`: `offline`, `online_free`,
-`assigned`, `active`, `idle`, `unhealthy`, `admin_locked`, `maintenance`.
+All 8 charter states exist in `RdpStatusEnum` plus `maintenance` (ops/Uptime Kuma ninth state).
 
-- Written to PostgreSQL and mirrored to Firestore on every change. Done.
-- Health-driven transitions (offline / unhealthy / maintenance / recovery). Done.
-- Claim/release transitions (online_free ↔ assigned). Done.
-- Gap: automatic `assigned → active → idle` transitions from session heartbeats are not yet wired.
+| Transition | Status |
+|------------|--------|
+| PostgreSQL write + Firestore mirror on every change | Done |
+| Health-driven offline / unhealthy / maintenance / recovery (Uptime Kuma webhook) | Done |
+| Shift approval → `assigned` + `assigned_worker_id` | Done (`services/rdp_state.py`, `routers/shifts.py`) |
+| Claim `online_free` or `assigned` (shift window enforced) → `active` | Done (`routers/rdp.py`) |
+| Session heartbeat → `idle` after 10m, resume `idle` → `active` | Done (`services/rdp_lifecycle.py`, `routers/sessions.py`) |
+| Auto-release `idle` → `online_free` after 20m (`timed_out`) | Done (`services/rdp_lifecycle.py`) |
+| Admin lock / unlock / maintenance / force-release | Done (`routers/rdp.py`, admin UI wired) |
+| Centralized `transition_rdp_status` | Done (`services/rdp_state.py`) |
+| Claim board Firestore `onSnapshot` live overlay | Done |
+| Claim/release + Redis lock + repair | Done |
+
+Config: `RDP_HEARTBEAT_IDLE_SECONDS` (600), `RDP_IDLE_AUTO_RELEASE_SECONDS` (1200), `RDP_LIFECYCLE_INTERVAL_SECONDS` (60) in `core/config.py`.
 
 ---
 
@@ -141,8 +150,6 @@ Roles remain intentionally at 3: `user`, `admin`, `super_admin`.
 1. **Quality scoring engine** — compute composite scores from the 4 weighted inputs and populate `quality_composite_scores` (feeds the already-working leaderboard).
 2. **Payroll calculation + export** — derive hours from completed sessions, auto-generate exception flags, add the CSV/xlsx export endpoint.
 3. **Auto audit logging** — write `audit_log` entries inside claim/release, force-release, shift approval, role changes, and payroll actions.
-4. **Force-release with reason** — dedicated admin endpoint capturing a mandatory reason (enum already supports it).
-5. **RDP active/idle transitions** — drive `assigned → active → idle` from session heartbeats.
-6. **Leadership aggregation** — utilisation and financial reporting endpoints behind the existing leadership pages.
-7. **MCQ assessment endpoints** — authoring and worker-taking flows.
-8. **Backup plan** — document and script PostgreSQL backups (Phase 4).
+4. **Leadership aggregation** — utilisation and financial reporting endpoints behind the existing leadership pages.
+5. **MCQ assessment endpoints** — authoring and worker-taking flows.
+6. **Backup plan** — document and script PostgreSQL backups (Phase 4).

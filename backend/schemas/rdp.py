@@ -41,3 +41,7 @@ class RDPResourceResponse(RDPResourceBase):
     id:                   UUID
     last_health_check_at: Optional[datetime]
     status_changed_at:    datetime
+
+
+class RdpForceReleaseBody(SQLModel):
+    reason: str

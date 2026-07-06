@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     # prunes orphaned docs, so the mirror self-heals after transient failures.
     MIRROR_RECONCILE_INTERVAL_SECONDS: int = 300
 
+    # ── RDP session lifecycle ─────────────────────────────────
+    RDP_HEARTBEAT_IDLE_SECONDS: int = 600       # 10m without heartbeat → idle
+    RDP_IDLE_AUTO_RELEASE_SECONDS: int = 1200   # 20m idle → auto-release
+    RDP_LIFECYCLE_INTERVAL_SECONDS: int = 60    # background tick interval
+
     # ── Apache Guacamole ──────────────────────────────────────
     GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
     GUACAMOLE_USERNAME: str = "guacadmin"

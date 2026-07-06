@@ -3,10 +3,12 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
+import { collection, onSnapshot } from 'firebase/firestore';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
+import { db, COLLECTIONS } from '@/lib/firebase';
 import { claimRdp, getMyActiveRdp, type MyActiveRdp } from '@/lib/rdp';
 
 interface RDPResource {
@@ -15,13 +17,26 @@ interface RDPResource {
   country: string;
   client_group: string;
   status: string;
+  assigned_worker_id: string | null;
   guacamole_connection_id: string | null;
 }
+
+const STATE_LEGEND: { status: string; label: string; description: string }[] = [
+  { status: 'online_free', label: 'Online Free', description: 'Available, unassigned' },
+  { status: 'assigned', label: 'Assigned', description: 'Reserved for your upcoming shift' },
+  { status: 'active', label: 'Active', description: 'In live use by a worker' },
+  { status: 'idle', label: 'Idle', description: 'No heartbeat detected' },
+  { status: 'offline', label: 'Offline', description: 'Unreachable / powered off' },
+  { status: 'unhealthy', label: 'Unhealthy', description: 'Reachable but port failing' },
+  { status: 'admin_locked', label: 'Locked', description: 'Locked by leadership' },
+  { status: 'maintenance', label: 'Maintenance', description: 'Under maintenance' },
+];
 
 export default function RdpClaimBoard() {
   const router = useRouter();
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [myActive, setMyActive] = useState<MyActiveRdp | null>(null);
+  const [myWorkerId, setMyWorkerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -29,12 +44,14 @@ export default function RdpClaimBoard() {
 
   const loadMachines = useCallback(async () => {
     try {
-      const [data, active] = await Promise.all([
+      const [data, active, worker] = await Promise.all([
         api.get<RDPResource[]>('/rdp'),
         getMyActiveRdp().catch(() => null),
+        api.get<{ id: string }>('/workers/me').catch(() => null),
       ]);
       setMachines(data);
       setMyActive(active);
+      setMyWorkerId(worker?.id ?? null);
     } catch {
       setMachines([]);
     } finally {
@@ -44,7 +61,32 @@ export default function RdpClaimBoard() {
 
   useEffect(() => { loadMachines(); }, [loadMachines]);
 
-  // Refresh when any session ends in another tab (desktop or session page).
+  // Firestore realtime status overlay (PostgreSQL remains source of truth).
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, COLLECTIONS.RDP_STATUS), (snap) => {
+      const live: Record<string, { status: string; worker_id: string | null }> = {};
+      snap.forEach((doc) => {
+        const data = doc.data();
+        live[doc.id] = {
+          status: String(data.status ?? ''),
+          worker_id: data.worker_id ? String(data.worker_id) : null,
+        };
+      });
+      setMachines((prev) =>
+        prev.map((m) => {
+          const row = live[m.id];
+          if (!row?.status) return m;
+          return {
+            ...m,
+            status: row.status,
+            assigned_worker_id: row.worker_id ?? m.assigned_worker_id,
+          };
+        }),
+      );
+    });
+    return () => unsub();
+  }, []);
+
   useEffect(() => {
     let ch: BroadcastChannel | null = null;
     try {
@@ -79,9 +121,15 @@ export default function RdpClaimBoard() {
       }
       if (!navigated) setError(msg);
     } finally {
-      // Keep "Claiming…" on the button while navigating — only reset on failure
       if (!navigated) setClaiming(null);
     }
+  };
+
+  const canClaim = (m: RDPResource) => {
+    if (myActive) return false;
+    if (m.status === 'online_free') return true;
+    if (m.status === 'assigned' && myWorkerId && m.assigned_worker_id === myWorkerId) return true;
+    return false;
   };
 
   return (
@@ -114,6 +162,18 @@ export default function RdpClaimBoard() {
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
       {info && <p className="text-emerald-accent text-sm mb-4">{info}</p>}
 
+      <div className="glass-panel p-4 mb-6">
+        <p className="text-xs font-bold uppercase tracking-widest text-theme-muted mb-3">Machine states</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
+          {STATE_LEGEND.map((s) => (
+            <div key={s.status} className="flex items-start gap-2 text-xs">
+              <StatusBadge status={s.status} label={s.label} />
+              <span className="text-theme-muted leading-snug">{s.description}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {[1, 2, 3].map((n) => (
@@ -129,6 +189,7 @@ export default function RdpClaimBoard() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {machines.map((m) => {
             const isMine = myActive?.rdp_resource_id === m.id;
+            const claimable = canClaim(m);
             return (
               <div key={m.id} className="glass-panel p-5">
                 <div className="flex items-start justify-between mb-3">
@@ -149,20 +210,19 @@ export default function RdpClaimBoard() {
                   >
                     Open session
                   </Link>
-                ) : m.status === 'online_free' ? (
+                ) : claimable ? (
                   <button
                     onClick={() => handleClaim(m.id)}
-                    disabled={claiming === m.id || !!myActive}
+                    disabled={claiming === m.id}
                     className="btn-primary w-full text-sm disabled:opacity-50"
-                    title={myActive ? 'End your current session before claiming another machine' : undefined}
                   >
-                    {claiming === m.id ? 'Claiming…' : 'Claim'}
+                    {claiming === m.id ? 'Claiming…' : m.status === 'assigned' ? 'Claim shift machine' : 'Claim'}
                   </button>
-                ) : m.status === 'assigned' || m.status === 'active' ? (
-                  <p className="text-xs text-center text-theme-muted">In use by another worker</p>
+                ) : m.status === 'assigned' || m.status === 'active' || m.status === 'idle' ? (
+                  <p className="text-xs text-center text-theme-muted">In use or reserved</p>
                 ) : (
                   <p className="text-xs text-center text-theme-muted capitalize">
-                    {m.status.replace('_', ' ')}
+                    {m.status.replace(/_/g, ' ')}
                   </p>
                 )}
               </div>

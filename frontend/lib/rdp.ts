@@ -44,6 +44,18 @@ export const claimRdp = (rdpId: string) =>
 export const endRdpConnection = (rdpId: string) =>
   api.post<EndConnectionResult>(`/rdp/${rdpId}/end-connection`, {});
 
+export const lockRdp = (rdpId: string) =>
+  api.post<{ rdp_resource_id: string; status: string }>(`/rdp/${rdpId}/lock`, {});
+
+export const unlockRdp = (rdpId: string) =>
+  api.post<{ rdp_resource_id: string; status: string }>(`/rdp/${rdpId}/unlock`, {});
+
+export const maintenanceRdp = (rdpId: string) =>
+  api.post<{ rdp_resource_id: string; status: string }>(`/rdp/${rdpId}/maintenance`, {});
+
+export const forceReleaseRdp = (rdpId: string, reason: string) =>
+  api.post<EndConnectionResult & { reason: string }>(`/rdp/${rdpId}/force-release`, { reason });
+
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
 

@@ -1,3 +1,5 @@
+'use client';
+
 import AppShell from '@/components/navigation/AppShell';
 
 export default function WorkerShellLayout({ children }: { children: React.ReactNode }) {

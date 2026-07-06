@@ -9,9 +9,12 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import require_admin, require_user
 from core.redis import get_redis
+from models.enums import RdpStatusEnum
+from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from schemas.session import SessionCreate, SessionResponse, SessionUpdate
-from services.firebase_mirror import mirror_active_session_by_id
+from services.firebase_mirror import mirror_active_session_by_id, mirror_rdp_status_by_id
+from services.rdp_state import resume_active_from_heartbeat
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -132,6 +135,11 @@ def heartbeat_session(
     fields["last_heartbeat_at"] = now.isoformat()
     session.type_specific_fields = fields
 
+    rdp_was_idle = False
+    if session.rdp_resource_id and session.end_time is None:
+        rdp = db.get(RDPResource, session.rdp_resource_id)
+        rdp_was_idle = rdp is not None and rdp.status == RdpStatusEnum.idle
+
     db.add(session)
     db.commit()
     db.refresh(session)
@@ -139,4 +147,7 @@ def heartbeat_session(
     redis_client.set(f"heartbeat:session:{session_id}", now.isoformat(), ex=3600)
     if session.end_time is None:
         background_tasks.add_task(mirror_active_session_by_id, session.id)
+        if rdp_was_idle and session.rdp_resource_id:
+            resume_active_from_heartbeat(db, session.rdp_resource_id)
+            background_tasks.add_task(mirror_rdp_status_by_id, session.rdp_resource_id)
     return session
