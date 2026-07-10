@@ -34,6 +34,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <Globe2 size={18} />, label: 'Partners', href: '/admin/partners' },
     { icon: <Monitor size={18} />, label: 'RDP Resources', href: '/admin/rdp' },
     { icon: <Activity size={18} />, label: 'Live Sessions', href: '/admin/live-sessions' },
+    { icon: <History size={18} />, label: 'Sessions', href: '/admin/sessions' },
     { icon: <ClipboardList size={18} />, label: 'Quality', href: '/admin/quality' },
     { icon: <BookOpen size={18} />, label: 'Assessments', href: '/admin/assessments' },
     { icon: <DollarSign size={18} />, label: 'Payroll', href: '/admin/payroll' },

@@ -31,15 +31,24 @@ def _scoped_stmt(current_user: dict, db: Session):
 @router.get("", response_model=list[SessionResponse])
 def list_sessions(
     session_type: Optional[str] = Query(None, alias="type"),
-    limit: int = Query(50, ge=1, le=200),
+    worker_id: Optional[UUID] = Query(None),
+    limit: int = Query(50, ge=1, le=1000),
+    include_images: bool = Query(True),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
     stmt = _scoped_stmt(current_user, db)
     if session_type:
         stmt = stmt.where(WorkSession.session_type == session_type)
+    if worker_id and current_user.get("role") in {"admin", "super_admin"}:
+        stmt = stmt.where(WorkSession.worker_id == worker_id)
     stmt = stmt.order_by(WorkSession.start_time.desc()).limit(limit)
-    return db.exec(stmt).all()
+    sessions = db.exec(stmt).all()
+    if not include_images:
+        for s in sessions:
+            s.start_image_url = None
+            s.end_image_url = None
+    return sessions
 
 
 @router.get("/{session_id}", response_model=SessionResponse)

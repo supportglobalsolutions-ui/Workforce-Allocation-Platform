@@ -19,9 +19,10 @@ interface Props {
   session: SessionDetail | null;
   onClose: () => void;
   onImageUploaded: (sessionId: string, type: 'start' | 'end', url: string) => void;
+  workerLabel?: string;
 }
 
-export default function SessionDetailPanel({ session, onClose, onImageUploaded }: Props) {
+export default function SessionDetailPanel({ session, onClose, onImageUploaded, workerLabel }: Props) {
   if (!session) return null;
 
   return (
@@ -45,6 +46,9 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded }
         <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100">
           <div>
             <p className="text-[15px] font-bold text-gray-900">{session.machine}</p>
+            {workerLabel && (
+              <p className="text-xs font-medium text-emerald-600 mt-0.5">{workerLabel}</p>
+            )}
             <p className="text-xs text-gray-400 mt-0.5">{session.date}</p>
           </div>
           <button

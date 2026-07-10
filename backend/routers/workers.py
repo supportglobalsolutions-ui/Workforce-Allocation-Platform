@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -40,7 +41,16 @@ def list_workers(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    return db.exec(select(Worker).order_by(Worker.display_name)).all()
+    workers = db.exec(
+        select(Worker).options(selectinload(Worker.admin_user)).order_by(Worker.display_name)
+    ).all()
+    result = []
+    for w in workers:
+        resp = WorkerResponse.model_validate(w)
+        if w.admin_user:
+            resp = resp.model_copy(update={"email": w.admin_user.email})
+        result.append(resp)
+    return result
 
 
 @router.get("/{worker_id}", response_model=WorkerResponse)

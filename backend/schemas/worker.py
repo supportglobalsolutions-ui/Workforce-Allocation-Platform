@@ -39,3 +39,4 @@ class WorkerResponse(WorkerBase):
     id:         UUID
     created_at: datetime
     updated_at: datetime
+    email:      Optional[str] = None
