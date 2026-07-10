@@ -9,14 +9,15 @@ from sqlmodel import Field, Relationship, SQLModel
 from .enums import AccountStatusEnum, AccountStatusType, AdminRoleEnum, AdminRoleType
 
 if TYPE_CHECKING:
+    from .audit_log import AuditLog
     from .mcq import McqAssessmentSet
+    from .notification import Notification
     from .payroll import PayrollPeriod
     from .post_mvp import KnowledgeBaseArticle
     from .quality import QualityIndicatorRating
     from .rate_table import RateTableEntry
     from .shift import Shift
     from .worker import Worker
-    from .audit_log import AuditLog
 
 
 class AdminUser(SQLModel, table=True):
@@ -68,3 +69,4 @@ class AdminUser(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[AuditLog.actor_id]"},
     )
     kb_articles: list["KnowledgeBaseArticle"] = Relationship(back_populates="creator")
+    sent_notifications: list["Notification"] = Relationship(back_populates="sender")

@@ -58,9 +58,14 @@ const config: Config = {
           '0%, 80%, 100%': { transform: 'scale(0.6)', opacity: '0.4' },
           '40%': { transform: 'scale(1)', opacity: '1' },
         },
+        indeterminate: {
+          '0%': { transform: 'translateX(-100%)' },
+          '100%': { transform: 'translateX(350%)' },
+        },
       },
       animation: {
         'dot-bounce': 'dot-bounce 1.2s infinite ease-in-out both',
+        indeterminate: 'indeterminate 1.4s ease-in-out infinite',
       },
     },
   },

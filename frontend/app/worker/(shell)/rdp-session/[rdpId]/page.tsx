@@ -7,6 +7,7 @@ import { ExternalLink, Power } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import SessionImageUpload from '@/components/rdp/SessionImageUpload';
 import { api } from '@/lib/api';
 import { endRdpConnection, getMyActiveRdp, openRdpDesktopTab } from '@/lib/rdp';
 
@@ -18,17 +19,20 @@ interface RDPResource {
   status: string;
 }
 
+type EndStep = 'idle' | 'upload-end-image' | 'confirm';
+
 export default function RdpSessionPage({ params }: { params: { rdpId: string } }) {
   const router = useRouter();
   const rdpId = params.rdpId;
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
   const [ending, setEnding] = useState(false);
-  const [confirmEnd, setConfirmEnd] = useState(false);
+  const [endStep, setEndStep] = useState<EndStep>('idle');
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [startedAt] = useState(() => Date.now());
   const [desktopOpened, setDesktopOpened] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
   const desktopTabRef = useRef<Window | null>(null);
 
   useEffect(() => {
@@ -37,6 +41,14 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load machine'))
       .finally(() => setLoading(false));
   }, [rdpId]);
+
+  // Fetch session ID once on load so image uploads have a target.
+  useEffect(() => {
+    if (loading || !machine) return;
+    getMyActiveRdp()
+      .then((active) => { if (active?.session_id) setSessionId(active.session_id); })
+      .catch(() => { /* non-critical */ });
+  }, [loading, machine]);
 
   useEffect(() => {
     const t = setInterval(() => {
@@ -48,16 +60,10 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   // Keep session heartbeat alive for idle / auto-release lifecycle (every 5 min).
   useEffect(() => {
     if (loading || !machine) return;
-    let sessionId: string | null = null;
     const ping = async () => {
       try {
-        if (!sessionId) {
-          const active = await getMyActiveRdp();
-          sessionId = active?.session_id ?? null;
-        }
-        if (sessionId) {
-          await api.post(`/sessions/${sessionId}/heartbeat`, {});
-        }
+        const sid = sessionId ?? (await getMyActiveRdp())?.session_id ?? null;
+        if (sid) await api.post(`/sessions/${sid}/heartbeat`, {});
       } catch {
         /* ignore transient heartbeat errors */
       }
@@ -65,7 +71,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     ping();
     const hb = setInterval(ping, 5 * 60 * 1000);
     return () => clearInterval(hb);
-  }, [loading, machine, rdpId]);
+  }, [loading, machine, sessionId]);
 
   // Open the remote desktop in a separate tab once.
   useEffect(() => {
@@ -159,6 +165,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
 
+      {/* ── Desktop tab panel ── */}
       <div className="glass-panel p-6 mb-6 space-y-4">
         <p className="text-sm text-white">
           Your remote desktop opens in a <strong>separate tab</strong> so you get the full screen.
@@ -177,8 +184,62 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         </p>
       </div>
 
-      {confirmEnd ? (
-        /* ── Confirmation card ── */
+      {/* ── Start image upload ── */}
+      {sessionId && (
+        <div className="glass-panel p-5 mb-6">
+          <p className="text-xs text-theme-muted uppercase tracking-wide mb-3">Session start</p>
+          <SessionImageUpload
+            sessionId={sessionId}
+            imageType="start"
+            label="Upload a screenshot taken at session start"
+          />
+        </div>
+      )}
+
+      {/* ── End connection flow ── */}
+      {endStep === 'upload-end-image' && (
+        <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-white/10 mb-4">
+          <div className="h-[3px] bg-gradient-to-r from-blue-800 via-blue-500 to-blue-800" />
+          <div className="bg-[#080d14] px-6 pt-5 pb-6 space-y-4">
+            <p className="text-[15px] font-bold text-white">Upload end session image</p>
+            <p className="text-sm text-white/55">
+              Upload a screenshot taken just before you disconnected. You can skip this step.
+            </p>
+            {sessionId && (
+              <SessionImageUpload
+                sessionId={sessionId}
+                imageType="end"
+                label="End session screenshot"
+              />
+            )}
+            <div className="flex gap-2.5 pt-1">
+              <button
+                type="button"
+                onClick={() => setEndStep('idle')}
+                className="px-4 py-2.5 text-sm rounded-xl font-medium text-white/60 bg-white/6 hover:bg-white/10 hover:text-white border border-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={() => setEndStep('confirm')}
+                className="px-4 py-2.5 text-sm rounded-xl font-medium text-white/70 bg-white/8 hover:bg-white/12 border border-white/10 transition-colors"
+              >
+                Skip
+              </button>
+              <button
+                type="button"
+                onClick={() => setEndStep('confirm')}
+                className="px-4 py-2.5 text-sm rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-900/60 transition-colors"
+              >
+                Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {endStep === 'confirm' ? (
         <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-red-900/40">
           <div className="h-[3px] bg-gradient-to-r from-red-800 via-red-500 to-red-800" />
           <div className="bg-[#0f0808] px-6 pt-5 pb-6 space-y-5">
@@ -197,7 +258,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
             <div className="flex gap-2.5">
               <button
                 type="button"
-                onClick={() => setConfirmEnd(false)}
+                onClick={() => setEndStep('idle')}
                 className="flex-1 px-4 py-2.5 text-sm rounded-xl font-medium text-white/60 bg-white/6 hover:bg-white/10 hover:text-white border border-white/10 transition-colors"
               >
                 Cancel
@@ -213,20 +274,20 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
             </div>
           </div>
         </div>
-      ) : (
+      ) : endStep === 'idle' ? (
         <div className="flex flex-wrap items-center justify-between gap-3">
           <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
             Claim board
           </Link>
           <button
             type="button"
-            onClick={() => setConfirmEnd(true)}
+            onClick={() => setEndStep('upload-end-image')}
             className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30"
           >
             End Connection
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

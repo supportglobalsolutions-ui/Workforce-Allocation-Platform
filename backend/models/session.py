@@ -78,6 +78,8 @@ class Session(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True),
     )
     admin_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    start_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    end_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     type_specific_fields: Optional[dict[str, Any]] = Field(
         default=None,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'")),

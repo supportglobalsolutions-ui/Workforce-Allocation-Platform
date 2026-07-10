@@ -1,12 +1,13 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download } from 'lucide-react';
+import { Download, Eye } from 'lucide-react';
 
 import DataTable from '@/components/platform/DataTable';
 import FilterBar from '@/components/platform/FilterBar';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
 
 interface WorkSession {
@@ -16,6 +17,8 @@ interface WorkSession {
   duration_minutes: number | null;
   close_status: string | null;
   rdp_resource_id: string | null;
+  start_image_url: string | null;
+  end_image_url: string | null;
 }
 
 interface RDPResource {
@@ -74,6 +77,7 @@ export default function SessionHistoryPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState('');
+  const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     Promise.all([
@@ -118,6 +122,35 @@ export default function SessionHistoryPage() {
     if (label === 'Date Range') setDateRangeFilter(value);
   };
 
+  const handleExportCsv = () => {
+    const headers = ['Date & Time', 'Machine / Platform', 'Duration', 'Type', 'Status'];
+    const csvRows = [
+      headers.join(','),
+      ...rows.map((r) =>
+        [r.date, r.machine, r.duration, r.type, r.status]
+          .map((v) => `"${String(v).replace(/"/g, '""')}"`)
+          .join(','),
+      ),
+    ];
+    const blob = new Blob([csvRows.join('\n')], { type: 'text/csv' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `session-history-${new Date().toISOString().slice(0, 10)}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const handleImageUploaded = (sessionId: string, type: 'start' | 'end', url: string) => {
+    setSessions((prev) =>
+      prev.map((s) =>
+        s.id === sessionId
+          ? { ...s, [`${type}_image_url`]: url }
+          : s,
+      ),
+    );
+  };
+
   const rows = filteredSessions.map((s) => ({
     id: s.id,
     date: new Date(s.start_time).toLocaleString(),
@@ -125,7 +158,13 @@ export default function SessionHistoryPage() {
     duration: formatDuration(s.duration_minutes),
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
     status: s.close_status ?? 'pending',
+    start_image_url: s.start_image_url,
+    end_image_url: s.end_image_url,
   }));
+
+  const selectedSession = selectedId
+    ? rows.find((r) => r.id === selectedId) ?? null
+    : null;
 
   return (
     <div>
@@ -133,7 +172,7 @@ export default function SessionHistoryPage() {
         title="Session History"
         description="Complete log of your sessions across GS RDP, partner multilog, and third-party platforms."
         actions={
-          <button className="btn-secondary flex items-center gap-2">
+          <button className="btn-secondary flex items-center gap-2" onClick={handleExportCsv}>
             <Download size={16} />
             Export CSV
           </button>
@@ -165,11 +204,32 @@ export default function SessionHistoryPage() {
               header: 'Status',
               render: (r) => <StatusBadge status={r.status as string} />,
             },
+            {
+              key: 'id',
+              header: '',
+              render: (r) => (
+                <button
+                  type="button"
+                  onClick={() => setSelectedId(r.id as string)}
+                  className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading transition-colors"
+                  style={{ background: 'var(--surface-container)', border: '1px solid var(--glass-border)' }}
+                  title="View session details & images"
+                >
+                  <Eye size={14} />
+                </button>
+              ),
+            },
           ]}
           data={rows as Record<string, unknown>[]}
           emptyMessage="No sessions found."
         />
       )}
+
+      <SessionDetailPanel
+        session={selectedSession}
+        onClose={() => setSelectedId(null)}
+        onImageUploaded={handleImageUploaded}
+      />
     </div>
   );
 }

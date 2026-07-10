@@ -7,18 +7,11 @@ import { auth } from '@/lib/firebase';
 
 const BASE = '/api';
 
-async function getToken(): Promise<string | null> {
-  return auth.currentUser?.getIdToken() ?? null;
+async function getToken(forceRefresh = false): Promise<string | null> {
+  await auth.authStateReady();
+  return auth.currentUser?.getIdToken(forceRefresh) ?? null;
 }
 
-async function headers(extra?: HeadersInit): Promise<HeadersInit> {
-  const token = await getToken();
-  return {
-    'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    ...extra,
-  };
-}
 
 async function parseErrorMessage(res: Response): Promise<string> {
   const text = await res.text().catch(() => '');
@@ -47,17 +40,36 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  let res: Response;
-  try {
-    res = await fetch(`${BASE}${path}`, {
+  const fetchWith = async (forceRefresh: boolean) => {
+    const token = await getToken(forceRefresh);
+    return fetch(`${BASE}${path}`, {
       method,
-      headers: await headers(),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
     });
+  };
+
+  let res: Response;
+  try {
+    res = await fetchWith(false);
   } catch {
     throw new Error(
       'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000',
     );
+  }
+
+  // On 401, force-refresh the token and retry once.
+  if (res.status === 401) {
+    try {
+      res = await fetchWith(true);
+    } catch {
+      throw new Error(
+        'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000',
+      );
+    }
   }
 
   if (!res.ok) {

@@ -122,6 +122,8 @@ def mirror_active_session(db: Session, session: WorkSession) -> None:
             "rdp_id": str(session.rdp_resource_id) if session.rdp_resource_id else None,
             "started_at": _iso(session.start_time),
             "heartbeat_at": heartbeat_at,
+            "start_image_url": session.start_image_url,
+            "end_image_url": session.end_image_url,
         }
         client.collection(ACTIVE_SESSIONS).document(str(session.id)).set(payload, merge=True)
 
@@ -329,6 +331,8 @@ def reconcile_active_sessions(db: Session) -> None:
                 "rdp_id": str(session.rdp_resource_id) if session.rdp_resource_id else None,
                 "started_at": _iso(session.start_time),
                 "heartbeat_at": heartbeat_at,
+                "start_image_url": session.start_image_url,
+                "end_image_url": session.end_image_url,
             }
             client.collection(ACTIVE_SESSIONS).document(str(session.id)).set(payload, merge=True)
 

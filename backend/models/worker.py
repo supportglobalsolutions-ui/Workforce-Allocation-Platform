@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from .admin_users import AdminUser
     from .allocation import Allocation
     from .mcq import McqResult
+    from .notification import Notification
     from .partner import PartnerEntity
     from .payroll import PayrollLineItem
     from .post_mvp import SessionTicket
@@ -43,6 +44,7 @@ class Worker(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=True),
     )
+    username: Optional[str] = Field(default=None, sa_column=Column(String(64), unique=True, nullable=True))
     display_name: str = Field(sa_column=Column(String(255), nullable=False))
     country: str = Field(sa_column=Column(String(64), nullable=False))
     pay_tier: str = Field(sa_column=Column(String(64), nullable=False))
@@ -78,3 +80,4 @@ class Worker(SQLModel, table=True):
     composite_scores: list["QualityCompositeScore"] = Relationship(back_populates="worker")
     mcq_results: list["McqResult"] = Relationship(back_populates="worker")
     session_tickets: list["SessionTicket"] = Relationship(back_populates="worker")
+    notifications: list["Notification"] = Relationship(back_populates="target_worker")

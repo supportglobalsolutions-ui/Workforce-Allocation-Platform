@@ -11,6 +11,7 @@ from models.enums import WorkerStatusEnum, WorkerTypeEnum
 class WorkerBase(SQLModel):
     worker_type:       WorkerTypeEnum
     partner_entity_id: Optional[UUID] = None
+    username:          Optional[str]  = None
     display_name:      str
     country:           str
     pay_tier:          str
@@ -24,6 +25,7 @@ class WorkerCreate(WorkerBase):
 
 
 class WorkerUpdate(SQLModel):
+    username:          Optional[str]             = None
     display_name:      Optional[str]             = None
     country:           Optional[str]             = None
     pay_tier:          Optional[str]             = None

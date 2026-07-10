@@ -87,13 +87,15 @@ def require_firebase() -> None:
 
 def verify_firebase_token(id_token: str) -> dict:
     try:
-        return auth.verify_id_token(id_token, check_revoked=True)
+        return auth.verify_id_token(id_token, check_revoked=False)
     except auth.RevokedIdTokenError:
         raise ValueError("Token has been revoked")
     except auth.ExpiredIdTokenError:
-        raise ValueError("Token has expired")
-    except Exception:
-        raise ValueError("Invalid token")
+        raise ValueError("Token has expired — please refresh the page")
+    except auth.InvalidIdTokenError as exc:
+        raise ValueError(f"Token rejected by Firebase: {exc}")
+    except Exception as exc:
+        raise ValueError(f"Token verification failed: {exc}")
 
 
 def set_user_role(uid: str, role: str) -> None:

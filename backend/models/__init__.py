@@ -22,3 +22,4 @@ from .quality      import QualityIndicator, QualityIndicatorRating, QualityCompo
 from .mcq          import McqAssessmentSet, McqQuestion, McqResult, McqResultAnswer           # noqa: F401
 from .audit_log    import AuditLog                                                            # noqa: F401
 from .post_mvp     import SessionTicket, KnowledgeBaseArticle                                 # noqa: F401
+from .notification import Notification                                                         # noqa: F401
