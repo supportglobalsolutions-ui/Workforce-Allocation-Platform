@@ -328,8 +328,7 @@ function AccountDetailModal({ user, actorRole, onClose, onApprove, onReject, onB
   const canBan = actorRole === 'super_admin' || user.role !== 'super_admin';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.88)', backdropFilter: 'blur(24px)', WebkitBackdropFilter: 'blur(24px)' }}
+    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
       <div className="w-full max-w-md bg-white rounded-2xl overflow-hidden shadow-2xl">
         <div className="h-1 bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-400" />

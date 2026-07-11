@@ -66,8 +66,7 @@ function WorkerMetricsPanel({ entry, onClose }: { entry: RankedWorker; onClose: 
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.85)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
+      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-sm overflow-hidden">

@@ -34,12 +34,13 @@ html.dark {
   --glow-gold: rgba(212, 175, 55, 0.04);
   --shadow-color: rgba(2, 29, 23, 0.4);
   --toggle-track: rgba(255, 255, 255, 0.08);
+  --modal-overlay: rgba(0, 0, 0, 0.88);
 }
 
-/* ── Light theme — clean white surfaces, green & gold accents only ── */
+/* ── Light theme — full white surfaces, green & gold accents only ── */
 html.light {
   color-scheme: light;
-  --background: #F7F9F8;
+  --background: #FFFFFF;
   --foreground: #1C2B26;
   --primary-dark: #032F25;
   --secondary-green: #0A4D3A;
@@ -47,24 +48,25 @@ html.light {
   --gold-accent: #D4AF37;
   --card-bg: #FFFFFF;
   --surface-lowest: #FFFFFF;
-  --surface-low: #F7F9F8;
+  --surface-low: #F5F7F6;
   --surface-container: #FFFFFF;
-  --surface-high: #F0F2F1;
-  --surface-highest: #E8EBEA;
+  --surface-high: #EEF1EF;
+  --surface-highest: #E4E8E6;
   --on-surface: #1C2B26;
   --on-surface-variant: #5F6F69;
   --text-heading: #0F1F1A;
-  --glass-bg: rgba(255, 255, 255, 0.96);
+  --glass-bg: rgba(255, 255, 255, 0.98);
   --glass-border: rgba(15, 31, 26, 0.08);
-  --glass-hover: rgba(248, 250, 249, 1);
+  --glass-hover: rgba(245, 247, 246, 1);
   --input-bg: #FFFFFF;
   --input-border: rgba(15, 31, 26, 0.12);
-  --scrollbar-track: #F0F2F1;
+  --scrollbar-track: #EEF1EF;
   --scrollbar-thumb: #C5CCC9;
   --glow-emerald: rgba(10, 122, 85, 0.02);
   --glow-gold: rgba(184, 146, 46, 0.02);
-  --shadow-color: rgba(0, 0, 0, 0.06);
+  --shadow-color: rgba(0, 0, 0, 0.05);
   --toggle-track: rgba(0, 0, 0, 0.06);
+  --modal-overlay: rgba(15, 31, 26, 0.3);
 }
 
 @layer base {
@@ -106,6 +108,12 @@ html.light {
 }
 
 @layer components {
+  .modal-overlay {
+    background: var(--modal-overlay);
+    backdrop-filter: blur(24px);
+    -webkit-backdrop-filter: blur(24px);
+  }
+
   .glass-panel {
     background: var(--glass-bg);
     backdrop-filter: blur(16px);

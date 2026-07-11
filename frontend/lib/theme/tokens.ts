@@ -33,7 +33,7 @@ export const themeTokens = {
   },
   light: {
     /* Clean white light theme — green & gold as accents only, not background wash */
-    background: '#F7F9F8',
+    background: '#FFFFFF',
     foreground: '#1C2B26',
     primaryDark: '#032F25',
     secondaryGreen: '#0A4D3A',
@@ -41,23 +41,23 @@ export const themeTokens = {
     goldAccent: '#D4AF37',
     cardBg: '#FFFFFF',
     surfaceLowest: '#FFFFFF',
-    surfaceLow: '#F7F9F8',
+    surfaceLow: '#F5F7F6',
     surfaceContainer: '#FFFFFF',
-    surfaceHigh: '#F0F2F1',
-    surfaceHighest: '#E8EBEA',
+    surfaceHigh: '#EEF1EF',
+    surfaceHighest: '#E4E8E6',
     onSurface: '#1C2B26',
     onSurfaceVariant: '#5F6F69',
     textHeading: '#0F1F1A',
-    glassBg: 'rgba(255, 255, 255, 0.96)',
+    glassBg: 'rgba(255, 255, 255, 0.98)',
     glassBorder: 'rgba(15, 31, 26, 0.08)',
-    glassHover: 'rgba(248, 250, 249, 1)',
+    glassHover: 'rgba(245, 247, 246, 1)',
     inputBg: '#FFFFFF',
     inputBorder: 'rgba(15, 31, 26, 0.12)',
-    scrollbarTrack: '#F0F2F1',
+    scrollbarTrack: '#EEF1EF',
     scrollbarThumb: '#C5CCC9',
     glowEmerald: 'rgba(10, 122, 85, 0.02)',
     glowGold: 'rgba(184, 146, 46, 0.02)',
-    shadowColor: 'rgba(0, 0, 0, 0.06)',
+    shadowColor: 'rgba(0, 0, 0, 0.05)',
   },
 } as const;
 
@@ -94,6 +94,8 @@ export function applyThemeToDocument(mode: ThemeMode) {
     '--glow-emerald': t.glowEmerald,
     '--glow-gold': t.glowGold,
     '--shadow-color': t.shadowColor,
+    '--modal-overlay': mode === 'dark' ? 'rgba(0, 0, 0, 0.88)' : 'rgba(15, 31, 26, 0.3)',
+    '--toggle-track': mode === 'dark' ? 'rgba(255, 255, 255, 0.08)' : 'rgba(0, 0, 0, 0.06)',
   };
 
   Object.entries(vars).forEach(([key, value]) => root.style.setProperty(key, value));
