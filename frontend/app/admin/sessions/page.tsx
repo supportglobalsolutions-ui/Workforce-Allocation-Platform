@@ -1,14 +1,13 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Download, Eye, Search, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Calendar, ChevronDown, Download, Eye, Users, X } from 'lucide-react';
 
 import DataTable from '@/components/platform/DataTable';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
-import { ManagedUser, apiListUsers } from '@/lib/auth/firebase-auth';
 
 interface WorkSession {
   id: string;
@@ -26,7 +25,7 @@ interface WorkSession {
 interface Worker {
   id: string;
   display_name: string;
-  admin_user_id: string | null;
+  username: string | null;
   email: string | null;
 }
 
@@ -100,6 +99,157 @@ function passesDateFilter(
   return true;
 }
 
+// ── Worker combobox ────────────────────────────────────────────────────────────
+
+function workerPrimary(w: Worker): string {
+  return w.username ? `@${w.username}` : w.display_name;
+}
+function workerSecondary(w: Worker): string {
+  return w.email ?? '';
+}
+
+function WorkerCombobox({
+  workers,
+  selectedId,
+  onSelect,
+}: {
+  workers: Worker[];
+  selectedId: string | null;
+  onSelect: (id: string | null) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const selected = selectedId ? workers.find((w) => w.id === selectedId) ?? null : null;
+
+  const filtered = useMemo(() => {
+    const q = query.toLowerCase();
+    if (!q) return workers;
+    return workers.filter(
+      (w) =>
+        (w.username ?? '').toLowerCase().includes(q) ||
+        w.display_name.toLowerCase().includes(q) ||
+        (w.email ?? '').toLowerCase().includes(q),
+    );
+  }, [workers, query]);
+
+  // close on outside click
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener('mousedown', onDown);
+    return () => document.removeEventListener('mousedown', onDown);
+  }, []);
+
+  function openCombo() {
+    setOpen(true);
+    setQuery('');
+    setTimeout(() => inputRef.current?.focus(), 0);
+  }
+
+  function pick(id: string) {
+    onSelect(id);
+    setOpen(false);
+    setQuery('');
+  }
+
+  function clear(e: React.MouseEvent) {
+    e.stopPropagation();
+    onSelect(null);
+    setQuery('');
+    setOpen(false);
+  }
+
+  return (
+    <div ref={containerRef} className="relative">
+      {/* Trigger */}
+      <button
+        type="button"
+        onClick={selected ? undefined : openCombo}
+        className={`flex items-center gap-2 px-3 py-2.5 rounded-xl text-sm transition-colors border min-w-[220px] text-left ${
+          selected
+            ? 'bg-emerald-accent/10 border-emerald-accent/40 text-white'
+            : 'bg-brand-surface-container/60 border-white/10 text-theme-muted hover:border-white/20 hover:text-white'
+        }`}
+      >
+        <Users size={14} className={selected ? 'text-emerald-accent shrink-0' : 'shrink-0'} />
+        <span className="flex-1 truncate font-medium">
+          {selected ? workerPrimary(selected) : 'All workers'}
+        </span>
+        {selected ? (
+          <X size={13} className="shrink-0 text-theme-muted hover:text-white" onClick={clear} />
+        ) : (
+          <ChevronDown size={13} className="shrink-0" />
+        )}
+      </button>
+
+      {/* Dropdown */}
+      {open && (
+        <div className="absolute top-full mt-1.5 left-0 z-40 w-80 rounded-xl border border-white/10 shadow-2xl overflow-hidden"
+          style={{ background: 'var(--surface-elevated, #1a1f2e)' }}
+        >
+          {/* Search input inside dropdown */}
+          <div className="p-2 border-b border-white/[0.06]">
+            <input
+              ref={inputRef}
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search by username, name, or email…"
+              className="w-full px-3 py-2 bg-white/[0.06] border border-white/10 rounded-lg text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors"
+            />
+          </div>
+
+          {/* Options */}
+          <div className="max-h-60 overflow-y-auto py-1">
+            {/* "All workers" option */}
+            <button
+              type="button"
+              onClick={() => { onSelect(null); setOpen(false); setQuery(''); }}
+              className={`w-full text-left px-4 py-2.5 text-sm transition-colors hover:bg-white/[0.05] ${
+                !selectedId ? 'text-emerald-400' : 'text-theme-muted'
+              }`}
+            >
+              All workers
+            </button>
+
+            <div className="border-t border-white/[0.06] my-1" />
+
+            {filtered.length === 0 ? (
+              <p className="px-4 py-3 text-xs text-theme-muted">No workers found</p>
+            ) : (
+              filtered.map((w) => (
+                <button
+                  key={w.id}
+                  type="button"
+                  onClick={() => pick(w.id)}
+                  className={`w-full text-left px-4 py-2.5 transition-colors hover:bg-white/[0.05] ${
+                    selectedId === w.id ? 'bg-emerald-accent/10' : ''
+                  }`}
+                >
+                  <p className={`text-sm font-medium ${selectedId === w.id ? 'text-emerald-400' : 'text-white'}`}>
+                    {workerPrimary(w)}
+                  </p>
+                  {workerSecondary(w) && (
+                    <p className="text-xs text-theme-muted">{workerSecondary(w)}</p>
+                  )}
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Page ───────────────────────────────────────────────────────────────────────
+
 export default function AdminSessionsPage() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -107,7 +257,7 @@ export default function AdminSessionsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const [emailSearch, setEmailSearch] = useState('');
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
   const [dateRange, setDateRange] = useState<DateRange>('');
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
@@ -136,7 +286,6 @@ export default function AdminSessionsPage() {
     () => Object.fromEntries(workers.map((w) => [w.id, w])),
     [workers],
   );
-
   const rdpMap = useMemo(
     () => Object.fromEntries(rdpResources.map((r) => [r.id, r])),
     [rdpResources],
@@ -145,7 +294,6 @@ export default function AdminSessionsPage() {
   const allRows = useMemo<SessionRow[]>(() => {
     return sessions.map((s) => {
       const worker = workerMap[s.worker_id];
-      const email = worker?.email ?? '—';
       const machine = s.rdp_resource_id
         ? (rdpMap[s.rdp_resource_id]?.nickname ?? s.rdp_resource_id.slice(0, 8) + '…')
         : '—';
@@ -155,7 +303,7 @@ export default function AdminSessionsPage() {
         start_time: s.start_time,
         session_type: s.session_type,
         worker: worker?.display_name ?? '—',
-        email,
+        email: worker?.email ?? '—',
         machine,
         duration: formatDuration(s.duration_minutes),
         type: TYPE_LABELS[s.session_type] ?? s.session_type,
@@ -167,24 +315,19 @@ export default function AdminSessionsPage() {
   }, [sessions, workerMap, rdpMap]);
 
   const filteredRows = useMemo(() => {
-    const q = emailSearch.trim().toLowerCase();
     const statusVal = statusFilter ? (STATUS_VALUES[statusFilter] ?? statusFilter) : '';
     const typeVal = typeFilter
       ? (Object.entries(TYPE_LABELS).find(([, v]) => v === typeFilter)?.[0] ?? '')
       : '';
 
     return allRows.filter((r) => {
+      if (selectedWorkerId && sessions.find((s) => s.id === r.id)?.worker_id !== selectedWorkerId) return false;
       if (statusVal && r.status !== statusVal) return false;
       if (typeVal && r.session_type !== typeVal) return false;
       if (!passesDateFilter(r.start_time, dateRange, customFrom, customTo)) return false;
-      if (q) {
-        const emailMatch = r.email.toLowerCase().includes(q);
-        const nameMatch = r.worker.toLowerCase().includes(q);
-        if (!emailMatch && !nameMatch) return false;
-      }
       return true;
     });
-  }, [allRows, emailSearch, dateRange, customFrom, customTo, statusFilter, typeFilter]);
+  }, [allRows, sessions, selectedWorkerId, dateRange, customFrom, customTo, statusFilter, typeFilter]);
 
   const handleEyeClick = async (rowId: string) => {
     const row = filteredRows.find((r) => r.id === rowId);
@@ -228,6 +371,7 @@ export default function AdminSessionsPage() {
     URL.revokeObjectURL(a.href);
   };
 
+  const selectedWorkerObj = selectedWorkerId ? workerMap[selectedWorkerId] : null;
   const workerLabel = selectedSession
     ? `${selectedSession.worker}${selectedSession.email !== '—' ? ` • ${selectedSession.email}` : ''}`
     : undefined;
@@ -247,30 +391,13 @@ export default function AdminSessionsPage() {
 
       {/* ── Filters ── */}
       <div className="space-y-3 mb-6">
-        {/* Row 1: email search + dropdowns */}
-        <div className="flex flex-wrap gap-3">
-          <div className="relative flex-1 min-w-[220px] max-w-sm">
-            <Search
-              size={15}
-              className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant"
-            />
-            <input
-              type="text"
-              placeholder="Search by email or name…"
-              value={emailSearch}
-              onChange={(e) => setEmailSearch(e.target.value)}
-              className="w-full pl-9 pr-8 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-brand-on-surface-variant/60 focus:outline-none focus:border-emerald-accent/40 transition-colors"
-            />
-            {emailSearch && (
-              <button
-                type="button"
-                onClick={() => setEmailSearch('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted hover:text-white transition-colors"
-              >
-                <X size={13} />
-              </button>
-            )}
-          </div>
+        {/* Row 1: worker combobox + status + type */}
+        <div className="flex flex-wrap gap-3 items-center">
+          <WorkerCombobox
+            workers={workers}
+            selectedId={selectedWorkerId}
+            onSelect={setSelectedWorkerId}
+          />
 
           <select
             value={statusFilter}
@@ -375,6 +502,11 @@ export default function AdminSessionsPage() {
         <>
           <p className="text-xs text-theme-muted mb-3">
             {filteredRows.length} session{filteredRows.length !== 1 ? 's' : ''}
+            {selectedWorkerObj && (
+              <span className="ml-2 text-emerald-400">
+                · {workerPrimary(selectedWorkerObj)}
+              </span>
+            )}
           </p>
           <DataTable
             columns={[

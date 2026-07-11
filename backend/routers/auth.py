@@ -5,12 +5,16 @@ from core.auth_errors import http_error_from_firebase
 from core.firebase_admin import (
     SUPER_ADMIN_EMAIL,
     approve_firebase_user,
+    ban_firebase_user,
     bootstrap_super_admin,
     create_firebase_user,
+    get_firebase_user,
+    get_firebase_user_by_email,
     list_firebase_users,
     register_pending_user,
     reject_firebase_user,
     set_user_role,
+    unban_firebase_user,
     user_to_dict,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
@@ -158,6 +162,75 @@ def update_user_role(
         raise http_error_from_firebase(exc) from exc
 
     return {"uid": uid, "role": body.role}
+
+
+@router.get("/account-status")
+def get_account_status(email: str):
+    """
+    Public endpoint — returns only the account status (banned/pending/rejected/approved).
+    Used by the login page to show the correct error message when Firebase says 'user-disabled'.
+    """
+    try:
+        user = get_firebase_user_by_email(email)
+    except Exception:
+        return {"status": "not_found"}
+    claims = user.custom_claims or {}
+    status = claims.get("status", "approved" if not user.disabled else "pending")
+    return {"status": status}
+
+
+@router.patch("/users/{uid}/ban")
+def ban_user(
+    uid: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Disable a user's account and mark it as banned. Admins cannot ban super_admins."""
+    try:
+        target = get_firebase_user(uid)
+    except Exception as exc:
+        raise http_error_from_firebase(exc) from exc
+
+    target_role = (target.custom_claims or {}).get("role", "user")
+    actor_role = current_user["role"]
+
+    if actor_role == "admin" and target_role == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins cannot ban Super Admin accounts.",
+        )
+
+    try:
+        user = ban_firebase_user(uid)
+    except Exception as exc:
+        raise http_error_from_firebase(exc) from exc
+    return user_to_dict(user)
+
+
+@router.patch("/users/{uid}/unban")
+def unban_user(
+    uid: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Re-enable a previously banned account."""
+    try:
+        target = get_firebase_user(uid)
+    except Exception as exc:
+        raise http_error_from_firebase(exc) from exc
+
+    target_role = (target.custom_claims or {}).get("role", "user")
+    actor_role = current_user["role"]
+
+    if actor_role == "admin" and target_role == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins cannot modify Super Admin accounts.",
+        )
+
+    try:
+        user = unban_firebase_user(uid)
+    except Exception as exc:
+        raise http_error_from_firebase(exc) from exc
+    return user_to_dict(user)
 
 
 @router.post("/bootstrap-super-admin")

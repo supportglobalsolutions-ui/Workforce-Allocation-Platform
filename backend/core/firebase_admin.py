@@ -12,7 +12,7 @@ logger = logging.getLogger(__name__)
 _initialized = False
 
 VALID_ROLES = {"user", "admin", "super_admin"}
-VALID_STATUSES = {"pending", "approved", "rejected"}
+VALID_STATUSES = {"pending", "approved", "rejected", "banned"}
 SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
 _BACKEND_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -159,6 +159,22 @@ def reject_firebase_user(uid: str) -> auth.UserRecord:
     return auth.get_user(uid)
 
 
+def ban_firebase_user(uid: str) -> auth.UserRecord:
+    user = auth.get_user(uid)
+    claims = user.custom_claims or {}
+    auth.update_user(uid, disabled=True)
+    auth.set_custom_user_claims(uid, {**claims, "status": "banned"})
+    return auth.get_user(uid)
+
+
+def unban_firebase_user(uid: str) -> auth.UserRecord:
+    user = auth.get_user(uid)
+    claims = user.custom_claims or {}
+    auth.update_user(uid, disabled=False)
+    auth.set_custom_user_claims(uid, {**claims, "status": "approved"})
+    return auth.get_user(uid)
+
+
 def get_firebase_user(uid: str) -> auth.UserRecord:
     return auth.get_user(uid)
 
@@ -179,6 +195,7 @@ def _user_to_dict(u: auth.UserRecord) -> dict:
         "displayName": u.display_name or "",
         "role": claims.get("role", "user"),
         "status": claims.get("status", "approved" if not u.disabled else "pending"),
+        "banned": claims.get("status") == "banned",
         "disabled": u.disabled,
         "createdAt": u.user_metadata.creation_timestamp,
     }

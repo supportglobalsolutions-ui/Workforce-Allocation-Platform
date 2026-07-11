@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Monitor, Settings, FileText, Trophy, Landmark,
-  Bell, ClipboardList, DollarSign, BarChart3, Activity, BookOpen, Globe2,
-  Zap, History, PenLine, Home, Lock, Shield, Send, UserCog, CalendarDays, UserCircle,
+  Bell, DollarSign, BarChart3, Activity, BookOpen, Globe2,
+  Zap, History, PenLine, Home, Lock, Shield, Send, CalendarDays, UserCircle,
 } from 'lucide-react';
 
 export type PortalRole = 'worker' | 'admin' | 'leadership';
@@ -30,19 +30,18 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
   ],
   admin: [
     { icon: <LayoutDashboard size={18} />, label: 'Command Center', href: '/admin/dashboard' },
-    { icon: <Users size={18} />, label: 'Workers', href: '/admin/workers' },
+    { icon: <Users size={18} />, label: 'User Management', href: '/admin/workers', shortLabel: 'Users' },
     { icon: <Globe2 size={18} />, label: 'Partners', href: '/admin/partners' },
     { icon: <Monitor size={18} />, label: 'RDP Resources', href: '/admin/rdp' },
     { icon: <Activity size={18} />, label: 'Live Sessions', href: '/admin/live-sessions' },
     { icon: <History size={18} />, label: 'Sessions', href: '/admin/sessions' },
-    { icon: <ClipboardList size={18} />, label: 'Quality', href: '/admin/quality' },
+    { icon: <Trophy size={18} />, label: 'Leaderboard', href: '/admin/quality' },
     { icon: <BookOpen size={18} />, label: 'Assessments', href: '/admin/assessments' },
     { icon: <DollarSign size={18} />, label: 'Payroll', href: '/admin/payroll' },
     { icon: <Send size={18} />, label: 'Send Receipts', href: '/admin/payroll/receipts', shortLabel: 'Receipts' },
     { icon: <CalendarDays size={18} />, label: 'Shifts', href: '/admin/shifts' },
     { icon: <FileText size={18} />, label: 'Audit Logs', href: '/admin/audit-logs' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/admin/notifications' },
-    { icon: <UserCog size={18} />, label: 'User Management', href: '/admin/users', shortLabel: 'Users' },
     { icon: <Settings size={18} />, label: 'Settings', href: '/admin/settings' },
   ],
   leadership: [
@@ -63,7 +62,7 @@ export const PORTAL_TOP_NAV: Record<PortalRole, NavItem[]> = {
   ],
   admin: [
     { icon: <LayoutDashboard size={16} />, label: 'Command', href: '/admin/dashboard' },
-    { icon: <Users size={16} />, label: 'Workers', href: '/admin/workers' },
+    { icon: <Users size={16} />, label: 'Users', href: '/admin/workers' },
     { icon: <Monitor size={16} />, label: 'RDP', href: '/admin/rdp' },
     { icon: <DollarSign size={16} />, label: 'Payroll', href: '/admin/payroll' },
   ],

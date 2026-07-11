@@ -80,7 +80,7 @@ export function subscribeAuthState(
 
 // ── Backend API helpers ────────────────────────────────────────────────────
 
-export type AccountStatus = 'pending' | 'approved' | 'rejected';
+export type AccountStatus = 'pending' | 'approved' | 'rejected' | 'banned';
 
 export interface ManagedUser {
   uid: string;
@@ -89,6 +89,7 @@ export interface ManagedUser {
   role: AuthRole;
   status: AccountStatus;
   disabled: boolean;
+  banned: boolean;
   createdAt: number;
 }
 
@@ -113,3 +114,18 @@ export const apiApproveUser = (uid: string) =>
 
 export const apiRejectUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/reject`, {});
+
+export const apiBanUser = (uid: string) =>
+  api.patch<ManagedUser>(`/auth/users/${uid}/ban`, {});
+
+export const apiUnbanUser = (uid: string) =>
+  api.patch<ManagedUser>(`/auth/users/${uid}/unban`, {});
+
+export const apiGetAccountStatus = (email: string) =>
+  api.get<{ status: AccountStatus | 'not_found' }>(`/auth/account-status?email=${encodeURIComponent(email)}`);
+
+export const apiBanWorker = (workerId: string) =>
+  api.patch<{ banned: boolean }>(`/workers/${workerId}/ban`, {});
+
+export const apiUnbanWorker = (workerId: string) =>
+  api.patch<{ banned: boolean }>(`/workers/${workerId}/unban`, {});

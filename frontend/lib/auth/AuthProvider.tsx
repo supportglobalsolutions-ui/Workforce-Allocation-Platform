@@ -3,9 +3,10 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthSession, canAccessPortal } from './config';
-import { signIn, signOut, subscribeAuthState } from './firebase-auth';
+import { signIn, signOut, subscribeAuthState, apiGetAccountStatus } from './firebase-auth';
 import { clearAuthRoleCookie, setAuthRoleCookie } from './cookies';
 import { getFirebaseAuthErrorMessage } from './errors';
+import { FirebaseError } from 'firebase/app';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 
@@ -45,6 +46,28 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       router.replace(ROLE_LANDING[s.primaryPortal]);
       return { ok: true as const };
     } catch (err: unknown) {
+      const isDisabled =
+        (err instanceof FirebaseError && err.code === 'auth/user-disabled') ||
+        (err instanceof Error && err.message.includes('user-disabled'));
+
+      if (isDisabled) {
+        try {
+          const { status } = await apiGetAccountStatus(email);
+          if (status === 'banned') {
+            return { ok: false as const, error: 'Your account has been banned due to violating system rules. Contact an administrator for assistance.' };
+          }
+          if (status === 'pending') {
+            return { ok: false as const, error: 'Your account is awaiting admin approval.' };
+          }
+          if (status === 'rejected') {
+            return { ok: false as const, error: 'Your account request was rejected. Contact an administrator.' };
+          }
+        } catch {
+          // status check failed — fall through to generic message
+        }
+        return { ok: false as const, error: 'Your account has been disabled. Contact an administrator.' };
+      }
+
       return { ok: false as const, error: getFirebaseAuthErrorMessage(err) };
     }
   }, [router]);

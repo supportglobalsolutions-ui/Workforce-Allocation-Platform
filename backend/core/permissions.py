@@ -16,7 +16,7 @@ ROLE_HIERARCHY: dict[AuthRole, int] = {
 # What each role is allowed to assign when creating/elevating another account.
 ROLE_CAN_ASSIGN: dict[AuthRole, set[AuthRole]] = {
     "super_admin": {"user", "admin", "super_admin"},
-    "admin": {"user"},
+    "admin": {"user", "admin"},
     "user": set(),
 }
 

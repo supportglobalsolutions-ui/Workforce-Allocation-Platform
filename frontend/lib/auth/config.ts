@@ -46,6 +46,6 @@ export function portalFromPath(pathname: string): PortalRole | null {
 /** Returns which roles the actor is allowed to assign when creating/elevating accounts. */
 export function assignableRoles(actorRole: AuthRole): AuthRole[] {
   if (actorRole === 'super_admin') return ['user', 'admin', 'super_admin'];
-  if (actorRole === 'admin') return ['user'];
+  if (actorRole === 'admin') return ['user', 'admin'];
   return [];
 }

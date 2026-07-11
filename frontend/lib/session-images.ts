@@ -1,47 +1,107 @@
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { db } from './firebase';
+import { storage, db } from './firebase';
 import { api } from './api';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
-const ALLOWED_EXT = /\.(jpe?g|png|webp)$/i;
+const ALLOWED_EXT   = /\.(jpe?g|png|webp)$/i;
+const MAX_SOURCE_MB = 2;
+const TARGET_MAX_PX = 1400;  // longest edge after resize
+const JPEG_QUALITY  = 0.82;
 
 export function validateImageFile(file: File): string | null {
   if (!ALLOWED_TYPES.includes(file.type) && !ALLOWED_EXT.test(file.name)) {
     return 'Only JPG, PNG, and WebP files are allowed';
   }
-  if (file.size > 5 * 1024 * 1024) {
-    return 'File must be under 5 MB';
+  if (file.size > MAX_SOURCE_MB * 1024 * 1024) {
+    return `File must be under ${MAX_SOURCE_MB} MB`;
   }
   return null;
 }
 
-function readFileAsBase64(file: File, onProgress?: (pct: number) => void): Promise<string> {
+/**
+ * Resize + re-encode to JPEG via Canvas.
+ * Shrinks the longest edge to TARGET_MAX_PX if the image is larger.
+ * Progress callback: 0 → 30 %.
+ */
+function compressImage(file: File, onProgress?: (pct: number) => void): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    const reader = new FileReader();
+    const objectUrl = URL.createObjectURL(file);
+    const img = new Image();
 
-    reader.onprogress = (e) => {
-      if (e.lengthComputable && e.total > 0) {
-        onProgress?.(Math.round((e.loaded / e.total) * 45));
-      }
+    img.onload = () => {
+      URL.revokeObjectURL(objectUrl);
+      onProgress?.(15);
+
+      const scale = Math.min(1, TARGET_MAX_PX / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scale);
+      const h = Math.round(img.height * scale);
+
+      const canvas = document.createElement('canvas');
+      canvas.width  = w;
+      canvas.height = h;
+      canvas.getContext('2d')!.drawImage(img, 0, 0, w, h);
+      onProgress?.(25);
+
+      canvas.toBlob(
+        (blob) => {
+          if (blob) { onProgress?.(30); resolve(blob); }
+          else reject(new Error('Image compression failed'));
+        },
+        'image/jpeg',
+        JPEG_QUALITY,
+      );
     };
 
-    reader.onload = () => {
-      onProgress?.(50);
-      resolve(reader.result as string); // data:image/jpeg;base64,...
+    img.onerror = () => {
+      URL.revokeObjectURL(objectUrl);
+      reject(new Error('Failed to load image for compression'));
     };
 
-    reader.onerror = () => reject(new Error('Failed to read file'));
-
-    reader.readAsDataURL(file);
+    img.src = objectUrl;
   });
 }
 
 /**
- * Convert image to base64 and persist it in two places:
- *   1. Firestore  → session_images/{sessionId}
- *   2. PostgreSQL → sessions.start_image_url / end_image_url
+ * Upload compressed blob to Firebase Storage.
+ * Progress callback: 30 → 85 %.
+ */
+function uploadToStorage(
+  sessionId: string,
+  imageType: 'start' | 'end',
+  blob: Blob,
+  onProgress?: (pct: number) => void,
+): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const storageRef = ref(storage, `session-images/${sessionId}/${imageType}.jpg`);
+    const task = uploadBytesResumable(storageRef, blob, { contentType: 'image/jpeg' });
+
+    task.on(
+      'state_changed',
+      (snap) => {
+        if (snap.totalBytes > 0) {
+          const pct = Math.round(30 + (snap.bytesTransferred / snap.totalBytes) * 55);
+          onProgress?.(pct);
+        }
+      },
+      reject,
+      async () => {
+        try { resolve(await getDownloadURL(task.snapshot.ref)); }
+        catch (e) { reject(e); }
+      },
+    );
+  });
+}
+
+/**
+ * Full pipeline:
+ *   1. Validate original file (max 2 MB)
+ *   2. Compress — resize to 1400 px longest edge, re-encode JPEG at 0.82
+ *   3. Upload to Firebase Storage → get download URL
+ *   4. Mirror URL to Firestore (session_images/{sessionId})
+ *   5. Persist URL to PostgreSQL via PATCH /sessions/{id}
  *
- * Returns the base64 data URI (usable directly as img src).
+ * Returns the Firebase Storage download URL (used directly as <img src>).
  */
 export async function uploadSessionImage(
   sessionId: string,
@@ -54,22 +114,25 @@ export async function uploadSessionImage(
 
   onProgress?.(0);
 
-  // Step 1 — read file as base64 (progress 0→50 %)
-  const base64 = await readFileAsBase64(file, onProgress);
+  // 1 — compress in browser  (0 → 30 %)
+  const compressed = await compressImage(file, onProgress);
 
-  // Step 2 — write to Firestore (progress 60 %)
-  onProgress?.(60);
+  // 2 — upload to Firebase Storage  (30 → 85 %)
+  const downloadUrl = await uploadToStorage(sessionId, imageType, compressed, onProgress);
+
+  // 3 — mirror URL to Firestore  (85 → 92 %)
+  onProgress?.(85);
   const field = `${imageType}_image_url` as const;
   await setDoc(
     doc(db, 'session_images', sessionId),
-    { [field]: base64, updated_at: serverTimestamp() },
+    { [field]: downloadUrl, updated_at: serverTimestamp() },
     { merge: true },
   );
 
-  // Step 3 — write to PostgreSQL via backend (progress 85 %)
-  onProgress?.(85);
-  await api.patch(`/sessions/${sessionId}`, { [field]: base64 });
+  // 4 — persist URL to PostgreSQL  (92 → 100 %)
+  onProgress?.(92);
+  await api.patch(`/sessions/${sessionId}`, { [field]: downloadUrl });
 
   onProgress?.(100);
-  return base64;
+  return downloadUrl;
 }
