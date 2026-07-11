@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 
 from core.config import settings
 from core.firebase_admin import init_firebase
-from routers import audit, auth, leaderboard, notifications, payroll, quality, rdp, sessions, shifts, uptime_kuma, workers
+from routers import assessments, audit, auth, leaderboard, notifications, payroll, quality, rdp, sessions, shifts, uptime_kuma, workers
 from services.leaderboard_sync import run_leaderboard_sync_loop
 from services.mirror_reconcile import run_mirror_reconcile_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
@@ -65,6 +65,7 @@ def health():
 
 
 app.include_router(auth.router, prefix="/auth", tags=["auth"])
+app.include_router(assessments.router, prefix="/assessments", tags=["assessments"])
 app.include_router(workers.router, prefix="/workers", tags=["workers"])
 app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
 app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
