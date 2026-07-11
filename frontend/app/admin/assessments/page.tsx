@@ -1026,11 +1026,28 @@ export default function AssessmentsPage() {
         title="Assessment Builder"
         description="Manage MCQ exams and task-based assessments. Results map to leaderboard scores."
         actions={
-          <button
-            onClick={() => kind === 'mcq' ? setShowMcqCreate(true) : setShowTaskCreate(true)}
-            className="btn-primary flex items-center gap-2 text-sm py-2 px-4">
-            <Plus size={15} /> New {kind === 'mcq' ? 'MCQ' : 'Task'}
-          </button>
+          <div className="flex items-center gap-2">
+            <div className="flex gap-1 glass-panel p-1 rounded-xl">
+              {([['mcq', 'MCQ Exams', <FileQuestion key="m" size={13} />], ['task', 'Task Based', <Film key="t" size={13} />]] as const).map(([k, label, icon]) => (
+                <button key={k} type="button" onClick={() => setKind(k)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                    kind === k ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-white'
+                  }`}>
+                  {icon} {label}
+                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ${
+                    kind === k ? 'bg-emerald-accent/30 text-emerald-300' : 'bg-white/10 text-theme-muted'
+                  }`}>
+                    {k === 'mcq' ? mcqSets.length : tasks.length}
+                  </span>
+                </button>
+              ))}
+            </div>
+            <button
+              onClick={() => kind === 'mcq' ? setShowMcqCreate(true) : setShowTaskCreate(true)}
+              className="btn-primary flex items-center gap-2 text-sm py-2 px-4">
+              <Plus size={15} /> New {kind === 'mcq' ? 'MCQ' : 'Task'}
+            </button>
+          </div>
         }
       />
 
@@ -1046,23 +1063,6 @@ export default function AssessmentsPage() {
             <p className="text-xs font-semibold text-white mt-0.5">{label}</p>
             <p className="text-[10px] text-theme-muted mt-0.5">{sub}</p>
           </div>
-        ))}
-      </div>
-
-      {/* Kind tabs */}
-      <div className="flex gap-1 mb-5 glass-panel p-1 rounded-xl w-fit">
-        {([['mcq', 'MCQ Exams', <FileQuestion key="m" size={14} />], ['task', 'Task Based', <Film key="t" size={14} />]] as const).map(([k, label, icon]) => (
-          <button key={k} type="button" onClick={() => setKind(k)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-colors ${
-              kind === k ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-white'
-            }`}>
-            {icon} {label}
-            <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full ml-0.5 ${
-              kind === k ? 'bg-emerald-accent/30 text-emerald-300' : 'bg-white/10 text-theme-muted'
-            }`}>
-              {k === 'mcq' ? mcqSets.length : tasks.length}
-            </span>
-          </button>
         ))}
       </div>
 
