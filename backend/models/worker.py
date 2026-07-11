@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from .rate_table import RateTableEntry
     from .session import Session
     from .shift import Shift
+    from .task_assessment import TaskAssessmentResult
 
 
 class Worker(SQLModel, table=True):
@@ -79,5 +80,9 @@ class Worker(SQLModel, table=True):
     quality_ratings: list["QualityIndicatorRating"] = Relationship(back_populates="worker")
     composite_scores: list["QualityCompositeScore"] = Relationship(back_populates="worker")
     mcq_results: list["McqResult"] = Relationship(back_populates="worker")
+    task_results: list["TaskAssessmentResult"] = Relationship(
+        back_populates="worker",
+        sa_relationship_kwargs={"foreign_keys": "[TaskAssessmentResult.worker_id]"},
+    )
     session_tickets: list["SessionTicket"] = Relationship(back_populates="worker")
     notifications: list["Notification"] = Relationship(back_populates="target_worker")

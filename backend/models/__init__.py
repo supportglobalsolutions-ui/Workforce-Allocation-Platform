@@ -8,6 +8,7 @@ from .enums import (  # noqa: F401
     EntityStatusEnum, RdpStatusEnum, ShiftStatusEnum, ReleaseReasonEnum,
     SessionTypeEnum, SessionCloseEnum, PayrollSessionEnum, RateTypeEnum,
     PayrollPeriodStatusEnum, IndicatorInputEnum, TicketStatusEnum,
+    TaskResultStatusEnum,
 )
 from .admin_users  import AdminUser                                                           # noqa: F401
 from .partner      import PartnerEntity, PartnerArrangement, PartnerClientOverride            # noqa: F401
@@ -19,7 +20,8 @@ from .payroll      import PayrollPeriod, PayrollLineItem                        
 from .session      import Session                                                             # noqa: F401
 from .rate_table   import RateTableEntry                                                      # noqa: F401
 from .quality      import QualityIndicator, QualityIndicatorRating, QualityCompositeScore     # noqa: F401
-from .mcq          import McqAssessmentSet, McqQuestion, McqResult, McqResultAnswer           # noqa: F401
-from .audit_log    import AuditLog                                                            # noqa: F401
+from .mcq               import McqAssessmentSet, McqQuestion, McqResult, McqResultAnswer      # noqa: F401
+from .task_assessment   import TaskAssessment, TaskAssessmentResult                           # noqa: F401
+from .audit_log         import AuditLog                                                       # noqa: F401
 from .post_mvp     import SessionTicket, KnowledgeBaseArticle                                 # noqa: F401
 from .notification import Notification                                                         # noqa: F401

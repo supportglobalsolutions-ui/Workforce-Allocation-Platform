@@ -124,6 +124,15 @@ class TicketStatusEnum(str, enum.Enum):
     resolved     = "resolved"
 
 
+# ── task_assessments ──────────────────────────────────────────────────────────
+
+class TaskResultStatusEnum(str, enum.Enum):
+    pending     = "pending"
+    in_progress = "in_progress"
+    submitted   = "submitted"
+    graded      = "graded"
+
+
 # ── SQLAlchemy Enum type objects (used in sa_column definitions) ───────────────
 
 AdminRoleType        = sa.Enum(AdminRoleEnum,          name="admin_role_enum",         create_type=True)
@@ -141,3 +150,4 @@ RateTypeType         = sa.Enum(RateTypeEnum,            name="rate_type_enum",  
 PayrollPeriodStatus  = sa.Enum(PayrollPeriodStatusEnum, name="payroll_period_enum",     create_type=True)
 IndicatorInputType   = sa.Enum(IndicatorInputEnum,      name="indicator_input_enum",    create_type=True)
 TicketStatusType     = sa.Enum(TicketStatusEnum,        name="ticket_status_enum",      create_type=True)
+TaskResultStatusType = sa.Enum(TaskResultStatusEnum,    name="task_result_status_enum", create_type=True)

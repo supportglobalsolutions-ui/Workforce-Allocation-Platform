@@ -23,13 +23,15 @@ export default app;
 
 /** Canonical Firestore mirror paths — see docs/data-models.md Appendix B */
 export const COLLECTIONS = {
-  RDP_STATUS:           'rdp_status',
-  ACTIVE_SESSIONS:      'active_sessions',
-  SHIFT_NOTIFICATIONS:  'shift_notifications',
+  RDP_STATUS:               'rdp_status',
+  ACTIVE_SESSIONS:          'active_sessions',
+  SHIFT_NOTIFICATIONS:      'shift_notifications',
   SHIFT_NOTIFICATION_ITEMS: 'notifications',
-  LEADERBOARD:          'leaderboard',
-  LEADERBOARD_CURRENT:  'current_period',
-  SYSTEM_ALERTS:        'system_alerts',
+  LEADERBOARD:              'leaderboard',
+  LEADERBOARD_CURRENT:      'current_period',
+  SYSTEM_ALERTS:            'system_alerts',
+  TASK_ASSESSMENTS:         'task_assessments',
+  TASK_RESULTS:             'task_results',
 } as const;
 
 /** @deprecated PostgreSQL is source of truth — do not read or write these collections */

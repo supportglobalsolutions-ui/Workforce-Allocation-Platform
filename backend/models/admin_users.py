@@ -17,6 +17,7 @@ if TYPE_CHECKING:
     from .quality import QualityIndicatorRating
     from .rate_table import RateTableEntry
     from .shift import Shift
+    from .task_assessment import TaskAssessment, TaskAssessmentResult
     from .worker import Worker
 
 
@@ -64,6 +65,14 @@ class AdminUser(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[PayrollPeriod.approved_by]"},
     )
     created_assessments: list["McqAssessmentSet"] = Relationship(back_populates="creator")
+    created_task_assessments: list["TaskAssessment"] = Relationship(
+        back_populates="creator",
+        sa_relationship_kwargs={"foreign_keys": "[TaskAssessment.created_by]"},
+    )
+    graded_task_results: list["TaskAssessmentResult"] = Relationship(
+        back_populates="grader",
+        sa_relationship_kwargs={"foreign_keys": "[TaskAssessmentResult.graded_by]"},
+    )
     audit_entries: list["AuditLog"] = Relationship(
         back_populates="actor",
         sa_relationship_kwargs={"foreign_keys": "[AuditLog.actor_id]"},
