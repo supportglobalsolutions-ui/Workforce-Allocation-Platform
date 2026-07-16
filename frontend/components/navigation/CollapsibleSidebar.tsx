@@ -58,8 +58,8 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex flex-col app-sidebar transition-all duration-300 ease-in-out ${
-        collapsed ? 'w-[72px]' : 'w-[280px]'
+      className={`relative h-full flex flex-col app-sidebar transition-all duration-300 ease-in-out ${
+        collapsed ? 'w-[72px]' : 'w-[240px]'
       }`}
     >
       <div className={`border-b sidebar-divider ${collapsed ? 'p-3 flex justify-center' : 'p-5'}`}>

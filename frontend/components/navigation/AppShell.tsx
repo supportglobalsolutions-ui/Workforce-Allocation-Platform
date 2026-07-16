@@ -33,7 +33,7 @@ export default function AppShell({ children, role }: AppShellProps) {
   const collapsed = sidebarCollapsed;
 
   return (
-    <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-hidden">
+    <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-clip">
       {mobileSidebarOpen && (
         <button
           type="button"
@@ -44,7 +44,7 @@ export default function AppShell({ children, role }: AppShellProps) {
       )}
 
       <div
-        className={`fixed md:static inset-y-0 left-0 z-40 transition-transform duration-300 md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 transition-transform duration-300 md:translate-x-0 ${
           mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
@@ -53,7 +53,7 @@ export default function AppShell({ children, role }: AppShellProps) {
 
       <div
         className={`flex-1 relative min-h-screen z-10 flex flex-col w-full transition-[margin] duration-300 ease-in-out ${
-          collapsed ? 'md:ml-[72px]' : 'md:ml-[280px]'
+          collapsed ? 'md:ml-[72px]' : 'md:ml-[240px]'
         }`}
       >
         <TopNav

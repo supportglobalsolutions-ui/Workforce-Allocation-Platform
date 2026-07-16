@@ -39,10 +39,10 @@ html.dark {
   --sidebar-border: rgba(255, 255, 255, 0.08);
 }
 
-/* ── Light theme — grey canvas, white cards, dark emerald sidebar ── */
+/* ── Light theme — mint-porcelain canvas, white cards, dark emerald sidebar ── */
 html.light {
   color-scheme: light;
-  --background: #F3F5F4;
+  --background: #F1F5F2;
   --foreground: #1C2B26;
   --primary-dark: #032F25;
   --secondary-green: #0A4D3A;
@@ -83,6 +83,16 @@ html.light {
 
   html.light body {
     background-color: var(--background);
+  }
+
+  /* Luxe light canvas — faint emerald & gold washes over the mint-porcelain base */
+  html.light .bg-brand-background {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(1100px 480px at 88% -8%, rgba(10, 122, 85, 0.05), transparent 62%),
+      radial-gradient(900px 420px at -6% 108%, rgba(212, 175, 55, 0.045), transparent 60%),
+      linear-gradient(180deg, rgba(255, 255, 255, 0.5), transparent 320px);
+    background-attachment: fixed;
   }
 
   /* Adapt hardcoded utility classes across all pages */
@@ -143,6 +153,24 @@ html.light {
   }
   .sidebar-chip:hover {
     background: rgba(255, 255, 255, 0.1) !important;
+  }
+  /* Sidebar nav scrolls independently; emerald thumb, only visible on overflow */
+  .app-sidebar nav {
+    scrollbar-width: thin;
+    scrollbar-color: rgba(63, 199, 160, 0.35) transparent;
+  }
+  .app-sidebar nav::-webkit-scrollbar {
+    width: 6px;
+  }
+  .app-sidebar nav::-webkit-scrollbar-track {
+    background: transparent;
+  }
+  .app-sidebar nav::-webkit-scrollbar-thumb {
+    background: rgba(63, 199, 160, 0.35);
+    border-radius: 3px;
+  }
+  .app-sidebar nav::-webkit-scrollbar-thumb:hover {
+    background: rgba(63, 199, 160, 0.6);
   }
 
   .modal-overlay {

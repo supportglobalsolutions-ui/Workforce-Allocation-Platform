@@ -129,7 +129,7 @@ The portal shell is deliberately two-tone so the navigation frame and the work c
 | Zone | Dark theme | Light theme |
 |------|-----------|-------------|
 | Sidebar (`--sidebar-bg`) | `#00110d` | `#032F25` (always dark emerald, never white) |
-| Content canvas (`--background`) | `#021D17` | `#F3F5F4` (soft grey — never pure white) |
+| Content canvas (`--background`) | `#021D17` | `#F1F5F2` mint-porcelain base with faint fixed radial washes of emerald (5%) top-right and gold (4.5%) bottom-left — never pure white, never flat |
 | Cards / panels (`--glass-bg`, `--card-bg`) | `rgba(10,36,30,.75)` | `#FFFFFF` (pure white, pops off the grey canvas) |
 | Top bar (`--surface-lowest`) | `#00110d` | `#FFFFFF` |
 
@@ -137,7 +137,7 @@ Sidebar text uses fixed white-alpha tokens (`.sidebar-text`, `.sidebar-link`, `.
 
 ### Light Theme Palette
 
-- Canvas: `#F3F5F4` · Cards: `#FFFFFF` · Headings: `#0F1F1A` · Body: `#1C2B26` · Muted: `#5F6F69`
+- Canvas: `#F1F5F2` (+ emerald/gold radial washes) · Cards: `#FFFFFF` · Headings: `#0F1F1A` · Body: `#1C2B26` · Muted: `#5F6F69`
 - Emerald accent (light): `#0A7A55` · Gold accent: `#D4AF37`
 - Borders: `rgba(15,31,26,0.08)`
 

@@ -5,6 +5,7 @@ import Link from 'next/link';
 import KpiCard from '@/components/platform/KpiCard';
 import { Users, Activity, DollarSign, Server, TrendingUp, AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth/AuthProvider';
 
 interface Worker { id: string; status: string }
 interface WorkSession { id: string; end_time: string | null }
@@ -21,6 +22,8 @@ function greeting() {
 }
 
 export default function AdminDashboard() {
+  const { session } = useAuth();
+  const [username, setUsername] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [workersOnline, setWorkersOnline] = useState(0);
@@ -31,6 +34,10 @@ export default function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   useEffect(() => {
+    // Greeting name — worker username preferred; admins without a worker row fall back to their account name
+    api.get<{ username: string | null }>('/workers/me')
+      .then((w) => setUsername(w.username))
+      .catch(() => {});
     Promise.all([
       api.get<Worker[]>('/workers'),
       api.get<WorkSession[]>('/sessions?limit=200'),
@@ -57,13 +64,18 @@ export default function AdminDashboard() {
   if (loading) return <p className="text-theme-muted text-sm mt-4">Loading dashboard...</p>;
   if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
 
+  const rawName = username || session?.displayName || '';
+  const name = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : '';
+
   return (
     <div className="space-y-6">
       {/* Greeting header — title left, month pill right */}
       <div className="flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-black text-theme-heading tracking-tight">Admin Command Center</h1>
-          <p className="text-sm text-theme-muted mt-1">{greeting()}, here&apos;s your operations overview.</p>
+          <p className="text-sm text-theme-muted mt-1">
+            {greeting()}{name ? ` ${name}` : ''}, here&apos;s your operations overview.
+          </p>
         </div>
         <span className="shrink-0 px-4 py-1.5 rounded-full border border-theme bg-theme-card text-xs font-semibold text-theme-muted">
           {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}

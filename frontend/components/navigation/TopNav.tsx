@@ -46,12 +46,12 @@ export default function TopNav({
             type="button"
             onClick={onToggleSidebar}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="p-2 rounded-xl hover:bg-white/5 transition-colors shrink-0"
+            className="p-2 rounded-xl bg-emerald-accent/10 text-emerald-accent border border-emerald-accent/25 shadow-[0_0_14px_color-mix(in_srgb,var(--emerald-accent)_18%,transparent)] hover:bg-emerald-accent/20 hover:border-emerald-accent/45 hover:shadow-[0_0_20px_color-mix(in_srgb,var(--emerald-accent)_30%,transparent)] active:scale-95 transition-all shrink-0"
           >
             {sidebarCollapsed ? (
-              <PanelLeftOpen size={18} className="text-theme-muted" />
+              <PanelLeftOpen size={18} />
             ) : (
-              <PanelLeftClose size={18} className="text-theme-muted" />
+              <PanelLeftClose size={18} />
             )}
           </button>
         )}
