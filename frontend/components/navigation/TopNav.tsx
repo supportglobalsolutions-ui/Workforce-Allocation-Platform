@@ -3,18 +3,15 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useState } from 'react';
-import { Bell, ChevronRight, PanelLeftClose, PanelLeftOpen, Menu, X } from 'lucide-react';
+import { Bell, PanelLeftClose, PanelLeftOpen, Menu, Search, X } from 'lucide-react';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import LogoMark from '@/components/theme/LogoMark';
-import { useCurrentPage } from '@/lib/navigation/useCurrentPage';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import {
-  NavItem,
   PortalRole,
   PUBLIC_TOP_NAV,
-  PORTAL_TOP_NAV,
   ROLE_LABELS,
 } from '@/lib/navigation/config';
-import { PORTAL_LABELS } from '@/lib/pages-registry';
 
 interface TopNavProps {
   variant: 'public' | 'portal';
@@ -24,32 +21,6 @@ interface TopNavProps {
   showSidebarToggle?: boolean;
 }
 
-function NavLinks({ items }: { items: NavItem[] }) {
-  const pathname = usePathname();
-
-  return (
-    <nav className="hidden md:flex items-center gap-1">
-      {items.map((item) => {
-        const active = pathname === item.href || pathname?.startsWith(item.href + '/');
-        return (
-          <Link
-            key={item.href}
-            href={item.href}
-            className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
-              active
-                ? 'bg-emerald-accent/10 text-emerald-accent border border-emerald-accent/20'
-                : 'text-theme-muted hover:text-theme-heading hover:bg-white/5'
-            }`}
-          >
-            {item.icon}
-            <span>{item.label}</span>
-          </Link>
-        );
-      })}
-    </nav>
-  );
-}
-
 export default function TopNav({
   variant,
   role,
@@ -57,30 +28,25 @@ export default function TopNav({
   onToggleSidebar,
   showSidebarToggle = false,
 }: TopNavProps) {
-  const { title } = useCurrentPage();
   const pathname = usePathname();
+  const { session } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const portalLabel = role
-    ? PORTAL_LABELS[role === 'leadership' ? 'leadership' : role === 'worker' ? 'worker' : 'admin']
-    : null;
 
-  const topLinks = variant === 'public'
-    ? PUBLIC_TOP_NAV
-    : role
-      ? PORTAL_TOP_NAV[role]
-      : [];
+  const initials = session?.displayName
+    ? session.displayName.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
+    : '?';
 
   return (
     <>
-    <header className="h-14 border-b border-theme bg-brand-surface-lowest/80 backdrop-blur-xl px-4 md:px-6 flex items-center justify-between sticky top-0 z-50 shrink-0">
-      {/* Left */}
-      <div className="flex items-center gap-3 min-w-0 flex-1">
+    <header className="h-14 border-b border-theme bg-brand-surface-lowest px-4 md:px-6 flex items-center gap-4 sticky top-0 z-50 shrink-0">
+      {/* Left — sidebar toggle + search */}
+      <div className="flex items-center gap-3 flex-1 min-w-0">
         {showSidebarToggle && onToggleSidebar && (
           <button
             type="button"
             onClick={onToggleSidebar}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="p-2 rounded-xl border border-theme hover:bg-white/5 transition-colors shrink-0"
+            className="p-2 rounded-xl hover:bg-white/5 transition-colors shrink-0"
           >
             {sidebarCollapsed ? (
               <PanelLeftOpen size={18} className="text-theme-muted" />
@@ -98,25 +64,18 @@ export default function TopNav({
         )}
 
         {variant === 'portal' && (
-          <div className="flex items-center gap-2 min-w-0">
-            {portalLabel && (
-              <span className="hidden lg:inline text-[10px] font-bold uppercase tracking-wider text-theme-muted font-mono shrink-0">
-                {portalLabel}
-              </span>
-            )}
-            {portalLabel && (
-              <ChevronRight size={12} className="hidden lg:inline text-theme-muted shrink-0" />
-            )}
-            <h1 className="text-sm font-bold text-theme-heading truncate">{title}</h1>
+          <div className="relative w-full max-w-xs hidden md:block">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+            <input
+              type="search"
+              placeholder="Search..."
+              className="w-full pl-8 pr-4 py-1.5 rounded-full text-sm bg-white/5 border border-theme text-theme-heading placeholder:text-theme-muted focus:outline-none focus:border-emerald-accent/40 transition-colors"
+            />
           </div>
         )}
-
-        <div className="hidden xl:block ml-4">
-          <NavLinks items={topLinks} />
-        </div>
       </div>
 
-      {/* Right — theme toggle always top-right */}
+      {/* Right — bell, theme, user */}
       <div className="flex items-center gap-2 shrink-0">
         {variant === 'public' && (
           <button
@@ -129,31 +88,31 @@ export default function TopNav({
           </button>
         )}
         {variant === 'portal' && (
-          <>
-            <span className="hidden sm:flex items-center gap-1.5 text-[10px] font-mono text-theme-muted mr-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-accent animate-pulse" />
-              Live
-            </span>
-            <Link
-              href="/admin/notifications"
-              className="relative p-2 rounded-xl border border-transparent hover:border-theme hover:bg-white/5 transition-colors"
-            >
-              <Bell size={18} className="text-theme-muted" />
-              <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger rounded-full" />
-            </Link>
-          </>
+          <Link
+            href="/admin/notifications"
+            className="relative p-2 rounded-full hover:bg-white/5 transition-colors"
+          >
+            <Bell size={18} className="text-theme-muted" />
+            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger rounded-full" />
+          </Link>
         )}
         <ThemeToggle variant="icon" />
-        {variant === 'portal' && role && (
-          <span className="hidden md:inline text-[10px] font-bold uppercase tracking-wider px-2 py-1 rounded-lg border border-gold-accent/20 text-gold-accent bg-gold-accent/5">
-            {ROLE_LABELS[role].split(' ')[0]}
-          </span>
+        {variant === 'portal' && session && (
+          <div className="flex items-center gap-2.5 pl-2 ml-1 border-l border-theme">
+            <span className="w-8 h-8 rounded-full bg-emerald-accent/15 text-emerald-accent flex items-center justify-center text-[11px] font-black shrink-0">
+              {initials}
+            </span>
+            <div className="hidden lg:flex flex-col leading-tight">
+              <span className="text-xs font-bold text-theme-heading truncate max-w-[140px]">{session.displayName}</span>
+              <span className="text-[10px] text-theme-muted">{role ? ROLE_LABELS[role] : ''}</span>
+            </div>
+          </div>
         )}
       </div>
     </header>
     {variant === 'public' && mobileMenuOpen && (
       <div className="md:hidden border-b border-theme bg-brand-card px-4 py-3 space-y-1 z-40 sticky top-14">
-        {topLinks.map((item) => {
+        {PUBLIC_TOP_NAV.map((item) => {
           const active = pathname === item.href;
           return (
             <Link

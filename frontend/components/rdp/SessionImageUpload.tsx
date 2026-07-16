@@ -1,7 +1,7 @@
 'use client';
 
 import { useRef, useState } from 'react';
-import { CheckCircle2, ImageIcon, RefreshCw, Search, TriangleAlert } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, ImageIcon, RefreshCw, Search } from 'lucide-react';
 import { uploadSessionImage, validateImageFile } from '@/lib/session-images';
 import ImageInspector from './ImageInspector';
 
@@ -118,7 +118,7 @@ export default function SessionImageUpload({ sessionId, imageType, label, initia
         {/* ── Error state ── */}
         {status === 'error' && (
           <div className="flex items-start gap-2 px-3 py-2.5 rounded-xl text-xs bg-red-50 border border-red-200 text-red-700">
-            <TriangleAlert size={12} className="shrink-0 mt-0.5" />
+            <AlertTriangle size={12} className="shrink-0 mt-0.5" />
             <span className="flex-1">{errorMsg}</span>
             <button
               type="button"

@@ -35,12 +35,14 @@ html.dark {
   --shadow-color: rgba(2, 29, 23, 0.4);
   --toggle-track: rgba(255, 255, 255, 0.08);
   --modal-overlay: rgba(0, 0, 0, 0.88);
+  --sidebar-bg: #00110d;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
 }
 
-/* ── Light theme — full white surfaces, green & gold accents only ── */
+/* ── Light theme — grey canvas, white cards, dark emerald sidebar ── */
 html.light {
   color-scheme: light;
-  --background: #FFFFFF;
+  --background: #F3F5F4;
   --foreground: #1C2B26;
   --primary-dark: #032F25;
   --secondary-green: #0A4D3A;
@@ -67,6 +69,8 @@ html.light {
   --shadow-color: rgba(0, 0, 0, 0.05);
   --toggle-track: rgba(0, 0, 0, 0.06);
   --modal-overlay: rgba(15, 31, 26, 0.3);
+  --sidebar-bg: #032F25;
+  --sidebar-border: rgba(255, 255, 255, 0.08);
 }
 
 @layer base {
@@ -108,6 +112,39 @@ html.light {
 }
 
 @layer components {
+  /* ── App sidebar — always dark, regardless of theme ── */
+  .app-sidebar {
+    background: var(--sidebar-bg);
+    border-right: 1px solid var(--sidebar-border);
+  }
+  .sidebar-divider {
+    border-color: var(--sidebar-border) !important;
+  }
+  .sidebar-text {
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .sidebar-text-strong {
+    color: #ffffff !important;
+  }
+  .sidebar-link {
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .sidebar-link:hover {
+    color: #ffffff;
+    background: rgba(255, 255, 255, 0.06) !important;
+  }
+  .sidebar-link-active {
+    color: #3fc7a0 !important;
+    background: rgba(63, 199, 160, 0.12) !important;
+  }
+  .sidebar-chip {
+    background: rgba(255, 255, 255, 0.06) !important;
+    border: 1px solid color-mix(in srgb, var(--gold-accent) 20%, transparent);
+  }
+  .sidebar-chip:hover {
+    background: rgba(255, 255, 255, 0.1) !important;
+  }
+
   .modal-overlay {
     background: var(--modal-overlay);
     backdrop-filter: blur(24px);

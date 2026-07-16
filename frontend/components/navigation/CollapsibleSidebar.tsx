@@ -36,22 +36,13 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
       href={item.href}
       prefetch
       title={collapsed ? item.label : undefined}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all group ${
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
         collapsed ? 'justify-center' : ''
-      } ${
-        isActive
-          ? 'bg-brand-surface-high/60 text-theme-heading border-l-2 border-gold-accent'
-          : 'text-theme-muted hover:bg-white/[0.02] hover:text-theme-heading'
-      }`}
+      } ${isActive ? 'sidebar-link-active' : 'sidebar-link'}`}
     >
-      <span className={isActive ? 'text-emerald-accent shrink-0' : 'text-theme-muted group-hover:text-emerald-accent transition-colors shrink-0'}>
-        {item.icon}
-      </span>
+      <span className="shrink-0">{item.icon}</span>
       {!collapsed && (
-        <>
-          <span className="font-semibold text-sm truncate flex-1">{item.label}</span>
-          {isActive && <div className="w-1.5 h-1.5 rounded-full bg-gold-accent shadow-[0_0_8px_#D4AF37] shrink-0" />}
-        </>
+        <span className="font-semibold text-sm truncate flex-1">{item.label}</span>
       )}
     </Link>
   );
@@ -67,16 +58,16 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
 
   return (
     <aside
-      className={`fixed inset-y-0 left-0 z-40 flex flex-col bg-brand-surface-lowest/95 backdrop-blur-xl border-r border-theme transition-all duration-300 ease-in-out ${
+      className={`fixed inset-y-0 left-0 z-40 flex flex-col app-sidebar transition-all duration-300 ease-in-out ${
         collapsed ? 'w-[72px]' : 'w-[280px]'
       }`}
     >
-      <div className={`border-b border-theme ${collapsed ? 'p-3 flex justify-center' : 'p-5'}`}>
+      <div className={`border-b sidebar-divider ${collapsed ? 'p-3 flex justify-center' : 'p-5'}`}>
         <Link href="/" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>
           <LogoMark size="sm" />
           {!collapsed && (
             <div className="min-w-0">
-              <h1 className="text-base font-black text-theme-heading tracking-tight leading-none truncate">GlobalSolutions</h1>
+              <h1 className="text-base font-black sidebar-text-strong tracking-tight leading-none truncate">GlobalSolutions</h1>
               <p className="text-[9px] font-bold text-gold-accent tracking-[0.2em] uppercase mt-1">Operations</p>
             </div>
           )}
@@ -84,12 +75,12 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
       </div>
 
       {showSwitcher && (
-        <div className={`border-b border-theme relative ${collapsed ? 'px-2 py-2' : 'px-3 py-3'}`}>
+        <div className={`border-b sidebar-divider relative ${collapsed ? 'px-2 py-2' : 'px-3 py-3'}`}>
           <button
             type="button"
             onClick={() => !collapsed && setIsDropdownOpen(!isDropdownOpen)}
             title={ROLE_LABELS[role]}
-            className={`w-full flex items-center rounded-xl bg-white/5 hover:bg-white/10 border border-gold-accent/15 transition-all ${
+            className={`w-full flex items-center rounded-xl sidebar-chip transition-all ${
               collapsed ? 'justify-center p-2.5' : 'justify-between px-3 py-2 text-left'
             }`}
           >
@@ -97,12 +88,12 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
               <>
                 <div className="flex flex-col min-w-0">
                   <span className="text-[10px] text-gold-accent font-bold uppercase tracking-wider">Workspace</span>
-                  <span className="text-sm font-bold text-theme-heading mt-0.5 truncate">{ROLE_LABELS[role]}</span>
+                  <span className="text-sm font-bold sidebar-text-strong mt-0.5 truncate">{ROLE_LABELS[role]}</span>
                 </div>
-                <ChevronDown size={16} className={`text-theme-muted transition-transform shrink-0 ${isDropdownOpen ? 'rotate-180' : ''}`} />
+                <ChevronDown size={16} className={`sidebar-text transition-transform shrink-0 ${isDropdownOpen ? 'rotate-180' : ''}`} />
               </>
             ) : (
-              <span className={`text-[10px] font-black uppercase ${getRoleColor(role).split(' ')[0]}`}>
+              <span className="text-[10px] font-black uppercase text-gold-accent">
                 {role[0].toUpperCase()}
               </span>
             )}
@@ -129,9 +120,9 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
       )}
 
       {!showSwitcher && !collapsed && session && (
-        <div className="px-3 py-3 border-b border-theme">
+        <div className="px-3 py-3 border-b sidebar-divider">
           <p className="text-[10px] text-gold-accent font-bold uppercase tracking-wider">Workspace</p>
-          <p className="text-sm font-bold text-theme-heading mt-0.5">{ROLE_LABELS[role]}</p>
+          <p className="text-sm font-bold sidebar-text-strong mt-0.5">{ROLE_LABELS[role]}</p>
         </div>
       )}
 
@@ -144,12 +135,12 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
         ))}
       </nav>
 
-      <div className={`border-t border-theme ${collapsed ? 'p-2' : 'p-3'}`}>
+      <div className={`border-t sidebar-divider ${collapsed ? 'p-2' : 'p-3'}`}>
         <button
           type="button"
           onClick={logout}
           title="Sign Out"
-          className={`w-full flex items-center gap-2 rounded-xl text-xs font-medium text-theme-muted hover:text-theme-heading hover:bg-white/[0.02] transition-colors ${
+          className={`w-full flex items-center gap-2 rounded-xl text-xs font-medium sidebar-link transition-colors ${
             collapsed ? 'justify-center p-2.5' : 'px-3 py-2'
           }`}
         >

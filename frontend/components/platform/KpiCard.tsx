@@ -6,30 +6,49 @@ interface KpiCardProps {
   change?: string;
   icon: LucideIcon;
   accent?: 'emerald' | 'gold' | 'blue' | 'danger';
+  highlight?: boolean;
 }
 
-const accentMap = {
-  emerald: 'text-emerald-accent border-emerald-accent/20 bg-emerald-accent/5',
-  gold: 'text-gold-accent border-gold-accent/20 bg-gold-accent/5',
-  blue: 'text-blue-400 border-blue-400/20 bg-blue-400/5',
-  danger: 'text-danger border-danger/20 bg-danger/5',
+const iconTint = {
+  emerald: 'text-emerald-accent bg-emerald-accent/10',
+  gold: 'text-gold-accent bg-gold-accent/10',
+  blue: 'text-blue-400 bg-blue-400/10',
+  danger: 'text-danger bg-danger/10',
 };
 
-export default function KpiCard({ label, value, change, icon: Icon, accent = 'emerald' }: KpiCardProps) {
+const highlightCard = {
+  emerald: 'border-emerald-accent/40 bg-emerald-accent/5',
+  gold: 'border-gold-accent/40 bg-gold-accent/5',
+  blue: 'border-blue-400/40 bg-blue-400/5',
+  danger: 'border-danger/40 bg-danger/5',
+};
+
+const highlightValue = {
+  emerald: 'text-emerald-accent',
+  gold: 'text-gold-accent',
+  blue: 'text-blue-400',
+  danger: 'text-danger',
+};
+
+export default function KpiCard({ label, value, change, icon: Icon, accent = 'emerald', highlight = false }: KpiCardProps) {
   return (
-    <div className="glass-panel rounded-2xl p-6 border border-white/5 hover:border-emerald-accent/20 transition-all duration-300">
-      <div className="flex items-start justify-between mb-4">
-        <div className={`w-10 h-10 rounded-xl border flex items-center justify-center ${accentMap[accent]}`}>
-          <Icon size={18} />
-        </div>
+    <div className={`glass-panel p-5 ${highlight ? highlightCard[accent] : ''}`}>
+      <div className="flex items-start justify-between gap-2">
+        <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">{label}</p>
+        <span className={`w-8 h-8 rounded-lg flex items-center justify-center shrink-0 ${iconTint[accent]}`}>
+          <Icon size={15} />
+        </span>
+      </div>
+      <div className="flex items-end justify-between mt-3">
+        <p className={`text-2xl font-black tracking-tight ${highlight ? highlightValue[accent] : 'text-theme-heading'}`}>
+          {value}
+        </p>
         {change && (
-          <span className="text-xs font-mono text-emerald-accent bg-emerald-accent/10 px-2 py-0.5 rounded-full border border-emerald-accent/20">
+          <span className="text-xs font-mono text-emerald-accent bg-emerald-accent/10 px-2 py-0.5 rounded-full">
             {change}
           </span>
         )}
       </div>
-      <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1">{label}</p>
-      <p className="text-2xl font-black text-theme-heading tracking-tight">{value}</p>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import PageHeader from '@/components/platform/PageHeader';
+import Link from 'next/link';
 import KpiCard from '@/components/platform/KpiCard';
 import { Users, Activity, DollarSign, Server, TrendingUp, AlertTriangle } from 'lucide-react';
 import { api } from '@/lib/api';
@@ -12,6 +12,13 @@ interface RDPResource { id: string; status: string }
 interface QualityScore { composite_score: number }
 interface AuditLog { id: string; actor_id: string | null; action: string; target_type: string; target_id: string; created_at: string }
 interface PayrollLineItem { id: string; exception_flags: unknown[] }
+
+function greeting() {
+  const h = new Date().getHours();
+  if (h < 12) return 'Good morning';
+  if (h < 17) return 'Good afternoon';
+  return 'Good evening';
+}
 
 export default function AdminDashboard() {
   const [loading, setLoading] = useState(true);
@@ -51,51 +58,79 @@ export default function AdminDashboard() {
   if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
 
   return (
-    <div>
-      <PageHeader
-        title="Admin Command Center"
-        description="Operations overview — workers, active sessions, payroll status, system health, and live activity."
-      />
-      <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4 mb-8">
+    <div className="space-y-6">
+      {/* Greeting header — title left, month pill right */}
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="text-2xl font-black text-theme-heading tracking-tight">Admin Command Center</h1>
+          <p className="text-sm text-theme-muted mt-1">{greeting()}, here&apos;s your operations overview.</p>
+        </div>
+        <span className="shrink-0 px-4 py-1.5 rounded-full border border-theme bg-theme-card text-xs font-semibold text-theme-muted">
+          {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
+        </span>
+      </div>
+
+      {/* Stat cards */}
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
         <KpiCard label="Workers Online" value={workersOnline} icon={Users} />
         <KpiCard label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
-        <KpiCard label="Payroll Pending" value="—" icon={DollarSign} accent="gold" />
+        <KpiCard label="Payroll Pending" value="—" icon={DollarSign} accent="gold" highlight />
         <KpiCard label="Machines Online" value={machinesOnline} icon={Server} />
         <KpiCard label="Quality Index" value={qualityIndex} icon={TrendingUp} />
         <KpiCard label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
       </div>
-      <div className="grid lg:grid-cols-2 gap-6">
-        <div className="glass-panel p-6">
-          <h2 className="text-sm font-bold text-white mb-4">Session Trends</h2>
-          <p className="text-sm text-brand-on-surface-variant">No trend data available yet.</p>
-        </div>
-        <div className="glass-panel p-6">
-          <h2 className="text-sm font-bold text-white mb-4">Country Performance</h2>
-          <p className="text-sm text-brand-on-surface-variant">No country breakdown available yet.</p>
-        </div>
-      </div>
-      <div className="glass-panel p-6 mt-6">
-        <h2 className="text-sm font-bold text-white mb-4">Live Activity Feed</h2>
-        {auditLogs.length === 0 ? (
-          <p className="text-sm text-brand-on-surface-variant">No recent activity.</p>
-        ) : (
-          <div className="space-y-2">
-            {auditLogs.map((log) => (
-              <div key={log.id} className="flex flex-wrap gap-2 text-sm py-2 border-b border-white/[0.03] last:border-0">
-                <span className="text-brand-on-surface-variant font-mono text-xs">
-                  {new Date(log.created_at).toLocaleString()}
-                </span>
-                <span className="text-white font-medium">
-                  {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'}
-                </span>
-                <span className="text-emerald-accent">{log.action}</span>
-                <span className="text-brand-on-surface-variant">
-                  on {log.target_type} {log.target_id.slice(0, 8)}…
-                </span>
-              </div>
-            ))}
+
+      {/* Lower layout — activity table left (2/3), stacked panels right (1/3) */}
+      <div className="grid lg:grid-cols-3 gap-6 items-start">
+        <div className="lg:col-span-2 glass-panel">
+          <div className="flex items-center justify-between px-6 pt-5 pb-4">
+            <h2 className="text-base font-bold text-theme-heading">Live activity</h2>
+            <Link href="/admin/audit-logs" className="text-xs font-semibold text-emerald-accent hover:underline">
+              View all logs
+            </Link>
           </div>
-        )}
+          {auditLogs.length === 0 ? (
+            <p className="text-sm text-theme-muted px-6 pb-6">No recent activity.</p>
+          ) : (
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-t border-b border-theme">
+                  <th className="text-left px-6 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Time</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Actor</th>
+                  <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Action</th>
+                  <th className="text-left px-6 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Target</th>
+                </tr>
+              </thead>
+              <tbody>
+                {auditLogs.map((log) => (
+                  <tr key={log.id} className="border-b border-theme last:border-0">
+                    <td className="px-6 py-3 text-xs font-mono text-theme-muted whitespace-nowrap">
+                      {new Date(log.created_at).toLocaleString()}
+                    </td>
+                    <td className="px-4 py-3 font-medium text-theme-heading whitespace-nowrap">
+                      {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'}
+                    </td>
+                    <td className="px-4 py-3 text-emerald-accent font-semibold">{log.action}</td>
+                    <td className="px-6 py-3 text-theme-muted hidden md:table-cell">
+                      {log.target_type} {log.target_id.slice(0, 8)}…
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+
+        <div className="flex flex-col gap-6">
+          <div className="glass-panel">
+            <h2 className="text-base font-bold text-theme-heading px-6 pt-5 pb-3 border-b border-theme">Session trends</h2>
+            <p className="text-sm text-theme-muted px-6 py-4">No trend data available yet.</p>
+          </div>
+          <div className="glass-panel">
+            <h2 className="text-base font-bold text-theme-heading px-6 pt-5 pb-3 border-b border-theme">Country performance</h2>
+            <p className="text-sm text-theme-muted px-6 py-4">No country breakdown available yet.</p>
+          </div>
+        </div>
       </div>
     </div>
   );

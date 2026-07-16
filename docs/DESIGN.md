@@ -122,6 +122,29 @@ This design system utilizes a "Deep Emerald & Gold" palette to signify growth an
 - **The Accents:** Emerald (#3FC7A0) is used for primary actions and "active" states, while Gold (#D4AF37) is reserved for high-value metrics, premium highlights, and trend indicators.
 - **Status Colors:** Standard semantic colors (Success, Warning, Danger) are desaturated slightly to maintain the premium feel while ensuring immediate legibility.
 
+### Two-Tone App Shell (both themes)
+
+The portal shell is deliberately two-tone so the navigation frame and the work canvas never share a color:
+
+| Zone | Dark theme | Light theme |
+|------|-----------|-------------|
+| Sidebar (`--sidebar-bg`) | `#00110d` | `#032F25` (always dark emerald, never white) |
+| Content canvas (`--background`) | `#021D17` | `#F3F5F4` (soft grey — never pure white) |
+| Cards / panels (`--glass-bg`, `--card-bg`) | `rgba(10,36,30,.75)` | `#FFFFFF` (pure white, pops off the grey canvas) |
+| Top bar (`--surface-lowest`) | `#00110d` | `#FFFFFF` |
+
+Sidebar text uses fixed white-alpha tokens (`.sidebar-text`, `.sidebar-link`, `.sidebar-link-active` in `globals.css`) — it never inherits theme text colors, because its background is dark in both themes. Active nav items use fixed emerald `#3FC7A0`.
+
+### Light Theme Palette
+
+- Canvas: `#F3F5F4` · Cards: `#FFFFFF` · Headings: `#0F1F1A` · Body: `#1C2B26` · Muted: `#5F6F69`
+- Emerald accent (light): `#0A7A55` · Gold accent: `#D4AF37`
+- Borders: `rgba(15,31,26,0.08)`
+
+### Top Bar
+
+Kept intentionally minimal: sidebar toggle + search pill on the left; bell, theme toggle, and user identity (avatar initials + name + portal role) on the right. No page titles, breadcrumbs, or status chips live in the top bar — page context belongs in the content header (title + greeting + month pill).
+
 ## Typography
 The typography strategy balances modern executive appeal with technical precision. 
 
