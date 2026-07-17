@@ -6,6 +6,7 @@ domain (gsdeck.com) is configured in the Resend dashboard; the from-address is
 env-configured so the domain can change without code changes.
 """
 import logging
+import re
 from typing import Any, Optional
 from uuid import UUID
 
@@ -30,9 +31,22 @@ _BLOCKED_RECIPIENT_DOMAINS = frozenset({
     "localhost",
 })
 
+# local@domain.tld — rejects incomplete addresses like "user@gmail"
+_EMAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def is_valid_email_address(to_email: str) -> bool:
+    return bool(_EMAIL_RE.match((to_email or "").strip()))
+
 
 def blocked_recipient_reason(to_email: str) -> str | None:
-    domain = to_email.rsplit("@", 1)[-1].strip().lower()
+    addr = (to_email or "").strip()
+    if not is_valid_email_address(addr):
+        return (
+            f"Invalid email address `{addr}`. Use a full address like name@gmail.com "
+            "(domain must include a dot, e.g. .com)."
+        )
+    domain = addr.rsplit("@", 1)[-1].lower()
     if domain in _BLOCKED_RECIPIENT_DOMAINS or domain.endswith(".example"):
         return (
             f"Cannot send to @{domain} — Resend rejects reserved/example domains. "

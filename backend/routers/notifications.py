@@ -15,7 +15,7 @@ from schemas.notification import (
     NotificationSend,
     NotificationSendResult,
 )
-from services.email_resend import render_broadcast_html, send_email
+from services.email_resend import is_valid_email_address, render_broadcast_html, send_email
 from .deps import get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -120,7 +120,7 @@ def send_notification(
     extra_emails = [
         e.strip()
         for e in (body.extra_emails or [])
-        if e and e.strip() and "@" in e
+        if e and is_valid_email_address(e)
     ]
 
     has_worker_target = bool(body.worker_ids or body.target_username or body.target_email or body.target_type == "all")

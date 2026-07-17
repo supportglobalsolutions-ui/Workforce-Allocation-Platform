@@ -14,7 +14,7 @@ from models.email_log import EmailLog
 from models.enums import WorkerStatusEnum, WorkerTypeEnum
 from models.payroll import PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
-from services.email_resend import render_broadcast_html, render_payslip_html, send_email
+from services.email_resend import is_valid_email_address, render_broadcast_html, render_payslip_html, send_email
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
 
 router = APIRouter()
@@ -133,7 +133,7 @@ def broadcast(
     if not body.title.strip() or not body.message.strip():
         raise HTTPException(status_code=400, detail="Title and message are required.")
 
-    extra = [e.strip() for e in (body.extra_emails or []) if e and "@" in (e or "")]
+    extra = [e.strip() for e in (body.extra_emails or []) if e and is_valid_email_address(e)]
     if body.skip_workers and not extra:
         raise HTTPException(status_code=400, detail="Provide at least one test email when skip_workers is set.")
 

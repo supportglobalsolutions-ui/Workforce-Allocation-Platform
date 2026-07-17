@@ -1,9 +1,8 @@
 'use client';
 
-import Link from 'next/link';
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
+  AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import { api } from '@/lib/api';
@@ -41,6 +40,28 @@ interface SendResult {
 type Channel = 'in_app' | 'email' | 'both';
 type Category = 'general' | 'payment';
 type RecipientMode = 'all' | 'selected' | 'typed';
+
+/** Full address with a dotted domain — rejects incomplete values like user@gmail */
+function isValidEmail(value: string): boolean {
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value.trim());
+}
+
+const BLOCKED_DOMAINS = new Set([
+  'example.com', 'example.org', 'example.net', 'test.com', 'invalid', 'localhost',
+]);
+
+function emailValidationError(value: string): string | null {
+  const addr = value.trim();
+  if (!addr) return null;
+  if (!isValidEmail(addr)) {
+    return `Invalid email "${addr}". Use a full address like name@gmail.com (don’t forget .com).`;
+  }
+  const domain = addr.split('@')[1]?.toLowerCase() ?? '';
+  if (BLOCKED_DOMAINS.has(domain) || domain.endsWith('.example')) {
+    return `Cannot send to @${domain} — Resend rejects reserved/example domains. Use a real inbox.`;
+  }
+  return null;
+}
 
 function SentCard({ n }: { n: NotificationResponse }) {
   return (
@@ -89,6 +110,7 @@ export default function AdminNotificationsPage() {
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
   const [sendSummary, setSendSummary] = useState<string | null>(null);
+  const [emailFieldError, setEmailFieldError] = useState<string | null>(null);
 
   const [form, setForm] = useState(emptyForm);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
@@ -129,6 +151,16 @@ export default function AdminNotificationsPage() {
   const wantsEmail = form.channels === 'email' || form.channels === 'both';
   const wantsInApp = form.channels === 'in_app' || form.channels === 'both';
 
+  const draftEmailError = useMemo(
+    () => (emailDraft.trim() ? emailValidationError(emailDraft) : null),
+    [emailDraft],
+  );
+
+  function showError(message: string) {
+    setSendSummary(null);
+    setSendError(message);
+  }
+
   function toggleWorker(id: string) {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -140,10 +172,23 @@ export default function AdminNotificationsPage() {
 
   function addEmailTag(raw?: string) {
     const value = (raw ?? emailDraft).trim();
-    if (!value || !value.includes('@')) return false;
+    if (!value) {
+      const msg = 'Enter an email address first.';
+      setEmailFieldError(msg);
+      showError(msg);
+      return false;
+    }
+    const err = emailValidationError(value);
+    if (err) {
+      setEmailFieldError(err);
+      showError(err);
+      return false;
+    }
     const key = value.toLowerCase();
     setExtraEmails((prev) => (prev.some((e) => e.toLowerCase() === key) ? prev : [...prev, value]));
     setEmailDraft('');
+    setEmailFieldError(null);
+    setSendError(null);
     return true;
   }
 
@@ -155,49 +200,77 @@ export default function AdminNotificationsPage() {
   function emailsForSend(): string[] {
     const draft = emailDraft.trim();
     const merged = [...extraEmails];
-    if (draft && draft.includes('@') && !merged.some((e) => e.toLowerCase() === draft.toLowerCase())) {
+    if (
+      isValidEmail(draft)
+      && !emailValidationError(draft)
+      && !merged.some((e) => e.toLowerCase() === draft.toLowerCase())
+    ) {
       merged.push(draft);
     }
     return merged;
   }
 
   const handleSend = async () => {
+    setSendSummary(null);
+
     if (!form.title.trim() || !form.message.trim()) {
-      setSendError('Title and message are required.');
+      showError('Title and message are required.');
       return;
+    }
+
+    const draft = emailDraft.trim();
+    if (draft) {
+      const err = emailValidationError(draft);
+      if (err) {
+        setEmailFieldError(err);
+        showError(err);
+        return;
+      }
+    }
+
+    for (const email of extraEmails) {
+      const err = emailValidationError(email);
+      if (err) {
+        setEmailFieldError(err);
+        showError(err);
+        return;
+      }
     }
 
     const emails = emailsForSend();
 
     if (form.recipientMode === 'typed') {
       if (!wantsEmail) {
-        setSendError('Typed-email-only delivery requires Email or Both channel.');
+        showError('Typed-email-only delivery requires Email or Both channel.');
         return;
       }
       if (emails.length === 0) {
-        setSendError('Type at least one email address (then Send — you do not need to click Add).');
+        const msg = 'Type a full email address (e.g. name@gmail.com) before sending.';
+        setEmailFieldError(msg);
+        showError(msg);
         return;
       }
     }
     if (form.recipientMode === 'selected' && selectedIds.size === 0 && emails.length === 0) {
-      setSendError('Select workers from the list or add at least one email address.');
+      showError('Select workers from the list or add at least one email address.');
       return;
     }
     if (wantsInApp && form.recipientMode === 'selected' && selectedIds.size === 0) {
-      setSendError('In-app delivery needs at least one worker selected (typed emails are email-only).');
+      showError('In-app delivery needs at least one worker selected (typed emails are email-only).');
       return;
     }
     if (wantsInApp && form.recipientMode === 'typed') {
-      setSendError('In-app cannot go to typed emails only — switch channel to Email, or select workers.');
+      showError('In-app cannot go to typed emails only — switch channel to Email, or select workers.');
       return;
     }
     if (wantsEmail && form.recipientMode === 'selected' && selectedIds.size === 0 && emails.length === 0) {
-      setSendError('Email delivery needs workers or typed email addresses.');
+      showError('Email delivery needs workers or typed email addresses.');
       return;
     }
 
     setSending(true);
     setSendError(null);
+    setEmailFieldError(null);
     setSendSummary(null);
 
     try {
@@ -212,7 +285,6 @@ export default function AdminNotificationsPage() {
       if (form.recipientMode === 'selected' && selectedIds.size > 0) {
         payload.worker_ids = Array.from(selectedIds);
       }
-      // Typed-only: no workers — backend accepts extra_emails with target_type specific.
       if (form.recipientMode === 'typed') {
         payload.worker_ids = [];
       }
@@ -230,16 +302,19 @@ export default function AdminNotificationsPage() {
       let summary = parts.length ? `Sent — ${parts.join(', ')}.` : 'Request completed.';
       if (result.email_failures.length) {
         summary += ` Failures: ${result.email_failures.slice(0, 3).join('; ')}${result.email_failures.length > 3 ? '…' : ''}`;
+        showError(summary);
+      } else {
+        setSendSummary(summary);
       }
-      setSendSummary(summary);
 
       setForm(emptyForm);
       setSelectedIds(new Set());
       setExtraEmails([]);
       setEmailDraft('');
       setRecipientQuery('');
+      setEmailFieldError(null);
     } catch (e) {
-      setSendError(e instanceof Error ? e.message : 'Failed to send notification.');
+      showError(e instanceof Error ? e.message : 'Failed to send notification.');
     } finally {
       setSending(false);
     }
@@ -445,28 +520,39 @@ export default function AdminNotificationsPage() {
               <div className="flex gap-2 max-w-md">
                 <input
                   type="email"
-                  placeholder="you@gmail.com — type and click Send"
+                  placeholder="name@gmail.com — type and click Send"
                   value={emailDraft}
-                  onChange={(e) => setEmailDraft(e.target.value)}
+                  onChange={(e) => {
+                    setEmailDraft(e.target.value);
+                    setEmailFieldError(null);
+                    if (sendError) setSendError(null);
+                  }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
                       addEmailTag();
                     }
                   }}
-                  className="flex-1 bg-brand-surface-high border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-accent/50"
+                  aria-invalid={Boolean(draftEmailError || emailFieldError)}
+                  className={`flex-1 bg-brand-surface-high rounded-lg px-3 py-2 text-sm text-white focus:outline-none ${
+                    draftEmailError || emailFieldError
+                      ? 'border border-danger/60 focus:border-danger'
+                      : 'border border-white/10 focus:border-emerald-accent/50'
+                  }`}
                 />
                 <button type="button" onClick={() => addEmailTag()} className="btn-secondary text-xs px-3">
                   Add
                 </button>
               </div>
+              {(draftEmailError || emailFieldError) && (
+                <p className="text-xs text-danger flex items-start gap-1.5">
+                  <AlertCircle size={12} className="mt-0.5 shrink-0" />
+                  {emailFieldError ?? draftEmailError}
+                </p>
+              )}
               <p className="text-[11px] text-theme-muted">
                 You can type an address and click <span className="text-theme-heading">Send</span> directly — no need to click Add first.
-                Typed addresses get email only (not in-app). Outcomes also appear in{' '}
-                <Link href="/admin/payroll/receipts" className="text-emerald-accent hover:underline">
-                  Communications → Delivery Log
-                </Link>
-                .
+                Use a full address like <span className="text-theme-heading">name@gmail.com</span>.
               </p>
             </div>
           )}
@@ -478,18 +564,35 @@ export default function AdminNotificationsPage() {
           )}
         </div>
 
-        {sendError && <p className="text-danger text-sm">{sendError}</p>}
+        {sendError && (
+          <div
+            role="alert"
+            className="flex items-start gap-2.5 p-3 rounded-xl border border-danger/40 bg-danger/15 text-danger text-sm"
+          >
+            <AlertCircle size={16} className="mt-0.5 shrink-0" />
+            <span className="flex-1 leading-relaxed">{sendError}</span>
+            <button
+              type="button"
+              onClick={() => setSendError(null)}
+              className="opacity-70 hover:opacity-100"
+              aria-label="Dismiss error"
+            >
+              <X size={14} />
+            </button>
+          </div>
+        )}
         {sendSummary && (
-          <p className={`text-sm flex items-start gap-1.5 ${sendSummary.includes('Failures') ? 'text-amber-400' : 'text-emerald-accent'}`}>
-            <CheckCircle size={14} className="mt-0.5 shrink-0" /> {sendSummary}
-          </p>
+          <div className="flex items-start gap-2.5 p-3 rounded-xl border border-emerald-accent/30 bg-emerald-accent/10 text-emerald-accent text-sm">
+            <CheckCircle size={16} className="mt-0.5 shrink-0" />
+            <span className="flex-1 leading-relaxed">{sendSummary}</span>
+          </div>
         )}
 
         <button
           type="button"
-          className="btn-primary flex items-center gap-2"
+          className="btn-primary flex items-center gap-2 disabled:opacity-50"
           onClick={handleSend}
-          disabled={sending}
+          disabled={sending || Boolean(draftEmailError)}
         >
           <Send size={15} />
           {sending ? 'Sending…' : 'Send Notification'}
