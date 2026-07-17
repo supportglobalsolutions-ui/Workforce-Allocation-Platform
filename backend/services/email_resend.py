@@ -19,6 +19,47 @@ logger = logging.getLogger(__name__)
 
 RESEND_ENDPOINT = "https://api.resend.com/emails"
 
+# Domains Resend (and RFC examples) reject as recipients — fail fast with a clear message
+# instead of a opaque 422 from the API (affects notifications, broadcasts, payslips).
+_BLOCKED_RECIPIENT_DOMAINS = frozenset({
+    "example.com",
+    "example.org",
+    "example.net",
+    "test.com",
+    "invalid",
+    "localhost",
+})
+
+
+def blocked_recipient_reason(to_email: str) -> str | None:
+    domain = to_email.rsplit("@", 1)[-1].strip().lower()
+    if domain in _BLOCKED_RECIPIENT_DOMAINS or domain.endswith(".example"):
+        return (
+            f"Cannot send to @{domain} — Resend rejects reserved/example domains. "
+            "Use a real inbox (or Notifications → typed extra email / Payslips → override email)."
+        )
+    return None
+
+
+# Reuse TLS connections across a batch send (broadcast / payslips).
+# Closed on app shutdown via close_http_client() from the FastAPI lifespan.
+_http: httpx.Client | None = None
+
+
+def _get_http() -> httpx.Client:
+    global _http
+    if _http is None or _http.is_closed:
+        _http = httpx.Client(timeout=30.0)
+    return _http
+
+
+def close_http_client() -> None:
+    """Release the shared Resend HTTP client (call from app lifespan shutdown)."""
+    global _http
+    if _http is not None and not _http.is_closed:
+        _http.close()
+    _http = None
+
 
 def send_email(
     db: Session,
@@ -37,7 +78,10 @@ def send_email(
     """
     status, error = "sent", None
 
-    if not settings.RESEND_API_KEY:
+    blocked = blocked_recipient_reason(to_email)
+    if blocked:
+        status, error = "failed", blocked
+    elif not settings.RESEND_API_KEY:
         status, error = "failed", "RESEND_API_KEY is not configured"
     else:
         payload: dict[str, Any] = {
@@ -49,11 +93,10 @@ def send_email(
         if attachments:
             payload["attachments"] = attachments
         try:
-            resp = httpx.post(
+            resp = _get_http().post(
                 RESEND_ENDPOINT,
                 json=payload,
                 headers={"Authorization": f"Bearer {settings.RESEND_API_KEY}"},
-                timeout=30.0,
             )
             if resp.status_code >= 400:
                 status, error = "failed", f"Resend {resp.status_code}: {resp.text[:500]}"

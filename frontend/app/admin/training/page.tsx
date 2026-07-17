@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -613,6 +614,7 @@ export default function AdminTrainingPage() {
           ) : undefined
         }
       />
+      <AdminSectionTabs tabs={QUALITY_TABS} />
 
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>

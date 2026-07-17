@@ -137,3 +137,13 @@ class CountryCostPoolResponse(CountryCostPoolUpsert):
     model_config = ConfigDict(from_attributes=True)
     id:                UUID
     payroll_period_id: UUID
+
+
+# ── Worker payroll overview (wallet / payments page) ───────────────────────────
+
+class WorkerPayrollOverviewResponse(SQLModel):
+    pay_tier: str
+    rate_per_hour: Optional[Decimal] = None
+    rate_currency: Optional[str] = None
+    current_period: Optional[PayrollPeriodResponse] = None
+    period_summary: Optional[PayrollWorkerSummaryResponse] = None

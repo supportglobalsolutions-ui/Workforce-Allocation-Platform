@@ -1,7 +1,7 @@
 import csv
 import io
 import zipfile
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -24,6 +24,7 @@ from schemas.payroll import (
     PayrollPeriodUpdate,
     PayrollWorkerSummaryResponse,
     PayrollWorkerSummaryUpdate,
+    WorkerPayrollOverviewResponse,
 )
 from services import payroll_engine
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
@@ -278,6 +279,58 @@ def my_payroll_history(
         resp.period_label = period.label
         result.append(resp)
     return result
+
+
+@router.get("/my-overview", response_model=WorkerPayrollOverviewResponse)
+def my_payroll_overview(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Current payroll period, pay tier, and applicable rate for the worker payments page."""
+    worker = get_worker_for_user(db, current_user)
+    periods = db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).all()
+    today = date.today()
+
+    current = next((p for p in periods if p.start_date <= today <= p.end_date), None)
+    if not current:
+        current = next(
+            (p for p in periods if p.status != PayrollPeriodStatusEnum.paid),
+            None,
+        )
+    if not current and periods:
+        current = periods[0]
+
+    rate_amount = None
+    rate_currency = None
+    if current:
+        rate_entry = payroll_engine._rate_entry_for(db, worker, current)
+        if rate_entry is not None:
+            rate_amount = rate_entry.amount
+            rate_currency = rate_entry.currency
+
+    period_summary = None
+    if current:
+        summary = db.exec(
+            select(PayrollWorkerSummary).where(
+                PayrollWorkerSummary.payroll_period_id == current.id,
+                PayrollWorkerSummary.worker_id == worker.id,
+            )
+        ).first()
+        if summary and current.status in (
+            PayrollPeriodStatusEnum.calculated,
+            PayrollPeriodStatusEnum.approved,
+            PayrollPeriodStatusEnum.paid,
+        ):
+            period_summary = PayrollWorkerSummaryResponse.model_validate(summary)
+            period_summary.period_label = current.label
+
+    return WorkerPayrollOverviewResponse(
+        pay_tier=worker.pay_tier or "unassigned",
+        rate_per_hour=rate_amount,
+        rate_currency=rate_currency,
+        current_period=PayrollPeriodResponse.model_validate(current) if current else None,
+        period_summary=period_summary,
+    )
 
 
 # ── Country cost pools ─────────────────────────────────────────────────────────

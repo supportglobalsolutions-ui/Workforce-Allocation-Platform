@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { SYSTEM_TABS } from '@/components/platform/AdminSectionTabs';
 import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
 import { api } from '@/lib/api';
@@ -50,6 +51,7 @@ export default function AuditLogsPage() {
         title="Audit Logs"
         description="Append-only audit trail — every material action with actor, entity, timestamp, and value changes."
       />
+      <AdminSectionTabs tabs={SYSTEM_TABS} />
       <FilterBar
         searchPlaceholder="Search audit logs..."
         filters={[

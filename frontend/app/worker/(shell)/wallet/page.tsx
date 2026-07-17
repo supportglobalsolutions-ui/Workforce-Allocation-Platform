@@ -1,7 +1,18 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronUp, Mail, Wallet as WalletIcon } from 'lucide-react';
+import {
+  AlertCircle,
+  Bell,
+  CalendarDays,
+  CheckCircle,
+  ChevronDown,
+  ChevronUp,
+  Layers,
+  Mail,
+  Wallet as WalletIcon,
+} from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -44,6 +55,42 @@ interface PayslipSummary {
   base_equivalent: number | null;
 }
 
+interface PayrollPeriod {
+  id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  currency: string;
+  status: string;
+  wallet_pushed_at: string | null;
+  paid_at: string | null;
+}
+
+interface PeriodSummary {
+  hours_logged: number;
+  rate_per_hour: number;
+  final_net: number;
+  local_currency: string;
+  period_label: string | null;
+}
+
+interface PayrollOverview {
+  pay_tier: string;
+  rate_per_hour: number | null;
+  rate_currency: string | null;
+  current_period: PayrollPeriod | null;
+  period_summary: PeriodSummary | null;
+}
+
+interface PaymentNotification {
+  id: string;
+  title: string;
+  message: string;
+  category: string;
+  is_read: boolean;
+  created_at: string;
+}
+
 type WalletTab = 'transactions' | 'payslips';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -51,10 +98,17 @@ type WalletTab = 'transactions' | 'payslips';
 const fmt = (x: number | null | undefined) =>
   Number(x ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+const PERIOD_STATUS: Record<string, { label: string; classes: string }> = {
+  open: { label: 'Open', classes: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  calculated: { label: 'Calculated', classes: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+  approved: { label: 'Approved', classes: 'bg-emerald-accent/20 text-emerald-accent border-emerald-accent/30' },
+  paid: { label: 'Paid', classes: 'bg-gold-accent/20 text-gold-accent border-gold-accent/30' },
+};
+
 const TX_CHIP: Record<string, { label: string; classes: string }> = {
   payroll_credit: { label: 'Payroll credit', classes: 'bg-emerald-accent/20 text-emerald-accent border-emerald-accent/30' },
-  adjustment:     { label: 'Adjustment',     classes: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
-  payout:         { label: 'Payout',         classes: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+  adjustment: { label: 'Adjustment', classes: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+  payout: { label: 'Payout', classes: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
 };
 
 function txSign(tx: WalletTransaction): { sign: '+' | '−'; color: string } {
@@ -65,14 +119,22 @@ function txSign(tx: WalletTransaction): { sign: '+' | '−'; color: string } {
     : { sign: '+', color: 'text-blue-400' };
 }
 
+function formatDateRange(start: string, end: string) {
+  const opts: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric', year: 'numeric' };
+  return `${new Date(start).toLocaleDateString(undefined, opts)} – ${new Date(end).toLocaleDateString(undefined, opts)}`;
+}
+
+function formatTier(tier: string) {
+  if (!tier || tier === 'unassigned') return 'Unassigned';
+  return tier.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+}
+
 // ── Payslip card ───────────────────────────────────────────────────────────────
 
 function PayslipCard({ slip }: { slip: PayslipSummary }) {
   const [open, setOpen] = useState(false);
 
   const hasFx = slip.fx_rate != null && slip.base_currency != null && slip.base_equivalent != null;
-  // Scale that converts local amounts to base-currency equivalents, derived from
-  // the summary itself so it works regardless of the fx-rate direction.
   const baseScale = hasFx && Number(slip.final_net) !== 0
     ? Number(slip.base_equivalent) / Number(slip.final_net)
     : null;
@@ -154,6 +216,8 @@ export default function WalletPage() {
   const [wallet, setWallet] = useState<Wallet | null>(null);
   const [transactions, setTransactions] = useState<WalletTransaction[]>([]);
   const [payslips, setPayslips] = useState<PayslipSummary[]>([]);
+  const [overview, setOverview] = useState<PayrollOverview | null>(null);
+  const [paymentNotifs, setPaymentNotifs] = useState<PaymentNotification[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WalletTab>('transactions');
@@ -163,11 +227,30 @@ export default function WalletPage() {
       api.get<Wallet>('/wallets/me'),
       api.get<WalletTransaction[]>('/wallets/me/transactions'),
       api.get<PayslipSummary[]>('/payroll/my-summaries'),
+      api.get<PayrollOverview>('/payroll/my-overview'),
+      api.get<PaymentNotification[]>('/notifications/me?category=payment'),
     ])
-      .then(([w, txs, slips]) => { setWallet(w); setTransactions(txs); setPayslips(slips); })
+      .then(([w, txs, slips, ov, notifs]) => {
+        setWallet(w);
+        setTransactions(txs);
+        setPayslips(slips);
+        setOverview(ov);
+        setPaymentNotifs(notifs);
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load wallet'))
       .finally(() => setLoading(false));
   }, []);
+
+  const markPaymentRead = async (id: string) => {
+    try {
+      await api.patch(`/notifications/${id}/read`, {});
+      setPaymentNotifs((prev) =>
+        prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)),
+      );
+    } catch {
+      /* ignore */
+    }
+  };
 
   if (loading) {
     return (
@@ -180,7 +263,7 @@ export default function WalletPage() {
   if (error) {
     return (
       <div className="max-w-4xl mx-auto">
-        <PageHeader title="Wallet" description="Your earnings balance and payment history." />
+        <PageHeader title="Wallet & Payments" description="Balance, pay period, tier, and payment alerts." />
         <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm">
           <AlertCircle size={16} /> {error}
         </div>
@@ -188,9 +271,16 @@ export default function WalletPage() {
     );
   }
 
+  const period = overview?.current_period ?? null;
+  const statusMeta = period ? (PERIOD_STATUS[period.status] ?? { label: period.status, classes: 'bg-white/10 text-theme-muted border-white/10' }) : null;
+  const summary = overview?.period_summary;
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-10">
-      <PageHeader title="Wallet" description="Your earnings balance and payment history." />
+      <PageHeader
+        title="Wallet & Payments"
+        description="Your balance, current payroll period, pay tier, and payment notifications."
+      />
 
       {/* Hero balance card */}
       <div className="relative glass-panel rounded-2xl border border-emerald-accent/20 overflow-hidden p-6 md:p-8">
@@ -219,6 +309,121 @@ export default function WalletPage() {
           Payslips are emailed to you each pay period from gsdeck.com.
         </div>
       </div>
+
+      {/* Period + tier */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div className="glass-panel rounded-2xl border border-white/5 p-5 space-y-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-theme-muted">
+            <CalendarDays size={14} className="text-emerald-accent" />
+            Current payroll period
+          </div>
+          {period ? (
+            <>
+              <div className="flex items-start justify-between gap-3">
+                <p className="text-lg font-bold text-white leading-snug">{period.label}</p>
+                {statusMeta && (
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border shrink-0 ${statusMeta.classes}`}>
+                    {statusMeta.label}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs text-theme-muted">{formatDateRange(period.start_date, period.end_date)}</p>
+              {summary && (
+                <div className="pt-3 border-t border-white/[0.06] grid grid-cols-2 gap-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-theme-muted">Hours</p>
+                    <p className="text-sm font-semibold text-white tabular-nums mt-0.5">{fmt(summary.hours_logged)} h</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] uppercase tracking-wider text-theme-muted">Est. net</p>
+                    <p className="text-sm font-semibold text-emerald-accent tabular-nums mt-0.5">
+                      {fmt(summary.final_net)} {summary.local_currency}
+                    </p>
+                  </div>
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="text-sm text-theme-muted">No active payroll period yet.</p>
+          )}
+        </div>
+
+        <div className="glass-panel rounded-2xl border border-white/5 p-5 space-y-3">
+          <div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest text-theme-muted">
+            <Layers size={14} className="text-gold-accent" />
+            Payment tier
+          </div>
+          <p className="text-lg font-bold text-white">{formatTier(overview?.pay_tier ?? 'unassigned')}</p>
+          {overview?.rate_per_hour != null ? (
+            <p className="text-sm text-theme-muted">
+              Rate{' '}
+              <span className="font-semibold text-white tabular-nums">
+                {fmt(overview.rate_per_hour)} {overview.rate_currency ?? wallet?.currency}/hr
+              </span>
+            </p>
+          ) : (
+            <p className="text-xs text-theme-muted">No hourly rate assigned for this period yet.</p>
+          )}
+          <p className="text-xs text-theme-muted pt-2 border-t border-white/[0.06]">
+            Your tier determines the base rate used when payroll is calculated.
+          </p>
+        </div>
+      </div>
+
+      {/* Payment notifications */}
+      <section aria-label="Payment notifications" className="space-y-3">
+        <div className="flex items-center justify-between gap-3">
+          <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted flex items-center gap-2">
+            <Bell size={14} className="text-emerald-accent" />
+            Payment notifications
+          </h2>
+          <Link
+            href="/worker/notifications"
+            className="text-xs font-semibold text-emerald-accent hover:text-emerald-accent/80 transition-colors"
+          >
+            All notifications
+          </Link>
+        </div>
+
+        {paymentNotifs.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-8 text-center">
+            <p className="text-sm text-theme-muted">
+              No payment alerts yet. You&apos;ll be notified here when payroll is credited to your wallet.
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {paymentNotifs.slice(0, 8).map((n) => (
+              <div
+                key={n.id}
+                className={`glass-panel rounded-xl border p-4 space-y-1.5 ${
+                  n.is_read ? 'border-white/5 opacity-80' : 'border-emerald-accent/25'
+                }`}
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {!n.is_read && <span className="w-2 h-2 rounded-full bg-emerald-accent shrink-0" />}
+                    <span className="text-sm font-semibold text-white truncate">{n.title}</span>
+                  </div>
+                  <span className="text-[10px] text-theme-muted shrink-0 whitespace-nowrap">
+                    {new Date(n.created_at).toLocaleString()}
+                  </span>
+                </div>
+                <p className="text-xs text-theme-muted leading-relaxed">{n.message}</p>
+                {!n.is_read && (
+                  <button
+                    type="button"
+                    className="text-[10px] text-emerald-accent hover:underline flex items-center gap-1"
+                    onClick={() => markPaymentRead(n.id)}
+                  >
+                    <CheckCircle size={11} /> Mark read
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
 
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">

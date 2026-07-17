@@ -28,6 +28,7 @@ from models.enums import (
     WalletTxTypeEnum,
     WorkerTypeEnum,
 )
+from models.notification import Notification
 from models.partner import PartnerArrangement
 from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
 from models.rate_table import RateTableEntry
@@ -52,8 +53,8 @@ def _fx_to_local(db: Session, period: PayrollPeriod, local_currency: str) -> Opt
     return get_rate(db, period.currency, local_currency)
 
 
-def _hourly_rate_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[Decimal]:
-    """Latest applicable hourly rate: worker-specific first, then pay-tier."""
+def _rate_entry_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[RateTableEntry]:
+    """Latest applicable rate entry: worker-specific first, then pay-tier."""
     stmt = (
         select(RateTableEntry)
         .where(
@@ -77,7 +78,13 @@ def _hourly_rate_for(db: Session, worker: Worker, period: PayrollPeriod) -> Opti
         return None
     if entry.effective_to and entry.effective_to < period.start_date:
         return None
-    return entry.amount
+    return entry
+
+
+def _hourly_rate_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[Decimal]:
+    """Latest applicable hourly rate: worker-specific first, then pay-tier."""
+    entry = _rate_entry_for(db, worker, period)
+    return entry.amount if entry else None
 
 
 def _active_arrangement(db: Session, partner_entity_id: UUID, period: PayrollPeriod) -> Optional[PartnerArrangement]:
@@ -412,6 +419,17 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
         wallet.currency = summary.local_currency
         wallet.updated_at = datetime.now(timezone.utc)
         db.add(wallet)
+        db.add(Notification(
+            sender_admin_id=admin_user_id,
+            title=f"Payroll credited — {period.label}",
+            message=(
+                f"Your wallet was credited {summary.final_net} {summary.local_currency} "
+                f"for payroll period {period.label}."
+            ),
+            category="payment",
+            target_type="specific",
+            target_worker_id=summary.worker_id,
+        ))
         credited += 1
 
     period.wallet_pushed_at = datetime.now(timezone.utc)

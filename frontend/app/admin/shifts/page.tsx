@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Check, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { OPERATIONS_TABS } from '@/components/platform/AdminSectionTabs';
 import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
@@ -137,6 +138,7 @@ export default function AdminShiftsPage() {
         title="Shifts"
         description="Review and approve worker schedule submissions."
       />
+      <AdminSectionTabs tabs={OPERATIONS_TABS} />
       <FilterBar
         searchPlaceholder="Search by worker name…"
         onSearch={setSearch}

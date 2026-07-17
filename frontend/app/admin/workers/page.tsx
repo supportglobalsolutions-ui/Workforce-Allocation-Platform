@@ -6,6 +6,7 @@ import {
   Search, ShieldCheck, ShieldOff, User, UserPlus, X, XCircle,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { PEOPLE_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
@@ -919,6 +920,7 @@ export default function PeopleManagementPage() {
         title="People Management"
         description="Manage worker profiles, admin accounts, and system access."
       />
+      <AdminSectionTabs tabs={PEOPLE_TABS} />
 
       {/* Tab bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">

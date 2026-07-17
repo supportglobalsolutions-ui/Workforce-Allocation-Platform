@@ -27,9 +27,26 @@ function getRoleColor(r: PortalRole) {
   }
 }
 
+function sectionMatch(pathname: string | null, href: string): boolean {
+  if (!pathname) return false;
+  if (pathname === href || pathname.startsWith(href + '/')) return true;
+
+  // Consolidated admin hubs: highlight parent for sibling tab routes
+  const hubs: Record<string, string[]> = {
+    '/admin/workers': ['/admin/workers', '/admin/partners', '/admin/clients'],
+    '/admin/rdp': ['/admin/rdp', '/admin/live-sessions', '/admin/sessions', '/admin/shifts'],
+    '/admin/quality': ['/admin/quality', '/admin/assessments', '/admin/training'],
+    '/admin/payroll': ['/admin/payroll', '/admin/wallets', '/admin/currencies', '/admin/reports'],
+    '/admin/settings': ['/admin/settings', '/admin/audit-logs'],
+  };
+  const paths = hubs[href];
+  if (!paths) return false;
+  return paths.some((p) => pathname === p || pathname.startsWith(p + '/'));
+}
+
 function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
   const pathname = usePathname();
-  const isActive = pathname === item.href || pathname?.startsWith(item.href + '/');
+  const isActive = sectionMatch(pathname, item.href);
 
   return (
     <Link
@@ -51,6 +68,7 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
 export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSidebarProps) {
   const { session, logout, canAccess } = useAuth();
   const [isDropdownOpen, setIsDropdownOpen] = useState(false);
+
   const items = PORTAL_SIDEBAR_NAV[role];
 
   const allowedPortals = (session?.allowedPortals ?? [role]).filter((p) => canAccess(p));

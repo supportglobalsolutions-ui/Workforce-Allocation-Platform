@@ -85,9 +85,23 @@ def require_firebase() -> None:
         )
 
 
+# Tolerance (seconds) for clock drift between this server and Google's token
+# issuer. Prevents spurious "Token used too early" failures when the local
+# clock lags slightly behind Firebase. Max accepted by firebase-admin is 60.
+_CLOCK_SKEW_SECONDS = 30
+
+
 def verify_firebase_token(id_token: str) -> dict:
     try:
-        return auth.verify_id_token(id_token, check_revoked=False)
+        try:
+            return auth.verify_id_token(
+                id_token,
+                check_revoked=False,
+                clock_skew_seconds=_CLOCK_SKEW_SECONDS,
+            )
+        except TypeError:
+            # Older firebase-admin without clock_skew_seconds support.
+            return auth.verify_id_token(id_token, check_revoked=False)
     except auth.RevokedIdTokenError:
         raise ValueError("Token has been revoked")
     except auth.ExpiredIdTokenError:

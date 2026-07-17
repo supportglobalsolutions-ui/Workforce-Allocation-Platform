@@ -7,6 +7,7 @@ import {
   Settings, Timer, Trash2, Upload, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import {
@@ -1046,6 +1047,7 @@ export default function AssessmentsPage() {
           </div>
         }
       />
+      <AdminSectionTabs tabs={QUALITY_TABS} />
 
       {/* Stats */}
       <div className="grid grid-cols-3 gap-4 mb-6">

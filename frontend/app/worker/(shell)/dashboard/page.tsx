@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { AlertTriangle, ChevronRight, Clock, Monitor, PenLine, Play, Star, Trophy } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Clock, Monitor, Play, Star, Trophy, Wallet } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
@@ -26,6 +26,7 @@ interface QualityScore {
 
 interface Me {
   work_ready: boolean;
+  worker_type: string;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -153,15 +154,15 @@ export default function WorkerDashboard() {
             <ChevronRight size={16} className="shrink-0 text-theme-muted opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0" />
           </Link>
           <Link
-            href="/worker/external-session"
+            href="/worker/wallet"
             className="group glass-panel glass-panel-hover rounded-2xl border border-white/5 p-5 flex items-center gap-4 transition-all duration-300"
           >
-            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-white/10 bg-white/5 text-white transition-transform duration-300 group-hover:scale-105">
-              <PenLine size={20} />
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-gold-accent/20 bg-gold-accent/10 text-gold-accent transition-transform duration-300 group-hover:scale-105">
+              <Wallet size={20} />
             </span>
             <span className="min-w-0 flex-1">
-              <span className="block text-sm font-bold text-white">Log session</span>
-              <span className="block text-xs text-theme-muted mt-0.5 truncate">Record external work</span>
+              <span className="block text-sm font-bold text-white">Wallet & payments</span>
+              <span className="block text-xs text-theme-muted mt-0.5 truncate">Period, tier & pay alerts</span>
             </span>
             <ChevronRight size={16} className="shrink-0 text-theme-muted opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0" />
           </Link>

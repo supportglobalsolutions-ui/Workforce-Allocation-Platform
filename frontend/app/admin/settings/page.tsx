@@ -2,6 +2,7 @@
 
 import { ExternalLink } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { SYSTEM_TABS } from '@/components/platform/AdminSectionTabs';
 
 const FEATURE_TOGGLES = [
   { name: 'WhatsApp Notifications',   enabled: false, note: 'Deferred until Business account active' },
@@ -32,6 +33,7 @@ export default function SystemSettingsPage() {
         title="System Settings"
         description="Feature toggles, integrations, leaderboard, and environment configuration."
       />
+      <AdminSectionTabs tabs={SYSTEM_TABS} />
 
       <div className="grid lg:grid-cols-2 gap-6">
         {/* Roles & Permissions */}

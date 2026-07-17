@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useEffect, useState } from 'react';
-import { Bell, Handshake, PanelLeftClose, PanelLeftOpen, Menu, Search, X } from 'lucide-react';
+import { AlignLeft, Bell, ChevronLeft, ChevronRight, Handshake, LogOut, Menu, Search, X } from 'lucide-react';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import LogoMark from '@/components/theme/LogoMark';
 import { useAuth } from '@/lib/auth/AuthProvider';
@@ -30,7 +30,7 @@ export default function TopNav({
   showSidebarToggle = false,
 }: TopNavProps) {
   const pathname = usePathname();
-  const { session } = useAuth();
+  const { session, logout } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [isPartner, setIsPartner] = useState(false);
   const [partnerName, setPartnerName] = useState<string | null>(null);
@@ -50,6 +50,11 @@ export default function TopNav({
     ? session.displayName.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
     : '?';
 
+  const notificationsHref =
+    role === 'worker' ? '/worker/notifications'
+      : role === 'leadership' ? '/leadership/ceo-command'
+      : '/admin/notifications';
+
   return (
     <>
     <header className="h-14 border-b border-theme bg-brand-surface-lowest px-4 md:px-6 flex items-center gap-4 sticky top-0 z-50 shrink-0">
@@ -60,12 +65,13 @@ export default function TopNav({
             type="button"
             onClick={onToggleSidebar}
             aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="p-2 rounded-xl bg-emerald-accent/10 text-emerald-accent border border-emerald-accent/25 shadow-[0_0_14px_color-mix(in_srgb,var(--emerald-accent)_18%,transparent)] hover:bg-emerald-accent/20 hover:border-emerald-accent/45 hover:shadow-[0_0_20px_color-mix(in_srgb,var(--emerald-accent)_30%,transparent)] active:scale-95 transition-all shrink-0"
+            className="group flex items-center gap-0.5 p-1.5 rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/[0.06] border border-transparent hover:border-theme active:scale-95 transition-all shrink-0"
           >
+            <AlignLeft size={18} strokeWidth={2} />
             {sidebarCollapsed ? (
-              <PanelLeftOpen size={18} />
+              <ChevronRight size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
             ) : (
-              <PanelLeftClose size={18} />
+              <ChevronLeft size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
             )}
           </button>
         )}
@@ -89,7 +95,7 @@ export default function TopNav({
         )}
       </div>
 
-      {/* Right — bell, theme, user */}
+      {/* Right — bell, theme, user, sign out */}
       <div className="flex items-center gap-2 shrink-0">
         {variant === 'portal' && role === 'worker' && isPartner && (
           <span
@@ -113,7 +119,7 @@ export default function TopNav({
         )}
         {variant === 'portal' && (
           <Link
-            href="/admin/notifications"
+            href={notificationsHref}
             className="relative p-2 rounded-full hover:bg-white/5 transition-colors"
           >
             <Bell size={18} className="text-theme-muted" />
@@ -122,15 +128,25 @@ export default function TopNav({
         )}
         <ThemeToggle variant="icon" />
         {variant === 'portal' && session && (
-          <div className="flex items-center gap-2.5 pl-2 ml-1 border-l border-theme">
-            <span className="w-8 h-8 rounded-full bg-emerald-accent/15 text-emerald-accent flex items-center justify-center text-[11px] font-black shrink-0">
-              {initials}
-            </span>
-            <div className="hidden lg:flex flex-col leading-tight">
-              <span className="text-xs font-bold text-theme-heading truncate max-w-[140px]">{session.displayName}</span>
-              <span className="text-[10px] text-theme-muted">{role ? ROLE_LABELS[role] : ''}</span>
+          <>
+            <div className="flex items-center gap-2.5 pl-2 ml-1 border-l border-theme">
+              <div className="hidden lg:flex flex-col leading-tight text-right">
+                <span className="text-xs font-bold text-theme-heading truncate max-w-[140px]">{session.displayName}</span>
+                <span className="text-[10px] text-theme-muted">{role ? ROLE_LABELS[role] : ''}</span>
+              </div>
+              <span className="w-8 h-8 rounded-full bg-emerald-accent/15 text-emerald-accent flex items-center justify-center text-[11px] font-black shrink-0">
+                {initials}
+              </span>
             </div>
-          </div>
+            <button
+              type="button"
+              onClick={logout}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-brand-background bg-gold-accent hover:bg-gold-accent/90 active:scale-[0.98] transition-colors shrink-0"
+            >
+              <LogOut size={14} />
+              <span className="hidden sm:inline">Sign out</span>
+            </button>
+          </>
         )}
       </div>
     </header>

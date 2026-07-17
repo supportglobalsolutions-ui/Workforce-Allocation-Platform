@@ -1,4 +1,5 @@
 import base64
+import logging
 from typing import Optional
 from uuid import UUID
 
@@ -17,12 +18,14 @@ from services.email_resend import render_broadcast_html, render_payslip_html, se
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 class SendPayslipsRequest(BaseModel):
     payroll_period_id: UUID
     worker_ids: Optional[list[UUID]] = None  # None = every worker in the period
     attach_pdf: bool = False
+    override_email: Optional[str] = None     # send every payslip to this address instead (testing)
 
 
 class BroadcastRequest(BaseModel):
@@ -31,6 +34,8 @@ class BroadcastRequest(BaseModel):
     countries: Optional[list[str]] = None       # None = all countries
     worker_type: Optional[str] = None           # gs_registered | partner_worker | None = all
     active_only: bool = False
+    extra_emails: Optional[list[str]] = None    # typed addresses for quick test / extra recipients
+    skip_workers: bool = False                  # True = only email extra_emails (fast local test)
 
 
 def _worker_email(db: Session, worker: Worker) -> Optional[str]:
@@ -60,13 +65,18 @@ def send_payslips(
     if not summaries:
         raise HTTPException(status_code=400, detail="No payslip summaries — calculate the period first.")
 
+    override = (body.override_email or "").strip()
+    if override and "@" not in override:
+        raise HTTPException(status_code=400, detail="Override email is not a valid address.")
+
     sent = failed = skipped = 0
+    errors: list[str] = []
     for summary in summaries:
         worker = db.get(Worker, summary.worker_id)
         if not worker:
             skipped += 1
             continue
-        email = _worker_email(db, worker)
+        email = override or _worker_email(db, worker)
         if not email:
             skipped += 1
             continue
@@ -107,8 +117,10 @@ def send_payslips(
             sent += 1
         else:
             failed += 1
+            if log.error and len(errors) < 5:
+                errors.append(f"{email}: {log.error}")
 
-    return {"sent": sent, "failed": failed, "skipped": skipped}
+    return {"sent": sent, "failed": failed, "skipped": skipped, "errors": errors}
 
 
 @router.post("/broadcast")
@@ -121,40 +133,88 @@ def broadcast(
     if not body.title.strip() or not body.message.strip():
         raise HTTPException(status_code=400, detail="Title and message are required.")
 
-    stmt = select(Worker)
-    if body.countries:
-        stmt = stmt.where(Worker.country.in_(body.countries))
-    if body.worker_type:
-        try:
-            stmt = stmt.where(Worker.worker_type == WorkerTypeEnum(body.worker_type))
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Invalid worker type filter.")
-    if body.active_only:
-        stmt = stmt.where(Worker.status == WorkerStatusEnum.active)
+    extra = [e.strip() for e in (body.extra_emails or []) if e and "@" in (e or "")]
+    if body.skip_workers and not extra:
+        raise HTTPException(status_code=400, detail="Provide at least one test email when skip_workers is set.")
 
-    workers = db.exec(stmt).all()
+    workers: list[Worker] = []
+    if not body.skip_workers:
+        stmt = select(Worker)
+        if body.countries:
+            stmt = stmt.where(Worker.country.in_(body.countries))
+        if body.worker_type:
+            try:
+                stmt = stmt.where(Worker.worker_type == WorkerTypeEnum(body.worker_type))
+            except ValueError:
+                raise HTTPException(status_code=400, detail="Invalid worker type filter.")
+        if body.active_only:
+            stmt = stmt.where(Worker.status == WorkerStatusEnum.active)
+        workers = list(db.exec(stmt).all())
+
     html = render_broadcast_html(body.title, body.message)
 
     sent = failed = skipped = 0
-    for worker in workers:
-        email = _worker_email(db, worker)
-        if not email:
-            skipped += 1
-            continue
-        log = send_email(
-            db,
-            to_email=email,
-            subject=body.title,
-            html=html,
-            template="broadcast",
-            worker_id=worker.id,
-        )
-        if log.status == "sent":
-            sent += 1
-        else:
-            failed += 1
+    errors: list[str] = []
+    sent_to: set[str] = set()
 
-    return {"recipients": len(workers), "sent": sent, "failed": failed, "skipped": skipped}
+    try:
+        for worker in workers:
+            email = _worker_email(db, worker)
+            if not email:
+                skipped += 1
+                continue
+            key = email.strip().lower()
+            if key in sent_to:
+                continue
+            sent_to.add(key)
+            log = send_email(
+                db,
+                to_email=email,
+                subject=body.title,
+                html=html,
+                template="broadcast",
+                worker_id=worker.id,
+            )
+            if log.status == "sent":
+                sent += 1
+            else:
+                failed += 1
+                if log.error and len(errors) < 5:
+                    errors.append(f"{email}: {log.error}")
+
+        for email in extra:
+            key = email.lower()
+            if key in sent_to:
+                continue
+            sent_to.add(key)
+            log = send_email(
+                db,
+                to_email=email,
+                subject=body.title,
+                html=html,
+                template="broadcast",
+            )
+            if log.status == "sent":
+                sent += 1
+            else:
+                failed += 1
+                if log.error and len(errors) < 5:
+                    errors.append(f"{email}: {log.error}")
+    except Exception as exc:
+        logger.exception("Broadcast failed after partial send")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Broadcast interrupted after {sent} sent / {failed} failed: {exc}",
+        ) from exc
+
+    return {
+        # Unique addresses we attempted (after skip-no-email + dedupe), not raw pool size.
+        "recipients": len(sent_to),
+        "sent": sent,
+        "failed": failed,
+        "skipped": skipped,
+        "errors": errors,
+    }
 
 
 @router.get("/log")

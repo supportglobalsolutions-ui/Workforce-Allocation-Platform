@@ -5,6 +5,7 @@ import {
   AlertCircle, Briefcase, Eye, FileCheck, Link2, Monitor, Percent, Plus, Search, Trash2, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { PEOPLE_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import KpiCard from '@/components/platform/KpiCard';
@@ -605,6 +606,7 @@ export default function ClientManagementPage() {
           </button>
         }
       />
+      <AdminSectionTabs tabs={PEOPLE_TABS} />
 
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         <KpiCard label="Total Clients" value={clients.length} icon={Briefcase} accent="emerald" />

@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PageHeader from '@/components/platform/PageHeader';
-import PayrollTabs from '@/components/platform/PayrollTabs';
+import AdminSectionTabs, { FINANCE_TABS, PAYROLL_SUBTABS } from '@/components/platform/AdminSectionTabs';
 import { Download, FileSpreadsheet } from 'lucide-react';
 import { api } from '@/lib/api';
 
@@ -32,7 +32,8 @@ export default function PayrollExportPage() {
         title="Payroll Export Center"
         description="Generate CSV or Excel payroll exports with period selector and approval logs."
       />
-      <PayrollTabs active="/admin/payroll/export" />
+      <AdminSectionTabs tabs={FINANCE_TABS} />
+      <AdminSectionTabs tabs={PAYROLL_SUBTABS} />
       {loading ? (
         <p className="text-theme-muted text-sm mt-4">Loading...</p>
       ) : error ? (

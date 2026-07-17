@@ -14,6 +14,7 @@ from routers import (
     notifications, partners, payroll, quality, rates, rdp, sessions, shifts,
     task_assessments, training, uptime_kuma, wallets, workers,
 )
+from services.email_resend import close_http_client
 from services.leaderboard_sync import run_leaderboard_sync_loop
 from services.mirror_reconcile import run_mirror_reconcile_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
@@ -24,6 +25,12 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    currency_routes = [getattr(r, "path", "") for r in app.routes if "currenc" in getattr(r, "path", "")]
+    logger.info(
+        "API ready — %s routes; currencies=%s",
+        len(app.routes),
+        bool(currency_routes),
+    )
     init_firebase()
     background_tasks = [
         asyncio.create_task(run_leaderboard_sync_loop()),
@@ -38,6 +45,7 @@ async def lifespan(app: FastAPI):
             await task
         except asyncio.CancelledError:
             pass
+    close_http_client()
 
 
 app = FastAPI(

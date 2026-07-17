@@ -5,6 +5,7 @@ import {
   AlertCircle, Archive, ChevronDown, Download, FileBarChart, FileText, PieChart,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { FINANCE_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
@@ -156,6 +157,7 @@ export default function ReportsPage() {
         title="Reports"
         description="Payroll report, revenue sharing breakdown, and bulk payslip downloads per payroll period."
       />
+      <AdminSectionTabs tabs={FINANCE_TABS} />
 
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>

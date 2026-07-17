@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Plus, Pencil, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { OPERATIONS_TABS } from '@/components/platform/AdminSectionTabs';
 import FilterBar from '@/components/platform/FilterBar';
 import StatusBadge from '@/components/platform/StatusBadge';
 import {
@@ -276,6 +277,7 @@ export default function RdpManagementPage() {
           </button>
         }
       />
+      <AdminSectionTabs tabs={OPERATIONS_TABS} />
       <FilterBar
         searchPlaceholder="Search machines..."
         filters={[

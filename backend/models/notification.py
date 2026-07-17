@@ -24,6 +24,10 @@ class Notification(SQLModel, table=True):
     )
     title: str = Field(sa_column=Column(String(255), nullable=False))
     message: str = Field(sa_column=Column(Text, nullable=False))
+    category: str = Field(
+        default="general",
+        sa_column=Column(String(32), nullable=False, server_default="general"),
+    )  # "general" | "payment"
     target_type: str = Field(sa_column=Column(String(16), nullable=False))  # "all" | "specific"
     target_worker_id: Optional[uuid.UUID] = Field(
         default=None,

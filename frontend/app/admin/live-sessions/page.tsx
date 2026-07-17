@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { OPERATIONS_TABS } from '@/components/platform/AdminSectionTabs';
 import FilterBar from '@/components/platform/FilterBar';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
@@ -81,6 +82,7 @@ export default function LiveSessionMonitorPage() {
           </span>
         }
       />
+      <AdminSectionTabs tabs={OPERATIONS_TABS} />
       <FilterBar
         searchPlaceholder="Search by worker or machine..."
         filters={[

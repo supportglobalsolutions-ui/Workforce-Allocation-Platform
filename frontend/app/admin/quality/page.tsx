@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle, RefreshCw, Star, X } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import LeaderboardTable, { LeaderboardEntry } from '@/components/platform/LeaderboardTable';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
@@ -267,6 +268,7 @@ export default function AdminQualityPage() {
           </>
         }
       />
+      <AdminSectionTabs tabs={QUALITY_TABS} />
 
       {recalcMessage && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-4">

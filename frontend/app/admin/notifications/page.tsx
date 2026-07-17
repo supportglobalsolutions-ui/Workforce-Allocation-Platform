@@ -1,7 +1,10 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import { Send, Bell, Users, User, CheckCircle, Clock } from 'lucide-react';
+import Link from 'next/link';
+import { useEffect, useMemo, useState } from 'react';
+import {
+  Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
+} from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import { api } from '@/lib/api';
 
@@ -10,6 +13,7 @@ interface NotificationResponse {
   sender_name: string | null;
   title: string;
   message: string;
+  category?: string;
   target_type: 'all' | 'specific';
   target_worker_id: string | null;
   target_worker_name: string | null;
@@ -18,6 +22,25 @@ interface NotificationResponse {
   read_at: string | null;
   created_at: string;
 }
+
+interface NotificationRecipient {
+  id: string;
+  display_name: string;
+  username: string | null;
+  email: string | null;
+}
+
+interface SendResult {
+  notifications: NotificationResponse[];
+  in_app_count: number;
+  emailed: number;
+  skipped_no_email: number;
+  email_failures: string[];
+}
+
+type Channel = 'in_app' | 'email' | 'both';
+type Category = 'general' | 'payment';
+type RecipientMode = 'all' | 'selected' | 'typed';
 
 function SentCard({ n }: { n: NotificationResponse }) {
   return (
@@ -36,11 +59,14 @@ function SentCard({ n }: { n: NotificationResponse }) {
         </span>
       </div>
       <p className="text-xs text-theme-muted leading-relaxed">{n.message}</p>
-      <div className="flex items-center gap-2 text-[10px] text-theme-muted">
+      <div className="flex items-center gap-2 text-[10px] text-theme-muted flex-wrap">
         <span className={`px-2 py-0.5 rounded-full font-medium ${n.target_type === 'all' ? 'bg-gold-accent/10 text-gold-accent' : 'bg-emerald-accent/10 text-emerald-accent'}`}>
           {n.target_type === 'all' ? 'All Workers' : `@${n.target_worker_username ?? n.target_worker_name ?? 'Unknown'}`}
         </span>
-        {n.target_type === 'specific' && (
+        {n.category === 'payment' && (
+          <span className="px-2 py-0.5 rounded-full font-medium bg-emerald-accent/10 text-emerald-accent">Payment</span>
+        )}
+        {n.target_type === 'specific' && n.target_worker_name && (
           <span className="text-theme-muted">{n.target_worker_name}</span>
         )}
       </div>
@@ -48,59 +74,170 @@ function SentCard({ n }: { n: NotificationResponse }) {
   );
 }
 
+const emptyForm = {
+  title: '',
+  message: '',
+  channels: 'in_app' as Channel,
+  category: 'general' as Category,
+  recipientMode: 'all' as RecipientMode,
+};
+
 export default function AdminNotificationsPage() {
   const [sent, setSent] = useState<NotificationResponse[]>([]);
+  const [recipients, setRecipients] = useState<NotificationRecipient[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [sendError, setSendError] = useState<string | null>(null);
-  const [sendSuccess, setSendSuccess] = useState(false);
+  const [sendSummary, setSendSummary] = useState<string | null>(null);
 
-  const [form, setForm] = useState({
-    title: '',
-    message: '',
-    target_type: 'all' as 'all' | 'specific',
-    target_username: '',
-    target_email: '',
-    lookupMode: 'username' as 'username' | 'email',
-  });
+  const [form, setForm] = useState(emptyForm);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [recipientQuery, setRecipientQuery] = useState('');
+  const [extraEmails, setExtraEmails] = useState<string[]>([]);
+  const [emailDraft, setEmailDraft] = useState('');
 
   useEffect(() => {
-    api.get<NotificationResponse[]>('/notifications/sent')
-      .then(setSent)
+    Promise.all([
+      api.get<NotificationResponse[]>('/notifications/sent'),
+      api.get<NotificationRecipient[]>('/notifications/recipients'),
+    ])
+      .then(([history, people]) => {
+        setSent(history);
+        setRecipients(people);
+      })
       .catch(() => {})
       .finally(() => setLoading(false));
   }, []);
+
+  const filteredRecipients = useMemo(() => {
+    const q = recipientQuery.trim().toLowerCase();
+    if (!q) return recipients;
+    return recipients.filter((r) =>
+      r.display_name.toLowerCase().includes(q)
+      || (r.username ?? '').toLowerCase().includes(q)
+      || (r.email ?? '').toLowerCase().includes(q),
+    );
+  }, [recipients, recipientQuery]);
+
+  const selectedWithoutEmail = useMemo(() => {
+    if (form.recipientMode === 'all') {
+      return recipients.filter((r) => !r.email);
+    }
+    return recipients.filter((r) => selectedIds.has(r.id) && !r.email);
+  }, [form.recipientMode, recipients, selectedIds]);
+
+  const wantsEmail = form.channels === 'email' || form.channels === 'both';
+  const wantsInApp = form.channels === 'in_app' || form.channels === 'both';
+
+  function toggleWorker(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function addEmailTag(raw?: string) {
+    const value = (raw ?? emailDraft).trim();
+    if (!value || !value.includes('@')) return false;
+    const key = value.toLowerCase();
+    setExtraEmails((prev) => (prev.some((e) => e.toLowerCase() === key) ? prev : [...prev, value]));
+    setEmailDraft('');
+    return true;
+  }
+
+  function removeEmailTag(email: string) {
+    setExtraEmails((prev) => prev.filter((e) => e !== email));
+  }
+
+  /** Include whatever is still sitting in the input box (user often types then hits Send). */
+  function emailsForSend(): string[] {
+    const draft = emailDraft.trim();
+    const merged = [...extraEmails];
+    if (draft && draft.includes('@') && !merged.some((e) => e.toLowerCase() === draft.toLowerCase())) {
+      merged.push(draft);
+    }
+    return merged;
+  }
 
   const handleSend = async () => {
     if (!form.title.trim() || !form.message.trim()) {
       setSendError('Title and message are required.');
       return;
     }
-    if (form.target_type === 'specific' && !form.target_username.trim() && !form.target_email.trim()) {
-      setSendError('Provide a username or email to target a specific worker.');
+
+    const emails = emailsForSend();
+
+    if (form.recipientMode === 'typed') {
+      if (!wantsEmail) {
+        setSendError('Typed-email-only delivery requires Email or Both channel.');
+        return;
+      }
+      if (emails.length === 0) {
+        setSendError('Type at least one email address (then Send — you do not need to click Add).');
+        return;
+      }
+    }
+    if (form.recipientMode === 'selected' && selectedIds.size === 0 && emails.length === 0) {
+      setSendError('Select workers from the list or add at least one email address.');
+      return;
+    }
+    if (wantsInApp && form.recipientMode === 'selected' && selectedIds.size === 0) {
+      setSendError('In-app delivery needs at least one worker selected (typed emails are email-only).');
+      return;
+    }
+    if (wantsInApp && form.recipientMode === 'typed') {
+      setSendError('In-app cannot go to typed emails only — switch channel to Email, or select workers.');
+      return;
+    }
+    if (wantsEmail && form.recipientMode === 'selected' && selectedIds.size === 0 && emails.length === 0) {
+      setSendError('Email delivery needs workers or typed email addresses.');
       return;
     }
 
     setSending(true);
     setSendError(null);
-    setSendSuccess(false);
+    setSendSummary(null);
 
     try {
-      const payload: Record<string, string> = {
+      const payload: Record<string, unknown> = {
         title: form.title.trim(),
         message: form.message.trim(),
-        target_type: form.target_type,
+        channels: form.channels,
+        category: form.category,
+        target_type: form.recipientMode === 'all' ? 'all' : 'specific',
+        extra_emails: emails,
       };
-      if (form.target_type === 'specific') {
-        if (form.lookupMode === 'username') payload.target_username = form.target_username.trim();
-        else payload.target_email = form.target_email.trim();
+      if (form.recipientMode === 'selected' && selectedIds.size > 0) {
+        payload.worker_ids = Array.from(selectedIds);
+      }
+      // Typed-only: no workers — backend accepts extra_emails with target_type specific.
+      if (form.recipientMode === 'typed') {
+        payload.worker_ids = [];
       }
 
-      const newNotif = await api.post<NotificationResponse>('/notifications', payload);
-      setSent((prev) => [newNotif, ...prev]);
-      setForm({ title: '', message: '', target_type: 'all', target_username: '', target_email: '', lookupMode: 'username' });
-      setSendSuccess(true);
-      setTimeout(() => setSendSuccess(false), 3000);
+      const result = await api.post<SendResult>('/notifications', payload);
+      if (result.notifications.length) {
+        setSent((prev) => [...result.notifications, ...prev]);
+      }
+
+      const parts = [
+        result.in_app_count > 0 ? `${result.in_app_count} in-app` : null,
+        result.emailed > 0 ? `${result.emailed} emailed` : null,
+        result.skipped_no_email > 0 ? `${result.skipped_no_email} skipped (no email)` : null,
+      ].filter(Boolean);
+      let summary = parts.length ? `Sent — ${parts.join(', ')}.` : 'Request completed.';
+      if (result.email_failures.length) {
+        summary += ` Failures: ${result.email_failures.slice(0, 3).join('; ')}${result.email_failures.length > 3 ? '…' : ''}`;
+      }
+      setSendSummary(summary);
+
+      setForm(emptyForm);
+      setSelectedIds(new Set());
+      setExtraEmails([]);
+      setEmailDraft('');
+      setRecipientQuery('');
     } catch (e) {
       setSendError(e instanceof Error ? e.message : 'Failed to send notification.');
     } finally {
@@ -112,16 +249,14 @@ export default function AdminNotificationsPage() {
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <PageHeader
         title="Notification Center"
-        description="Send targeted or broadcast notifications to workers."
+        description="Send in-app alerts, emails, or both — pick workers from the database or type addresses."
       />
 
-      {/* Compose */}
       <div className="glass-panel rounded-2xl border border-white/5 p-6 space-y-5">
         <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent flex items-center gap-2">
           <Send size={13} /> Compose Notification
         </h2>
 
-        {/* Title */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Title</label>
           <input
@@ -133,7 +268,6 @@ export default function AdminNotificationsPage() {
           />
         </div>
 
-        {/* Message */}
         <div className="flex flex-col gap-1">
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Message</label>
           <textarea
@@ -145,87 +279,214 @@ export default function AdminNotificationsPage() {
           />
         </div>
 
-        {/* Target */}
+        {/* Channel */}
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Delivery channel</label>
+          <div className="flex flex-wrap gap-2">
+            {([
+              { key: 'in_app' as Channel, label: 'In-app', icon: Monitor },
+              { key: 'email' as Channel, label: 'Email', icon: Mail },
+              { key: 'both' as Channel, label: 'Both', icon: Bell },
+            ]).map(({ key, label, icon: Icon }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, channels: key }))}
+                className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  form.channels === key
+                    ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
+                    : 'border-white/10 text-theme-muted hover:text-white'
+                }`}
+              >
+                <Icon size={13} /> {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Category */}
+        <div className="flex flex-col gap-2">
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Category</label>
+          <div className="flex gap-2">
+            {([
+              { key: 'general' as Category, label: 'General' },
+              { key: 'payment' as Category, label: 'Payment' },
+            ]).map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setForm((f) => ({ ...f, category: key }))}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold border transition-colors ${
+                  form.category === key
+                    ? 'border-gold-accent/40 bg-gold-accent/15 text-gold-accent'
+                    : 'border-white/10 text-theme-muted hover:text-white'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* Recipients */}
         <div className="flex flex-col gap-3">
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Recipients</label>
-          <div className="flex gap-4">
+          <div className="flex flex-wrap gap-4">
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="radio"
-                name="target_type"
-                value="all"
-                checked={form.target_type === 'all'}
-                onChange={() => setForm((f) => ({ ...f, target_type: 'all' }))}
+                name="recipientMode"
+                checked={form.recipientMode === 'all'}
+                onChange={() => setForm((f) => ({ ...f, recipientMode: 'all' }))}
                 className="accent-gold-400"
               />
-              <span className="text-sm text-white flex items-center gap-1.5"><Users size={14} className="text-gold-accent" /> All Workers</span>
+              <span className="text-sm text-white flex items-center gap-1.5">
+                <Users size={14} className="text-gold-accent" /> All workers
+              </span>
             </label>
             <label className="flex items-center gap-2 cursor-pointer">
               <input
                 type="radio"
-                name="target_type"
-                value="specific"
-                checked={form.target_type === 'specific'}
-                onChange={() => setForm((f) => ({ ...f, target_type: 'specific' }))}
+                name="recipientMode"
+                checked={form.recipientMode === 'selected'}
+                onChange={() => setForm((f) => ({ ...f, recipientMode: 'selected' }))}
                 className="accent-emerald-400"
               />
-              <span className="text-sm text-white flex items-center gap-1.5"><User size={14} className="text-emerald-accent" /> Specific Worker</span>
+              <span className="text-sm text-white flex items-center gap-1.5">
+                <User size={14} className="text-emerald-accent" /> Select from database
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="recipientMode"
+                checked={form.recipientMode === 'typed'}
+                onChange={() => {
+                  setForm((f) => ({ ...f, recipientMode: 'typed', channels: f.channels === 'in_app' ? 'email' : f.channels }));
+                  setSelectedIds(new Set());
+                }}
+                className="accent-emerald-400"
+              />
+              <span className="text-sm text-white flex items-center gap-1.5">
+                <Mail size={14} className="text-emerald-accent" /> Typed email only (test)
+              </span>
             </label>
           </div>
 
-          {form.target_type === 'specific' && (
+          {form.recipientMode === 'all' && wantsEmail && (
+            <p className="text-[11px] text-amber-400/90">
+              Email goes to every worker with an address — including test accounts. For a quick Resend check, choose{' '}
+              <strong>Typed email only</strong>.
+            </p>
+          )}
+
+          {form.recipientMode === 'selected' && (
             <div className="space-y-3 pl-2 border-l-2 border-emerald-accent/30">
-              <div className="flex gap-3">
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-theme-muted">
-                  <input
-                    type="radio"
-                    name="lookupMode"
-                    value="username"
-                    checked={form.lookupMode === 'username'}
-                    onChange={() => setForm((f) => ({ ...f, lookupMode: 'username' }))}
-                  />
-                  By Username
-                </label>
-                <label className="flex items-center gap-1.5 cursor-pointer text-xs text-theme-muted">
-                  <input
-                    type="radio"
-                    name="lookupMode"
-                    value="email"
-                    checked={form.lookupMode === 'email'}
-                    onChange={() => setForm((f) => ({ ...f, lookupMode: 'email' }))}
-                  />
-                  By Email
-                </label>
-              </div>
-              {form.lookupMode === 'username' ? (
+              <div className="relative max-w-md">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted" />
                 <input
-                  type="text"
-                  placeholder="Worker username…"
-                  value={form.target_username}
-                  onChange={(e) => setForm((f) => ({ ...f, target_username: e.target.value }))}
-                  className="bg-brand-surface-high border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-accent/50 w-full max-w-xs"
+                  type="search"
+                  placeholder="Search name, username, or email…"
+                  value={recipientQuery}
+                  onChange={(e) => setRecipientQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-2 bg-brand-surface-high border border-white/10 rounded-lg text-sm text-white focus:outline-none focus:border-emerald-accent/50"
                 />
-              ) : (
+              </div>
+              <div className="max-h-48 overflow-y-auto rounded-xl border border-white/10 divide-y divide-white/5">
+                {filteredRecipients.length === 0 ? (
+                  <p className="px-3 py-4 text-xs text-theme-muted">No workers match.</p>
+                ) : (
+                  filteredRecipients.map((r) => (
+                    <label
+                      key={r.id}
+                      className="flex items-center gap-3 px-3 py-2 hover:bg-white/[0.02] cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={selectedIds.has(r.id)}
+                        onChange={() => toggleWorker(r.id)}
+                        className="accent-emerald-400"
+                      />
+                      <span className="min-w-0 flex-1">
+                        <span className="block text-sm text-white truncate">{r.display_name}</span>
+                        <span className="block text-[11px] text-theme-muted truncate">
+                          {r.username ? `@${r.username}` : 'no username'}
+                          {' · '}
+                          {r.email ?? <span className="text-danger">no email</span>}
+                        </span>
+                      </span>
+                    </label>
+                  ))
+                )}
+              </div>
+              <p className="text-[11px] text-theme-muted">{selectedIds.size} selected</p>
+            </div>
+          )}
+
+          {/* Typed emails */}
+          {(wantsEmail || form.recipientMode === 'selected' || form.recipientMode === 'typed') && (
+            <div className="space-y-2">
+              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">
+                {form.recipientMode === 'typed' ? 'Send test email to' : 'Extra email addresses (optional)'}
+              </label>
+              <div className="flex flex-wrap gap-1.5 min-h-[1.5rem]">
+                {extraEmails.map((email) => (
+                  <span
+                    key={email}
+                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium bg-emerald-accent/15 text-emerald-accent border border-emerald-accent/30"
+                  >
+                    {email}
+                    <button type="button" onClick={() => removeEmailTag(email)} aria-label={`Remove ${email}`}>
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+              <div className="flex gap-2 max-w-md">
                 <input
                   type="email"
-                  placeholder="Worker email…"
-                  value={form.target_email}
-                  onChange={(e) => setForm((f) => ({ ...f, target_email: e.target.value }))}
-                  className="bg-brand-surface-high border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-accent/50 w-full max-w-xs"
+                  placeholder="you@gmail.com — type and click Send"
+                  value={emailDraft}
+                  onChange={(e) => setEmailDraft(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault();
+                      addEmailTag();
+                    }
+                  }}
+                  className="flex-1 bg-brand-surface-high border border-white/10 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-accent/50"
                 />
-              )}
+                <button type="button" onClick={() => addEmailTag()} className="btn-secondary text-xs px-3">
+                  Add
+                </button>
+              </div>
+              <p className="text-[11px] text-theme-muted">
+                You can type an address and click <span className="text-theme-heading">Send</span> directly — no need to click Add first.
+                Typed addresses get email only (not in-app). Outcomes also appear in{' '}
+                <Link href="/admin/payroll/receipts" className="text-emerald-accent hover:underline">
+                  Communications → Delivery Log
+                </Link>
+                .
+              </p>
             </div>
+          )}
+
+          {wantsEmail && selectedWithoutEmail.length > 0 && (
+            <p className="text-xs text-amber-400">
+              {selectedWithoutEmail.length} selected worker{selectedWithoutEmail.length === 1 ? '' : 's'} have no linked email and will be skipped for email.
+            </p>
           )}
         </div>
 
         {sendError && <p className="text-danger text-sm">{sendError}</p>}
-        {sendSuccess && (
-          <p className="text-emerald-accent text-sm flex items-center gap-1.5">
-            <CheckCircle size={14} /> Notification sent successfully.
+        {sendSummary && (
+          <p className={`text-sm flex items-start gap-1.5 ${sendSummary.includes('Failures') ? 'text-amber-400' : 'text-emerald-accent'}`}>
+            <CheckCircle size={14} className="mt-0.5 shrink-0" /> {sendSummary}
           </p>
         )}
 
         <button
+          type="button"
           className="btn-primary flex items-center gap-2"
           onClick={handleSend}
           disabled={sending}
@@ -235,10 +496,9 @@ export default function AdminNotificationsPage() {
         </button>
       </div>
 
-      {/* Sent history */}
       <div className="space-y-3">
         <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent flex items-center gap-2">
-          <Bell size={13} /> Sent Notifications
+          <Bell size={13} /> Sent Notifications (in-app)
         </h2>
 
         {loading ? (

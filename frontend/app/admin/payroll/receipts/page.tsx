@@ -6,9 +6,11 @@ import {
   RefreshCw, ScrollText, Send, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import AdminSectionTabs, { FINANCE_TABS, PAYROLL_SUBTABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -28,6 +30,10 @@ interface PayrollSummary {
   worker_country: string;
   final_net: string | number;
   local_currency: string;
+}
+
+function slug(s: string) {
+  return s.trim().replace(/\s+/g, '-');
 }
 
 interface Country { name: string; currency_code: string; is_active: boolean; }
@@ -87,10 +93,12 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
   const [summaries, setSummaries] = useState<PayrollSummary[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [attachPdf, setAttachPdf] = useState(false);
+  const [overrideEmail, setOverrideEmail] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
-  const [result, setResult] = useState<{ sent: number; failed: number; skipped: number } | null>(null);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [result, setResult] = useState<{ sent: number; failed: number; skipped: number; errors?: string[] } | null>(null);
 
   useEffect(() => {
     if (!periodId) return;
@@ -114,14 +122,27 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
     });
   }
 
+  async function handleDownload(s: PayrollSummary) {
+    const period = periods.find((p) => p.id === periodId);
+    const filename = `payslip-${slug(period?.label ?? 'period')}-${slug(s.worker_display_name)}.pdf`;
+    setDownloadingId(s.id); setError(null);
+    try {
+      await downloadFile(`/payroll/summaries/${s.id}/payslip.pdf`, filename);
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to generate PDF receipt.');
+    } finally { setDownloadingId(null); }
+  }
+
   async function handleSend() {
     if (selected.size === 0) return;
     setSending(true); setError(null); setResult(null);
     try {
-      const res = await api.post<{ sent: number; failed: number; skipped: number }>('/communications/payslips/send', {
+      const override = overrideEmail.trim();
+      const res = await api.post<{ sent: number; failed: number; skipped: number; errors?: string[] }>('/communications/payslips/send', {
         payroll_period_id: periodId,
         ...(allSelected ? {} : { worker_ids: Array.from(selected) }),
         attach_pdf: attachPdf,
+        ...(override && override.includes('@') ? { override_email: override } : {}),
       });
       setResult(res);
     } catch (e: unknown) {
@@ -152,6 +173,22 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
         </button>
       </div>
 
+      <div className="mb-4 max-w-md">
+        <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
+          Send to this email instead (optional)
+        </label>
+        <input
+          type="email"
+          value={overrideEmail}
+          onChange={(e) => setOverrideEmail(e.target.value)}
+          placeholder="you@example.com — test delivery to any address"
+          className="input-field"
+        />
+        <p className="text-[11px] text-theme-muted mt-1">
+          When set, the selected payslip(s) are emailed to this address instead of each worker&apos;s own email. Great for a quick delivery test.
+        </p>
+      </div>
+
       <p className="text-[11px] text-theme-muted mb-4 flex items-center gap-1.5">
         <Mail size={12} className="text-gold-accent" />
         Payslip emails send from gsdeck.com via Resend. HTML email is the default; PDF attachment is optional.
@@ -160,7 +197,17 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
       {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
       {result && (
         <Banner kind={result.failed > 0 ? 'error' : 'success'} onDismiss={() => setResult(null)}>
-          Payslips dispatched — {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
+          <span className="block">
+            Payslips dispatched — {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
+          </span>
+          {result.errors && result.errors.length > 0 && (
+            <span className="block mt-1 opacity-90">
+              {result.errors.join(' · ')}
+              {result.errors.some((e) => e.includes('RESEND_API_KEY') || e.toLowerCase().includes('domain'))
+                ? ' — Check RESEND_API_KEY and RESEND_FROM_EMAIL in backend/.env (verified domain in Resend; app need not be hosted on that domain).'
+                : ''}
+            </span>
+          )}
         </Banner>
       )}
 
@@ -180,12 +227,13 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
                   {['Worker', 'Email', 'Country', 'Final Net'].map((h) => (
                     <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">{h}</th>
                   ))}
+                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">Receipt</th>
                 </tr>
               </thead>
               <tbody>
                 {summaries.length === 0 ? (
                   <tr>
-                    <td colSpan={5} className="px-4 py-8 text-center text-brand-on-surface-variant">
+                    <td colSpan={6} className="px-4 py-8 text-center text-brand-on-surface-variant">
                       No payslip rows for this period. Run Calculate on the Payroll page first.
                     </td>
                   </tr>
@@ -201,6 +249,15 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
                       <td className="px-4 py-3 text-theme-muted">{s.worker_email ?? <span className="text-danger text-xs">no email</span>}</td>
                       <td className="px-4 py-3 text-theme-muted">{s.worker_country}</td>
                       <td className="px-4 py-3 font-bold text-emerald-accent">{fmt(s.final_net)} {s.local_currency}</td>
+                      <td className="px-4 py-3 text-right">
+                        <button type="button"
+                          onClick={(e) => { e.stopPropagation(); void handleDownload(s); }}
+                          disabled={downloadingId === s.id}
+                          className="btn-secondary text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5 disabled:opacity-50">
+                          {downloadingId === s.id ? <SpinningDots size="sm" /> : <FileText size={12} />}
+                          PDF
+                        </button>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -221,9 +278,10 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [workerType, setWorkerType] = useState<'' | 'gs_registered' | 'partner_worker'>('');
   const [activeOnly, setActiveOnly] = useState(true);
+  const [testEmail, setTestEmail] = useState('');
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ recipients: number; sent: number; failed: number; skipped: number } | null>(null);
+  const [result, setResult] = useState<{ recipients: number; sent: number; failed: number; skipped: number; errors?: string[] } | null>(null);
 
   function toggleCountry(name: string) {
     setSelectedCountries((prev) => {
@@ -233,26 +291,46 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
     });
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
+  async function sendBroadcast(opts: { skipWorkers: boolean }) {
+    const extra = testEmail.trim() && testEmail.includes('@') ? [testEmail.trim()] : [];
+    if (opts.skipWorkers && !extra.length) {
+      setError('Enter a test email address first, then use Send test only.');
+      return;
+    }
+
     const scope = selectedCountries.size > 0 ? `${selectedCountries.size} selected countr${selectedCountries.size === 1 ? 'y' : 'ies'}` : 'all countries';
     const typeLabel = workerType === 'gs_registered' ? 'GS Members' : workerType === 'partner_worker' ? 'Partners' : 'all worker types';
-    if (!window.confirm(`Broadcast "${title}" to ${typeLabel} in ${scope}${activeOnly ? ' (active only)' : ''}?`)) return;
+    const confirmMsg = opts.skipWorkers
+      ? `Send test email only to ${extra[0]}? (workers will not be emailed)`
+      : `Broadcast "${title}" to ${typeLabel} in ${scope}${activeOnly ? ' (active only)' : ''}${extra.length ? ` (+ test ${extra[0]})` : ''}?`;
+    if (!window.confirm(confirmMsg)) return;
 
     setSending(true); setError(null); setResult(null);
     try {
-      const res = await api.post<{ recipients: number; sent: number; failed: number; skipped: number }>('/communications/broadcast', {
+      const res = await api.post<{ recipients: number; sent: number; failed: number; skipped: number; errors?: string[] }>('/communications/broadcast', {
         title,
         message,
         ...(selectedCountries.size > 0 ? { countries: Array.from(selectedCountries) } : {}),
         ...(workerType ? { worker_type: workerType } : {}),
         active_only: activeOnly,
+        ...(extra.length ? { extra_emails: extra } : {}),
+        ...(opts.skipWorkers ? { skip_workers: true } : {}),
       });
       setResult(res);
-      setTitle(''); setMessage('');
+      setTitle(''); setMessage(''); setTestEmail('');
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to send broadcast.');
+      const msg = err instanceof Error ? err.message : 'Failed to send broadcast.';
+      setError(
+        msg.includes('500') || msg.toLowerCase().includes('timeout')
+          ? `${msg} — If this was a full broadcast, check Delivery Log; emails may have been sent before the UI timed out. Prefer “Send test only” for local checks.`
+          : msg,
+      );
     } finally { setSending(false); }
+  }
+
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    await sendBroadcast({ skipWorkers: false });
   }
 
   return (
@@ -260,7 +338,17 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
       {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
       {result && (
         <Banner kind={result.failed > 0 ? 'error' : 'success'} onDismiss={() => setResult(null)}>
-          Broadcast complete — {result.recipients} recipients, {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
+          <span className="block">
+            Broadcast complete — {result.recipients} recipients, {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
+          </span>
+          {result.errors && result.errors.length > 0 && (
+            <span className="block mt-1 opacity-90">
+              {result.errors.join(' · ')}
+              {result.errors.some((e) => e.includes('RESEND_API_KEY') || e.toLowerCase().includes('domain'))
+                ? ' — Check RESEND_API_KEY and RESEND_FROM_EMAIL in backend/.env.'
+                : ''}
+            </span>
+          )}
         </Banner>
       )}
 
@@ -318,7 +406,31 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
           </label>
         </div>
 
-        <div className="flex justify-end pt-1">
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
+            Send test to (optional)
+          </label>
+          <input
+            type="email"
+            value={testEmail}
+            onChange={(e) => setTestEmail(e.target.value)}
+            placeholder="you@example.com"
+            className="input-field max-w-md"
+          />
+          <p className="text-[11px] text-theme-muted mt-1">
+            Use <span className="text-theme-heading">Send test only</span> to verify Resend without emailing all workers (avoids UI timeouts on large lists).
+          </p>
+        </div>
+
+        <div className="flex justify-end gap-2 pt-1">
+          <button
+            type="button"
+            disabled={sending || !testEmail.trim()}
+            onClick={() => void sendBroadcast({ skipWorkers: true })}
+            className="btn-secondary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60"
+          >
+            Send test only
+          </button>
           <button type="submit" disabled={sending} className="btn-primary text-sm py-2 px-5 flex items-center gap-2 disabled:opacity-60">
             {sending ? <SpinningDots size="sm" /> : <Megaphone size={14} />} Send Broadcast
           </button>
@@ -331,7 +443,7 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
 // ── Delivery log tab ───────────────────────────────────────────────────────────
 
 function DeliveryLogTab({ periods }: { periods: PayrollPeriod[] }) {
-  const [template, setTemplate] = useState<'' | 'payslip' | 'broadcast'>('');
+  const [template, setTemplate] = useState<'' | 'payslip' | 'broadcast' | 'notification'>('');
   const [periodId, setPeriodId] = useState('');
   const [entries, setEntries] = useState<EmailLogEntry[]>([]);
   const [loading, setLoading] = useState(true);
@@ -362,6 +474,7 @@ function DeliveryLogTab({ periods }: { periods: PayrollPeriod[] }) {
             <option value="">Template: All</option>
             <option value="payslip">Payslips</option>
             <option value="broadcast">Broadcasts</option>
+            <option value="notification">Notifications</option>
           </select>
           <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
         </div>
@@ -453,6 +566,8 @@ export default function CommunicationsPage() {
         title="Communications"
         description="Send payslip emails, broadcast announcements to workers, and audit email deliveries."
       />
+      <AdminSectionTabs tabs={FINANCE_TABS} />
+      <AdminSectionTabs tabs={PAYROLL_SUBTABS} />
 
       <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit mb-6">
         {TABS.map(({ key, label, icon }) => (
