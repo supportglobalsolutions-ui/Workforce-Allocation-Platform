@@ -35,7 +35,7 @@ class Wallet(SQLModel, table=True):
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
 
-    worker: Optional["Worker"] = Relationship()
+    worker: Optional["Worker"] = Relationship(back_populates="wallet")
     transactions: list["WalletTransaction"] = Relationship(back_populates="wallet")
 
 

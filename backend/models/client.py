@@ -52,8 +52,8 @@ class Client(SQLModel, table=True):
         sa_column=Column(ClientContractStatusType, nullable=False, server_default="active"),
     )
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    document_urls: Optional[list[Any]] = Field(
-        default=None,
+    document_urls: list[Any] = Field(
+        default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     created_at: Optional[datetime] = Field(

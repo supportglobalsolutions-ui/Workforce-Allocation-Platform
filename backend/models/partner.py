@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -28,7 +28,7 @@ class PartnerEntity(SQLModel, table=True):
     is_self: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     created_at: Optional[datetime] = Field(
         default=None,
-        sa_column=Column(Date, nullable=False, server_default=text("now()")),
+        sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
     )
 
     arrangements: list["PartnerArrangement"] = Relationship(back_populates="partner_entity")

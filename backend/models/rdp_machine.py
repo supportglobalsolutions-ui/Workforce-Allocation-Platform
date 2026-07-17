@@ -40,8 +40,8 @@ class RDPResource(SQLModel, table=True):
         default=None, sa_column=Column(String(128), nullable=True)
     )
     health_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
-    risk_flags: Optional[list[Any]] = Field(
-        default=None,
+    risk_flags: list[Any] = Field(
+        default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     last_health_check_at: Optional[datetime] = Field(

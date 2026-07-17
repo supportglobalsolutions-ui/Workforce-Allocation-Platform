@@ -14,13 +14,15 @@ if TYPE_CHECKING:
     from .mcq import McqResult
     from .notification import Notification
     from .partner import PartnerEntity
-    from .payroll import PayrollLineItem
+    from .payroll import PayrollLineItem, PayrollWorkerSummary
     from .post_mvp import SessionTicket
     from .quality import QualityCompositeScore, QualityIndicatorRating
     from .rate_table import RateTableEntry
     from .session import Session
     from .shift import Shift
     from .task_assessment import TaskAssessmentResult
+    from .training import TrainingProgress
+    from .wallet import Wallet
 
 
 class Worker(SQLModel, table=True):
@@ -80,6 +82,12 @@ class Worker(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[RateTableEntry.worker_id]"},
     )
     payroll_line_items: list["PayrollLineItem"] = Relationship(back_populates="worker")
+    payroll_summaries: list["PayrollWorkerSummary"] = Relationship(back_populates="worker")
+    training_progress: list["TrainingProgress"] = Relationship(back_populates="worker")
+    wallet: Optional["Wallet"] = Relationship(
+        back_populates="worker",
+        sa_relationship_kwargs={"uselist": False},
+    )
     quality_ratings: list["QualityIndicatorRating"] = Relationship(back_populates="worker")
     composite_scores: list["QualityCompositeScore"] = Relationship(back_populates="worker")
     mcq_results: list["McqResult"] = Relationship(back_populates="worker")

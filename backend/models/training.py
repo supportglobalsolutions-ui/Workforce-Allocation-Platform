@@ -100,8 +100,8 @@ class TrainingProgress(SQLModel, table=True):
         default=TrainingProgressEnum.not_started,
         sa_column=Column(TrainingProgressType, nullable=False, server_default="not_started"),
     )
-    completed_lesson_ids: Optional[list[Any]] = Field(
-        default=None,
+    completed_lesson_ids: list[Any] = Field(
+        default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     started_at: Optional[datetime] = Field(
@@ -112,4 +112,4 @@ class TrainingProgress(SQLModel, table=True):
     )
 
     module: Optional["TrainingModule"] = Relationship(back_populates="progress_records")
-    worker: Optional["Worker"] = Relationship()
+    worker: Optional["Worker"] = Relationship(back_populates="training_progress")

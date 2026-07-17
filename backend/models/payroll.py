@@ -85,8 +85,8 @@ class PayrollLineItem(SQLModel, table=True):
     worker_net: Decimal = Field(sa_column=Column(Numeric(12, 2), nullable=False))
     gs_net: Decimal = Field(sa_column=Column(Numeric(12, 2), nullable=False))
     partner_net: Decimal = Field(sa_column=Column(Numeric(12, 2), nullable=False))
-    exception_flags: Optional[list[Any]] = Field(
-        default=None,
+    exception_flags: list[Any] = Field(
+        default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     created_at: Optional[datetime] = Field(
@@ -155,8 +155,8 @@ class PayrollWorkerSummary(SQLModel, table=True):
     fx_rate: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(18, 6), nullable=True))
     base_currency: Optional[str] = Field(default=None, sa_column=Column(String(3), nullable=True))
     base_equivalent: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
-    exception_flags: Optional[list[Any]] = Field(
-        default=None,
+    exception_flags: list[Any] = Field(
+        default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     created_at: Optional[datetime] = Field(
@@ -169,7 +169,7 @@ class PayrollWorkerSummary(SQLModel, table=True):
     )
 
     payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="worker_summaries")
-    worker: Optional["Worker"] = Relationship()
+    worker: Optional["Worker"] = Relationship(back_populates="payroll_summaries")
 
 
 class CountryCostPool(SQLModel, table=True):
