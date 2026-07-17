@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, String, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -51,6 +51,9 @@ class Worker(SQLModel, table=True):
     pay_tier: str = Field(sa_column=Column(String(64), nullable=False))
     status: WorkerStatusEnum = Field(sa_column=Column(WorkerStatusType, nullable=False))
     start_date: date = Field(sa_column=Column(Date, nullable=False))
+    # New workers must complete mandatory training and be cleared by an admin
+    # before they can start live work. Existing workers were backfilled to true.
+    work_ready: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

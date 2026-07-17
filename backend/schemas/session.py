@@ -15,17 +15,21 @@ class SessionBase(SQLModel):
     rdp_resource_id:        Optional[UUID] = None
     partner_entity_id:      Optional[UUID] = None
     partner_arrangement_id: Optional[UUID] = None
+    client_id:              Optional[UUID] = None
     start_time:             datetime
     type_specific_fields:   dict[str, Any] = {}
 
 
 class SessionCreate(SessionBase):
-    pass
+    # Multilog / external sessions are submitted as an already-finished block.
+    end_time:         Optional[datetime] = None
+    duration_minutes: Optional[int]      = None
 
 
 class SessionUpdate(SQLModel):
     end_time:               Optional[datetime]            = None
     duration_minutes:       Optional[int]                 = None
+    client_id:              Optional[UUID]                = None
     close_status:           Optional[SessionCloseEnum]    = None
     payroll_approval_state: Optional[PayrollSessionEnum]  = None
     payroll_period_id:      Optional[UUID]                = None

@@ -10,11 +10,23 @@ from core.auth_errors import http_error_from_firebase
 from core.permissions import require_admin, require_user
 from core.security import get_current_user
 from models.admin_users import AdminUser
+from models.enums import WorkerTypeEnum
+from models.partner import PartnerEntity
 from models.worker import Worker
-from schemas.worker import WorkerCreate, WorkerResponse, WorkerUpdate
+from schemas.worker import WorkerAdminUpdate, WorkerCreate, WorkerResponse, WorkerUpdate
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
+
+
+def _with_partner_name(db: Session, worker: Worker, resp: WorkerResponse) -> WorkerResponse:
+    if worker.partner_entity_id:
+        entity = db.exec(
+            select(PartnerEntity).where(PartnerEntity.id == worker.partner_entity_id)
+        ).first()
+        if entity:
+            return resp.model_copy(update={"partner_entity_name": entity.name})
+    return resp
 
 
 @router.get("/me", response_model=WorkerResponse)
@@ -22,7 +34,8 @@ def get_my_worker(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    return get_worker_for_user(db, current_user)
+    worker = get_worker_for_user(db, current_user)
+    return _with_partner_name(db, worker, WorkerResponse.model_validate(worker))
 
 
 @router.patch("/me", response_model=WorkerResponse)
@@ -45,13 +58,20 @@ def list_workers(
     _: dict = Depends(require_admin),
 ):
     workers = db.exec(
-        select(Worker).options(selectinload(Worker.admin_user)).order_by(Worker.display_name)
+        select(Worker)
+        .options(selectinload(Worker.admin_user), selectinload(Worker.partner_entity))
+        .order_by(Worker.display_name)
     ).all()
     result = []
     for w in workers:
         resp = WorkerResponse.model_validate(w)
+        updates: dict = {}
         if w.admin_user:
-            resp = resp.model_copy(update={"email": w.admin_user.email})
+            updates["email"] = w.admin_user.email
+        if w.partner_entity:
+            updates["partner_entity_name"] = w.partner_entity.name
+        if updates:
+            resp = resp.model_copy(update=updates)
         result.append(resp)
     return result
 
@@ -90,19 +110,27 @@ def create_worker(
 @router.patch("/{worker_id}", response_model=WorkerResponse)
 def update_worker(
     worker_id: UUID,
-    body: WorkerUpdate,
+    body: WorkerAdminUpdate,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    """Admin edit of any worker field, including Member ↔ Partner conversion."""
     worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
 
     apply_update(worker, body)
+    if worker.worker_type == WorkerTypeEnum.partner_worker and not worker.partner_entity_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A partner worker must be linked to a partner company.",
+        )
+    if worker.worker_type == WorkerTypeEnum.gs_registered:
+        worker.partner_entity_id = None
     db.add(worker)
     db.commit()
     db.refresh(worker)
-    return worker
+    return _with_partner_name(db, worker, WorkerResponse.model_validate(worker))
 
 
 def _get_worker_firebase_uid(worker_id: UUID, db: Session, current_user: dict) -> tuple[Worker, str]:

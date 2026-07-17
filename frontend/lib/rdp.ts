@@ -61,6 +61,7 @@ export interface RdpResource {
   nickname: string;
   country: string;
   client_group: string;
+  client_id: string | null;
   status: string;
   assigned_worker_id: string | null;
   guacamole_connection_id: string | null;
@@ -75,6 +76,7 @@ export interface RdpResourceCreateBody {
   nickname: string;
   country: string;
   client_group: string;
+  client_id?: string | null;
   status?: string;
   monitor_host?: string | null;
   monitor_port?: number | null;
@@ -86,6 +88,7 @@ export interface RdpResourceUpdateBody {
   nickname?: string;
   country?: string;
   client_group?: string;
+  client_id?: string | null;
   monitor_host?: string | null;
   monitor_port?: number | null;
   guacamole_connection_id?: string | null;

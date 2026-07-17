@@ -18,6 +18,7 @@ class WorkerBase(SQLModel):
     status:            WorkerStatusEnum
     start_date:        date
     admin_user_id:     Optional[UUID] = None
+    work_ready:        bool = False
 
 
 class WorkerCreate(WorkerBase):
@@ -33,6 +34,13 @@ class WorkerUpdate(SQLModel):
     partner_entity_id: Optional[UUID]            = None
 
 
+class WorkerAdminUpdate(WorkerUpdate):
+    """Admin-only update: every worker field is editable."""
+    worker_type: Optional[WorkerTypeEnum] = None
+    start_date:  Optional[date]           = None
+    work_ready:  Optional[bool]           = None
+
+
 class WorkerResponse(WorkerBase):
     model_config = ConfigDict(from_attributes=True)
 
@@ -40,3 +48,4 @@ class WorkerResponse(WorkerBase):
     created_at: datetime
     updated_at: datetime
     email:      Optional[str] = None
+    partner_entity_name: Optional[str] = None

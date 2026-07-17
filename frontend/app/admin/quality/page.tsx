@@ -1,102 +1,173 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Eye, Trophy, X } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, CheckCircle, RefreshCw, Star, X } from 'lucide-react';
+
 import PageHeader from '@/components/platform/PageHeader';
+import LeaderboardTable, { LeaderboardEntry } from '@/components/platform/LeaderboardTable';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
-interface Worker {
+// ── Types ──────────────────────────────────────────────────────────────────────
+
+type Period = 'calendar' | 'payroll';
+
+interface WorkerOption {
   id: string;
   display_name: string;
   country: string;
   worker_type: string;
-  pay_tier: string;
-  status: string;
-  email: string | null;
 }
 
-interface WorkSession {
+interface QualityIndicator {
   id: string;
-  worker_id: string;
-  duration_minutes: number | null;
-  close_status: string | null;
-  end_time: string | null;
+  name: string;
+  scale_min: number;
+  scale_max: number;
 }
 
 interface QualityRating {
   id: string;
   worker_id: string;
   score: number;
+  reason_note: string | null;
+  created_at: string;
 }
 
-interface RankedWorker {
-  rank: number;
-  worker: Worker;
-  totalSessions: number;
-  completedSessions: number;
-  totalHours: number;
-  avgQuality: number | null;
-  score: number;
-}
+const PERIOD_PILLS: { key: Period; label: string }[] = [
+  { key: 'calendar', label: 'Calendar Month' },
+  { key: 'payroll', label: 'Payroll Period' },
+];
 
-const TYPE_LABELS: Record<string, string> = {
-  gs_rdp: 'GS RDP',
-  partner_multilog: 'Partner Multilog',
-  third_party_platform: 'Third Party',
-};
+// ── Rate Worker modal ──────────────────────────────────────────────────────────
 
-function RankCell({ rank }: { rank: number }) {
-  if (rank === 1) return <span className="text-sm font-bold text-gold-accent">1st</span>;
-  if (rank === 2) return <span className="text-sm font-bold text-gray-300">2nd</span>;
-  if (rank === 3) return <span className="text-sm font-bold text-orange-400">3rd</span>;
-  return <span className="text-sm font-bold text-theme-muted">#{rank}</span>;
-}
+function RateWorkerModal({
+  workers,
+  onClose,
+  onSaved,
+}: {
+  workers: WorkerOption[];
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [workerId, setWorkerId] = useState('');
+  const [score, setScore] = useState<number | null>(null);
+  const [reason, setReason] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
-// ── Worker metrics detail panel ────────────────────────────────────────────────
-
-function WorkerMetricsPanel({ entry, onClose }: { entry: RankedWorker; onClose: () => void }) {
-  const metrics = [
-    { label: 'Total Sessions',     value: entry.totalSessions },
-    { label: 'Completed Sessions', value: entry.completedSessions },
-    { label: 'Total Hours',        value: `${entry.totalHours.toFixed(1)}h` },
-    { label: 'Avg Quality Score',  value: entry.avgQuality !== null ? `${entry.avgQuality.toFixed(2)} / 5` : '—' },
-    { label: 'Composite Score',    value: entry.score.toFixed(1) },
-  ];
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    if (!workerId || score == null) {
+      setError('Select a worker and a score.');
+      return;
+    }
+    if (!reason.trim()) {
+      setError('A reason is required.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+    try {
+      const indicator = await api.get<QualityIndicator>('/quality/default-indicator');
+      await api.post('/quality/ratings', {
+        worker_id: workerId,
+        indicator_id: indicator.id,
+        score,
+        reason_note: reason.trim(),
+        session_id: null,
+      });
+      onSaved();
+      onClose();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save rating');
+    } finally {
+      setSaving(false);
+    }
+  }
 
   return (
     <div
-      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-sm overflow-hidden">
-        {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
-          <div>
-            <div className="flex items-center gap-2">
-              <RankCell rank={entry.rank} />
-              <p className="text-sm font-bold text-white">{entry.worker.display_name}</p>
-            </div>
-            <p className="text-xs text-theme-muted mt-0.5">{entry.worker.country} · {TYPE_LABELS[entry.worker.worker_type] ?? entry.worker.worker_type}</p>
-          </div>
+      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-md">
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <h2 className="text-base font-bold text-white">Rate Worker</h2>
           <button
             type="button"
             onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"
           >
-            <X size={15} />
+            <X size={16} />
           </button>
         </div>
 
-        {/* Metrics */}
-        <div className="p-5 space-y-3">
-          {metrics.map(({ label, value }) => (
-            <div key={label} className="flex items-center justify-between py-2 border-b border-white/[0.04] last:border-0">
-              <span className="text-xs text-theme-muted">{label}</span>
-              <span className="text-sm font-bold text-white tabular-nums">{value}</span>
+        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <p className="text-xs text-theme-muted">
+            Rate each worker at the end of every payroll period; ratings are stored and averaged over the trailing 5 periods.
+          </p>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Worker</label>
+            <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} className="input-field" required>
+              <option value="">Select a worker…</option>
+              {workers.map((w) => (
+                <option key={w.id} value={w.id}>{w.display_name} ({w.country})</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Score</label>
+            <div className="flex items-center gap-1.5">
+              {[1, 2, 3, 4, 5].map((n) => (
+                <button
+                  key={n}
+                  type="button"
+                  onClick={() => setScore(n)}
+                  className={`w-11 h-11 rounded-xl flex items-center justify-center transition-colors border ${
+                    score != null && n <= score
+                      ? 'bg-gold-accent/20 border-gold-accent/50 text-gold-accent'
+                      : 'bg-white/[0.03] border-white/10 text-theme-muted hover:text-gold-accent hover:border-gold-accent/30'
+                  }`}
+                  aria-label={`${n} out of 5`}
+                >
+                  <Star size={18} fill={score != null && n <= score ? 'currentColor' : 'none'} />
+                </button>
+              ))}
+              <span className="ml-2 text-sm font-bold text-white tabular-nums">
+                {score != null ? `${score} / 5` : '—'}
+              </span>
             </div>
-          ))}
-        </div>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Reason (required)</label>
+            <textarea
+              rows={3}
+              required
+              placeholder="Why this score? e.g. task accuracy, communication, reliability this period…"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              className="input-field resize-none"
+            />
+          </div>
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+
+          <div className="flex gap-3 justify-end">
+            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+            <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
+              {saving ? <SpinningDots size="sm" className="text-white" /> : <Star size={14} />}
+              Save rating
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
@@ -104,110 +175,190 @@ function WorkerMetricsPanel({ entry, onClose }: { entry: RankedWorker; onClose: 
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
-export default function LeaderboardPage() {
-  const [workers, setWorkers]   = useState<Worker[]>([]);
-  const [sessions, setSessions] = useState<WorkSession[]>([]);
-  const [ratings, setRatings]   = useState<QualityRating[]>([]);
-  const [loading, setLoading]   = useState(true);
-  const [error, setError]       = useState<string | null>(null);
-  const [selected, setSelected] = useState<RankedWorker | null>(null);
+export default function AdminQualityPage() {
+  const [period, setPeriod] = useState<Period>('calendar');
+  const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
+  const [workers, setWorkers] = useState<WorkerOption[]>([]);
+  const [ratings, setRatings] = useState<QualityRating[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
-  useEffect(() => {
-    Promise.all([
-      api.get<Worker[]>('/workers'),
-      api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'),
-      api.get<QualityRating[]>('/quality/ratings'),
-    ])
-      .then(([w, s, r]) => { setWorkers(w); setSessions(s); setRatings(r); })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load leaderboard'))
-      .finally(() => setLoading(false));
+  const [recalculating, setRecalculating] = useState(false);
+  const [recalcMessage, setRecalcMessage] = useState<string | null>(null);
+  const [showRateModal, setShowRateModal] = useState(false);
+
+  const loadLeaderboard = useCallback(async (p: Period) => {
+    setLoading(true);
+    setError(null);
+    try {
+      setEntries(await api.get<LeaderboardEntry[]>(`/leaderboard?period=${p}&limit=100`));
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const ranked = useMemo<RankedWorker[]>(() => {
-    return workers
-      .map((worker) => {
-        const ws = sessions.filter((s) => s.worker_id === worker.id);
-        const completedSessions = ws.filter((s) => s.close_status === 'completed' || (s.end_time && !s.close_status)).length;
-        const totalHours = ws.reduce((acc, s) => acc + (s.duration_minutes ?? 0), 0) / 60;
-        const workerRatings = ratings.filter((r) => r.worker_id === worker.id);
-        const avgQuality = workerRatings.length
-          ? workerRatings.reduce((acc, r) => acc + Number(r.score), 0) / workerRatings.length
-          : null;
-        const score =
-          Math.min(completedSessions * 2, 40) +
-          Math.min(totalHours * 0.5, 40) +
-          (avgQuality !== null ? (avgQuality / 5) * 20 : 0);
-        return { rank: 0, worker, totalSessions: ws.length, completedSessions, totalHours, avgQuality, score };
-      })
-      .sort((a, b) => b.score - a.score)
-      .map((e, i) => ({ ...e, rank: i + 1 }));
-  }, [workers, sessions, ratings]);
+  const loadRatings = useCallback(async () => {
+    try {
+      setRatings(await api.get<QualityRating[]>('/quality/ratings'));
+    } catch {
+      // Recent-ratings panel is secondary; leave empty on failure.
+    }
+  }, []);
+
+  useEffect(() => { loadLeaderboard(period); }, [loadLeaderboard, period]);
+
+  useEffect(() => {
+    api.get<WorkerOption[]>('/workers').then(setWorkers).catch(() => {});
+    loadRatings();
+  }, [loadRatings]);
+
+  const workerNames = useMemo(() => {
+    const map = new Map<string, string>();
+    workers.forEach((w) => map.set(w.id, w.display_name));
+    return map;
+  }, [workers]);
+
+  const recentRatings = useMemo(
+    () => [...ratings].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 25),
+    [ratings],
+  );
+
+  async function handleRecalculate() {
+    setRecalculating(true);
+    setRecalcMessage(null);
+    try {
+      await api.post('/quality/recalculate', {});
+      setRecalcMessage('Leaderboard recalculated.');
+      await loadLeaderboard(period);
+    } catch (e) {
+      setRecalcMessage(e instanceof Error ? e.message : 'Recalculation failed');
+    } finally {
+      setRecalculating(false);
+    }
+  }
+
+  const periodLabel = entries[0]?.period_label;
 
   return (
     <div>
-      <PageHeader title="Leaderboard" description="Ranked by sessions, hours worked, and quality score." />
+      <PageHeader
+        title="Quality & Leaderboard"
+        description="Composite quality scores, worker rankings, and admin ratings."
+        actions={
+          <>
+            <button
+              type="button"
+              onClick={handleRecalculate}
+              disabled={recalculating}
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4 disabled:opacity-60"
+            >
+              {recalculating ? <SpinningDots size="sm" className="text-emerald-accent" /> : <RefreshCw size={14} />}
+              Recalculate
+            </button>
+            <button
+              type="button"
+              onClick={() => setShowRateModal(true)}
+              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <Star size={14} /> Rate Worker
+            </button>
+          </>
+        }
+      />
+
+      {recalcMessage && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-4">
+          <CheckCircle size={14} /> {recalcMessage}
+        </div>
+      )}
+
+      {/* Period toggle */}
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
+          {PERIOD_PILLS.map(({ key, label }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setPeriod(key)}
+              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                period === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-white'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+        {periodLabel && <span className="text-xs font-mono text-emerald-accent">{periodLabel}</span>}
+      </div>
 
       {loading ? (
-        <div className="flex justify-center py-20"><SpinningDots size="lg" className="text-emerald-accent" /></div>
+        <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
       ) : error ? (
         <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm">
           <AlertCircle size={16} /> {error}
         </div>
-      ) : (
-        <div className="glass-panel overflow-hidden">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b border-white/[0.06]">
-                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-16">Rank</th>
-                <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>
-                <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Sessions</th>
-                <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden sm:table-cell">Hours</th>
-                <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Quality</th>
-                <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Score</th>
-                <th className="px-4 py-3 w-12" />
-              </tr>
-            </thead>
-            <tbody>
-              {ranked.map((entry) => (
-                <tr
-                  key={entry.worker.id}
-                  className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors"
-                >
-                  <td className="px-4 py-3"><RankCell rank={entry.rank} /></td>
-                  <td className="px-4 py-3">
-                    <p className="text-white font-medium">{entry.worker.display_name}</p>
-                    <p className="text-xs text-theme-muted">{entry.worker.country}</p>
-                  </td>
-                  <td className="px-4 py-3 text-right text-white tabular-nums">{entry.completedSessions}</td>
-                  <td className="px-4 py-3 text-right text-white tabular-nums hidden sm:table-cell">{entry.totalHours.toFixed(1)}h</td>
-                  <td className="px-4 py-3 text-right text-white tabular-nums hidden md:table-cell">
-                    {entry.avgQuality !== null ? entry.avgQuality.toFixed(2) : <span className="text-theme-muted">—</span>}
-                  </td>
-                  <td className="px-4 py-3 text-right font-bold text-emerald-accent tabular-nums">{entry.score.toFixed(0)}</td>
-                  <td className="px-4 py-3 text-right">
-                    <button
-                      type="button"
-                      onClick={() => setSelected(entry)}
-                      className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading transition-colors"
-                      style={{ background: 'var(--surface-container)', border: '1px solid var(--glass-border)' }}
-                      title="View metrics"
-                    >
-                      <Eye size={14} />
-                    </button>
-                  </td>
-                </tr>
-              ))}
-              {ranked.length === 0 && (
-                <tr>
-                  <td colSpan={7} className="px-4 py-12 text-center text-theme-muted text-sm">No workers to rank yet.</td>
-                </tr>
-              )}
-            </tbody>
-          </table>
+      ) : entries.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-12 text-center">
+          <p className="text-sm text-theme-muted">No scores yet — use Recalculate to compute the leaderboard.</p>
         </div>
+      ) : (
+        <LeaderboardTable entries={entries} />
       )}
 
-      {selected && <WorkerMetricsPanel entry={selected} onClose={() => setSelected(null)} />}
+      <p className="text-xs text-theme-muted mt-3">
+        Composite score: 30% assessments · 30% admin ratings · 25% reliability · 15% consistency
+      </p>
+
+      {/* Recent ratings */}
+      <section aria-label="Recent ratings" className="mt-8">
+        <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted mb-3">Recent Ratings</h2>
+        {recentRatings.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-10 text-center">
+            <p className="text-sm text-theme-muted">No ratings recorded yet.</p>
+          </div>
+        ) : (
+          <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/[0.06] bg-white/[0.02]">
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Score</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Reason</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Date</th>
+                </tr>
+              </thead>
+              <tbody>
+                {recentRatings.map((r) => (
+                  <tr key={r.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-3 text-white font-medium">
+                      {workerNames.get(r.worker_id) ?? `${r.worker_id.slice(0, 8)}…`}
+                    </td>
+                    <td className="px-4 py-3">
+                      <span className="inline-flex items-center gap-1 text-gold-accent font-bold tabular-nums">
+                        <Star size={12} fill="currentColor" /> {Number(r.score)} / 5
+                      </span>
+                    </td>
+                    <td className="px-4 py-3 text-xs text-theme-muted">{r.reason_note ?? '—'}</td>
+                    <td className="px-4 py-3 text-right text-xs text-theme-muted">
+                      {new Date(r.created_at).toLocaleDateString()}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+
+      {showRateModal && (
+        <RateWorkerModal
+          workers={workers}
+          onClose={() => setShowRateModal(false)}
+          onSaved={loadRatings}
+        />
+      )}
     </div>
   );
 }

@@ -15,7 +15,8 @@ from schemas.quality import (
     QualityIndicatorResponse,
     QualityIndicatorUpdate,
 )
-from .deps import apply_update, get_worker_for_user
+from services import quality_engine
+from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
 
@@ -91,13 +92,48 @@ def list_quality_ratings(
 def create_quality_rating(
     body: QualityIndicatorRatingCreate,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
-    rating = QualityIndicatorRating(**body.model_dump())
+    # Every admin rating must carry a reason (kept + averaged over past periods).
+    if not (body.reason_note or "").strip():
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A reason note is required for every rating.",
+        )
+    indicator = db.get(QualityIndicator, body.indicator_id)
+    if not indicator:
+        raise HTTPException(status_code=404, detail="Quality indicator not found")
+    if not (indicator.scale_min <= body.score <= indicator.scale_max):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Score must be between {indicator.scale_min} and {indicator.scale_max}.",
+        )
+    admin = get_admin_user(db, current_user)
+    data = body.model_dump()
+    data["rated_by"] = admin.id
+    rating = QualityIndicatorRating(**data)
     db.add(rating)
     db.commit()
     db.refresh(rating)
     return rating
+
+
+@router.get("/default-indicator", response_model=QualityIndicatorResponse)
+def get_default_indicator(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """The 1-5 'Admin Overall Rating' indicator (created on first use)."""
+    return quality_engine.ensure_default_indicator(db)
+
+
+@router.post("/recalculate")
+def recalculate_scores(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Recompute both leaderboard views (calendar month + payroll period)."""
+    return quality_engine.recalculate_all(db)
 
 
 @router.patch("/ratings/{rating_id}", response_model=QualityIndicatorRatingResponse)

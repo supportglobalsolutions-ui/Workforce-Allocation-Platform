@@ -133,6 +133,36 @@ class TaskResultStatusEnum(str, enum.Enum):
     graded      = "graded"
 
 
+# ── clients ────────────────────────────────────────────────────────────────────
+
+class ClientContractStatusEnum(str, enum.Enum):
+    active = "active"
+    paused = "paused"
+    ended  = "ended"
+
+
+class ClientOwnerTypeEnum(str, enum.Enum):
+    gs             = "gs"
+    worker         = "worker"
+    partner_entity = "partner_entity"
+
+
+# ── wallets ────────────────────────────────────────────────────────────────────
+
+class WalletTxTypeEnum(str, enum.Enum):
+    payroll_credit = "payroll_credit"
+    adjustment     = "adjustment"
+    payout         = "payout"
+
+
+# ── training ───────────────────────────────────────────────────────────────────
+
+class TrainingProgressEnum(str, enum.Enum):
+    not_started = "not_started"
+    in_progress = "in_progress"
+    completed   = "completed"
+
+
 # ── SQLAlchemy Enum type objects (used in sa_column definitions) ───────────────
 
 AdminRoleType        = sa.Enum(AdminRoleEnum,          name="admin_role_enum",         create_type=True)
@@ -151,3 +181,7 @@ PayrollPeriodStatus  = sa.Enum(PayrollPeriodStatusEnum, name="payroll_period_enu
 IndicatorInputType   = sa.Enum(IndicatorInputEnum,      name="indicator_input_enum",    create_type=True)
 TicketStatusType     = sa.Enum(TicketStatusEnum,        name="ticket_status_enum",      create_type=True)
 TaskResultStatusType = sa.Enum(TaskResultStatusEnum,    name="task_result_status_enum", create_type=True)
+ClientContractStatusType = sa.Enum(ClientContractStatusEnum, name="client_contract_status_enum", create_type=True)
+ClientOwnerTypeType      = sa.Enum(ClientOwnerTypeEnum,      name="client_owner_type_enum",      create_type=True)
+WalletTxTypeType         = sa.Enum(WalletTxTypeEnum,         name="wallet_tx_type_enum",         create_type=True)
+TrainingProgressType     = sa.Enum(TrainingProgressEnum,     name="training_progress_enum",      create_type=True)

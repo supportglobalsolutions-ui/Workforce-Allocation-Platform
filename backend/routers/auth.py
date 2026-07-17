@@ -1,7 +1,13 @@
+from datetime import date
+from typing import Optional
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
+from sqlmodel import Session, select
 
 from core.auth_errors import http_error_from_firebase
+from core.database import get_db
 from core.firebase_admin import (
     SUPER_ADMIN_EMAIL,
     approve_firebase_user,
@@ -18,6 +24,15 @@ from core.firebase_admin import (
     user_to_dict,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
+from models.admin_users import AdminUser
+from models.enums import (
+    AccountStatusEnum,
+    AdminRoleEnum,
+    WorkerStatusEnum,
+    WorkerTypeEnum,
+)
+from models.partner import PartnerEntity
+from models.worker import Worker
 
 router = APIRouter()
 
@@ -39,6 +54,13 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     displayName: str
+
+
+class ApproveUserRequest(BaseModel):
+    """Approval decision: designate the account as GS Member or Partner worker."""
+    worker_type: Optional[str] = None        # "gs_registered" | "partner_worker"
+    partner_entity_id: Optional[UUID] = None
+    country: Optional[str] = None
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -113,13 +135,76 @@ def create_user(
 @router.patch("/users/{uid}/approve")
 def approve_user(
     uid: str,
+    body: ApproveUserRequest | None = None,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Enable a pending account so the user can sign in."""
+    """
+    Enable a pending account so the user can sign in, and (optionally) provision
+    the worker profile as a GS Member or Partner worker in the same step.
+    New workers start with work_ready=false until onboarding training is done.
+    """
+    body = body or ApproveUserRequest()
+
+    worker_type: Optional[WorkerTypeEnum] = None
+    if body.worker_type:
+        try:
+            worker_type = WorkerTypeEnum(body.worker_type)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid worker type.")
+        if worker_type == WorkerTypeEnum.partner_worker:
+            if not body.partner_entity_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Select the partner company for a partner worker.",
+                )
+            if not db.get(PartnerEntity, body.partner_entity_id):
+                raise HTTPException(status_code=404, detail="Partner company not found.")
+
     try:
         user = approve_firebase_user(uid)
     except Exception as exc:
         raise http_error_from_firebase(exc) from exc
+
+    # Eagerly provision admin_users + workers so the admin can finish the
+    # profile immediately instead of waiting for the worker's first login.
+    if worker_type is not None:
+        admin_row = db.exec(select(AdminUser).where(AdminUser.firebase_uid == uid)).first()
+        if not admin_row:
+            admin_row = AdminUser(
+                firebase_uid=uid,
+                email=user.email or f"{uid}@unknown.local",
+                role=AdminRoleEnum.technical_admin,
+                display_name=user.display_name or (user.email or "").split("@")[0] or "New Worker",
+                status=AccountStatusEnum.active,
+            )
+            db.add(admin_row)
+            db.commit()
+            db.refresh(admin_row)
+
+        worker = db.exec(select(Worker).where(Worker.admin_user_id == admin_row.id)).first()
+        if not worker:
+            worker = Worker(
+                admin_user_id=admin_row.id,
+                worker_type=worker_type,
+                partner_entity_id=body.partner_entity_id if worker_type == WorkerTypeEnum.partner_worker else None,
+                display_name=admin_row.display_name,
+                country=body.country or "Unassigned",
+                pay_tier="unassigned",
+                status=WorkerStatusEnum.active,
+                start_date=date.today(),
+                work_ready=False,
+            )
+        else:
+            worker.worker_type = worker_type
+            worker.partner_entity_id = (
+                body.partner_entity_id if worker_type == WorkerTypeEnum.partner_worker else None
+            )
+            if body.country:
+                worker.country = body.country
+        db.add(worker)
+        db.commit()
+
     return user_to_dict(user)
 
 

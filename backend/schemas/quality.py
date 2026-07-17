@@ -69,6 +69,12 @@ class QualityCompositeScoreBase(SQLModel):
     mcq_component:        Decimal
     subjective_component: Decimal
     composite_score:      Decimal
+    assessment_component:  Optional[Decimal] = None
+    rating_component:      Optional[Decimal] = None
+    reliability_component: Optional[Decimal] = None
+    consistency_component: Optional[Decimal] = None
+    period_type:          Optional[str] = None
+    period_label:         Optional[str] = None
     country_rank:         Optional[int] = None
     global_rank:          Optional[int] = None
     session_streak_days:  Optional[int] = None
@@ -91,7 +97,14 @@ class LeaderboardResponse(SQLModel):
     worker_id:            UUID
     worker_display_name:  str
     worker_country:       str
+    worker_type:          Optional[str] = None
     composite_score:      Decimal
+    assessment_component:  Optional[Decimal] = None
+    rating_component:      Optional[Decimal] = None
+    reliability_component: Optional[Decimal] = None
+    consistency_component: Optional[Decimal] = None
+    period_type:          Optional[str] = None
+    period_label:         Optional[str] = None
     global_rank:          Optional[int] = None
     country_rank:         Optional[int] = None
     session_streak_days:  Optional[int] = None

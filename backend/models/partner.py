@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, ForeignKey, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -24,6 +24,8 @@ class PartnerEntity(SQLModel, table=True):
     name: str = Field(sa_column=Column(String(255), unique=True, nullable=False))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     status: EntityStatusEnum = Field(sa_column=Column(EntityStatusType, nullable=False))
+    # Independent partner acting as their own company (no external partner org).
+    is_self: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(Date, nullable=False, server_default=text("now()")),

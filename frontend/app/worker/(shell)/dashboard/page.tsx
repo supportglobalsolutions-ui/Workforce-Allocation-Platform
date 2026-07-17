@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { ChevronRight, Clock, Monitor, PenLine, Play, Star, Trophy } from 'lucide-react';
+import { AlertTriangle, ChevronRight, Clock, Monitor, PenLine, Play, Star, Trophy } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
@@ -24,6 +24,10 @@ interface QualityScore {
   session_streak_days: number | null;
 }
 
+interface Me {
+  work_ready: boolean;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   gs_rdp: 'GS RDP',
   partner_multilog: 'Partner Multilog',
@@ -39,6 +43,7 @@ export default function WorkerDashboard() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [totalSessions, setTotalSessions] = useState(0);
   const [quality, setQuality] = useState<QualityScore | null>(null);
+  const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,11 +51,13 @@ export default function WorkerDashboard() {
     Promise.all([
       api.get<WorkSession[]>('/sessions?limit=200'),
       api.get<QualityScore | null>('/quality/me'),
+      api.get<Me>('/workers/me'),
     ])
-      .then(([sessionList, qualityScore]) => {
+      .then(([sessionList, qualityScore, worker]) => {
         setTotalSessions(sessionList.length);
         setSessions(sessionList.slice(0, 4));
         setQuality(qualityScore);
+        setMe(worker);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
@@ -77,6 +84,18 @@ export default function WorkerDashboard() {
         title="Dashboard"
         description={`${totalSessions === 200 ? '200+' : totalSessions} sessions on record · Overview of your performance and quick access to daily tasks.`}
       />
+
+      {me?.work_ready === false && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-400">
+            <span className="font-bold">Training required</span> — you must complete onboarding training and be cleared by an admin before claiming RDP sessions.{' '}
+            <Link href="/worker/training" className="font-bold underline hover:no-underline">
+              Go to training
+            </Link>
+          </p>
+        </div>
+      )}
 
       {/* KPI metrics */}
       <section aria-label="Performance metrics">

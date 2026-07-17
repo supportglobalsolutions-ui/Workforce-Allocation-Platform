@@ -109,8 +109,10 @@ export const apiUpdateUserRole = (uid: string, role: AuthRole) =>
 export const apiRegisterUser = (email: string, password: string, displayName: string) =>
   api.post<ManagedUser>('/auth/register', { email, password, displayName });
 
-export const apiApproveUser = (uid: string) =>
-  api.patch<ManagedUser>(`/auth/users/${uid}/approve`, {});
+export const apiApproveUser = (
+  uid: string,
+  body?: { worker_type?: string; partner_entity_id?: string | null; country?: string | null },
+) => api.patch<ManagedUser>(`/auth/users/${uid}/approve`, body ?? {});
 
 export const apiRejectUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/reject`, {});

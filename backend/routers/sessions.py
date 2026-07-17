@@ -80,6 +80,10 @@ def create_session(
             )
 
     session = WorkSession(**body.model_dump())
+    if session.end_time and not session.duration_minutes:
+        session.duration_minutes = max(
+            0, int((session.end_time - session.start_time).total_seconds() // 60)
+        )
     db.add(session)
     db.commit()
     db.refresh(session)

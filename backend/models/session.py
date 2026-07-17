@@ -17,6 +17,7 @@ from .enums import (
 
 if TYPE_CHECKING:
     from .allocation import Allocation
+    from .client import Client
     from .partner import PartnerArrangement, PartnerEntity
     from .payroll import PayrollLineItem, PayrollPeriod
     from .post_mvp import SessionTicket
@@ -58,6 +59,12 @@ class Session(SQLModel, table=True):
     partner_arrangement_id: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=True),
+    )
+    # Client account the work was done on (inherited from the RDP for gs_rdp
+    # sessions; set directly on partner multilog / third-party sessions).
+    client_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id"), nullable=True),
     )
     start_time: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     end_time: Optional[datetime] = Field(
@@ -107,6 +114,10 @@ class Session(SQLModel, table=True):
     partner_arrangement: Optional["PartnerArrangement"] = Relationship(
         back_populates="sessions",
         sa_relationship_kwargs={"foreign_keys": "[Session.partner_arrangement_id]"},
+    )
+    client: Optional["Client"] = Relationship(
+        back_populates="sessions",
+        sa_relationship_kwargs={"foreign_keys": "[Session.client_id]"},
     )
     payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="sessions")
     payroll_line_items: list["PayrollLineItem"] = Relationship(back_populates="session")

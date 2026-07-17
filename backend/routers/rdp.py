@@ -210,6 +210,7 @@ def _resume_existing_claim(
             session_type=SessionTypeEnum.gs_rdp,
             allocation_id=allocation.id,
             rdp_resource_id=resource.id,
+            client_id=resource.client_id,
             start_time=now,
             type_specific_fields={},
         )
@@ -563,6 +564,11 @@ def claim_rdp_resource(
     Creates allocation + work session; returns proxied viewer path for in-app embed.
     """
     worker = get_worker_for_user(db, current_user)
+    if not worker.work_ready:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Complete your onboarding training first — an admin must clear you to start work.",
+        )
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
@@ -641,6 +647,7 @@ def claim_rdp_resource(
             session_type=SessionTypeEnum.gs_rdp,
             allocation_id=None,
             rdp_resource_id=resource.id,
+            client_id=resource.client_id,
             start_time=now,
             type_specific_fields={},
         )

@@ -83,6 +83,14 @@ class QualityCompositeScore(SQLModel, table=True):
     mcq_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     subjective_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     composite_score: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
+    # Confirmed 30/30/25/15 composite inputs (0-100 each).
+    assessment_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
+    rating_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
+    reliability_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
+    consistency_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
+    # "calendar" (calendar month) or "payroll" (payroll period) leaderboard view.
+    period_type: Optional[str] = Field(default=None, sa_column=Column(String(16), nullable=True))
+    period_label: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
     country_rank: Optional[int] = Field(default=None, sa_column=Column(SmallInteger, nullable=True))
     global_rank: Optional[int] = Field(default=None, sa_column=Column(SmallInteger, nullable=True))
     session_streak_days: Optional[int] = Field(

@@ -28,6 +28,34 @@ def _to_dict(obj) -> dict:
     return {c.key: getattr(obj, c.key) for c in obj.__mapper__.column_attrs}
 
 
+# ── Worker: available tasks + my results ──────────────────────────────────────
+# (Static paths registered before the /{assessment_id} routes below.)
+
+@router.get("/available", response_model=list[TaskAssessmentResponse])
+def list_available_tasks(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    return db.exec(
+        select(TaskAssessment)
+        .where(TaskAssessment.is_active.is_(True))
+        .order_by(col(TaskAssessment.title))
+    ).all()
+
+
+@router.get("/results/mine", response_model=list[TaskResultResponse])
+def my_task_results(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    worker = get_worker_for_user(db, current_user)
+    return db.exec(
+        select(TaskAssessmentResult)
+        .where(TaskAssessmentResult.worker_id == worker.id)
+        .order_by(TaskAssessmentResult.created_at.desc())
+    ).all()
+
+
 # ── Assessment CRUD ────────────────────────────────────────────────────────────
 
 @router.get("", response_model=list[TaskAssessmentWithStats])

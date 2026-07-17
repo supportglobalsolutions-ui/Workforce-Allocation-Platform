@@ -44,6 +44,14 @@ class Settings(BaseSettings):
     UPTIME_KUMA_URL: str = "http://localhost:3001"
     UPTIME_KUMA_WEBHOOK_SECRET: str = ""
 
+    # ── Resend email ──────────────────────────────────────────
+    RESEND_API_KEY: str = ""
+    RESEND_FROM_EMAIL: str = "GlobalSolutions <noreply@gsdeck.com>"
+
+    # ── FX rates ──────────────────────────────────────────────
+    # Free endpoint returning {"rates": {"KES": 129.3, ...}} for a base currency.
+    FX_API_URL: str = "https://open.er-api.com/v6/latest"
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"

@@ -10,6 +10,7 @@ from .enums import RdpStatusEnum, RdpStatusType
 
 if TYPE_CHECKING:
     from .allocation import Allocation
+    from .client import Client
     from .session import Session
     from .shift import Shift
     from .worker import Worker
@@ -25,6 +26,11 @@ class RDPResource(SQLModel, table=True):
     nickname: str = Field(sa_column=Column(String(64), unique=True, nullable=False))
     country: str = Field(sa_column=Column(String(64), nullable=False))
     client_group: str = Field(sa_column=Column(String(128), nullable=False))
+    # The client account this RDP works on (traceability: client + account + worker).
+    client_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id"), nullable=True),
+    )
     status: RdpStatusEnum = Field(sa_column=Column(RdpStatusType, nullable=False))
     assigned_worker_id: Optional[uuid.UUID] = Field(
         default=None,
@@ -55,6 +61,10 @@ class RDPResource(SQLModel, table=True):
     # Relationships
     assigned_worker: Optional["Worker"] = Relationship(
         sa_relationship_kwargs={"foreign_keys": "[RDPResource.assigned_worker_id]"}
+    )
+    client: Optional["Client"] = Relationship(
+        back_populates="rdp_resources",
+        sa_relationship_kwargs={"foreign_keys": "[RDPResource.client_id]"},
     )
     shifts: list["Shift"] = Relationship(
         back_populates="rdp_resource",

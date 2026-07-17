@@ -2,11 +2,12 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useState } from 'react';
-import { Bell, PanelLeftClose, PanelLeftOpen, Menu, Search, X } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { Bell, Handshake, PanelLeftClose, PanelLeftOpen, Menu, Search, X } from 'lucide-react';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import LogoMark from '@/components/theme/LogoMark';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { api } from '@/lib/api';
 import {
   PortalRole,
   PUBLIC_TOP_NAV,
@@ -31,6 +32,19 @@ export default function TopNav({
   const pathname = usePathname();
   const { session } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [isPartner, setIsPartner] = useState(false);
+  const [partnerName, setPartnerName] = useState<string | null>(null);
+
+  // Partner workers see a "Partner" label at the top right of their portal.
+  useEffect(() => {
+    if (variant !== 'portal' || role !== 'worker' || !session) return;
+    api.get<{ worker_type: string; partner_entity_name: string | null }>('/workers/me')
+      .then((w) => {
+        setIsPartner(w.worker_type === 'partner_worker');
+        setPartnerName(w.partner_entity_name);
+      })
+      .catch(() => setIsPartner(false));
+  }, [variant, role, session]);
 
   const initials = session?.displayName
     ? session.displayName.split(' ').map((p) => p[0]).slice(0, 2).join('').toUpperCase()
@@ -77,6 +91,16 @@ export default function TopNav({
 
       {/* Right — bell, theme, user */}
       <div className="flex items-center gap-2 shrink-0">
+        {variant === 'portal' && role === 'worker' && isPartner && (
+          <span
+            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gold-accent/15 text-gold-accent border border-gold-accent/30 text-[11px] font-black uppercase tracking-wider"
+            title={partnerName ? `Partner — ${partnerName}` : 'Partner worker'}
+          >
+            <Handshake size={13} />
+            Partner
+            {partnerName && <span className="hidden xl:inline font-semibold normal-case tracking-normal">· {partnerName}</span>}
+          </span>
+        )}
         {variant === 'public' && (
           <button
             type="button"

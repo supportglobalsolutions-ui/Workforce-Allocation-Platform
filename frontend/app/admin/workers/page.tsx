@@ -2,8 +2,8 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Plus,
-  Search, ShieldCheck, ShieldOff, User, UserPlus, Users, X, XCircle,
+  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Pencil, Plus,
+  Search, ShieldCheck, ShieldOff, User, UserPlus, X, XCircle,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
@@ -32,9 +32,12 @@ import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 interface Worker {
   id: string;
   display_name: string;
+  username: string | null;
   country: string;
   worker_type: string;
   partner_entity_id: string | null;
+  partner_entity_name: string | null;
+  work_ready: boolean;
   admin_user_id: string | null;
   pay_tier: string;
   status: string;
@@ -43,6 +46,9 @@ interface Worker {
   updated_at: string;
   email: string | null;
 }
+
+interface PartnerOption { id: string; name: string; }
+interface CountryOption { id: string; name: string; currency_code: string; is_active: boolean; }
 
 interface WorkSession {
   id: string;
@@ -62,11 +68,46 @@ type PeopleTab = 'workers' | 'admins' | 'super_admins';
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
+// Session-type labels (for work sessions only)
 const TYPE_LABELS: Record<string, string> = {
   gs_rdp: 'GS RDP',
   partner_multilog: 'Partner Multilog',
   third_party_platform: 'Third Party',
 };
+
+// Worker designation labels
+const WORKER_TYPE_LABELS: Record<string, string> = {
+  gs_registered: 'GS Member',
+  partner_worker: 'Partner',
+};
+
+function WorkerTypeBadge({ worker }: { worker: Pick<Worker, 'worker_type' | 'partner_entity_name'> }) {
+  if (worker.worker_type === 'partner_worker') {
+    return (
+      <span className="inline-flex items-center gap-1.5">
+        <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
+          Partner
+        </span>
+        {worker.partner_entity_name && (
+          <span className="text-xs text-theme-muted">{worker.partner_entity_name}</span>
+        )}
+      </span>
+    );
+  }
+  return <span className="text-sm">{WORKER_TYPE_LABELS[worker.worker_type] ?? worker.worker_type}</span>;
+}
+
+function WorkReadyBadge({ ready }: { ready: boolean }) {
+  return (
+    <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${
+      ready
+        ? 'bg-emerald-accent/20 text-emerald-accent border-emerald-accent/30'
+        : 'bg-amber-500/20 text-amber-400 border-amber-500/30'
+    }`}>
+      {ready ? 'Cleared' : 'Training'}
+    </span>
+  );
+}
 
 function formatDuration(minutes: number | null) {
   if (!minutes) return '—';
@@ -102,7 +143,33 @@ function RoleBadge({ role }: { role: AuthRole }) {
 
 type WorkerModalTab = 'profile' | 'sessions';
 
-function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () => void }) {
+interface WorkerEditForm {
+  display_name: string;
+  username: string;
+  country: string;
+  pay_tier: string;
+  status: string;
+  start_date: string;
+  worker_type: string;
+  partner_entity_id: string;
+  work_ready: boolean;
+}
+
+function editFormFromWorker(w: Worker): WorkerEditForm {
+  return {
+    display_name: w.display_name,
+    username: w.username ?? '',
+    country: w.country ?? '',
+    pay_tier: w.pay_tier ?? '',
+    status: w.status,
+    start_date: (w.start_date ?? '').slice(0, 10),
+    worker_type: w.worker_type,
+    partner_entity_id: w.partner_entity_id ?? '',
+    work_ready: w.work_ready,
+  };
+}
+
+function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onClose: () => void; onUpdated: (w: Worker) => void }) {
   const [tab, setTab] = useState<WorkerModalTab>('profile');
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [machines, setMachines] = useState<RDPResource[]>([]);
@@ -112,6 +179,54 @@ function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () =>
   const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | null>(null);
   const [banLoading, setBanLoading] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
+
+  // Edit mode
+  const [editing, setEditing] = useState(false);
+  const [editForm, setEditForm] = useState<WorkerEditForm>(() => editFormFromWorker(worker));
+  const [editSaving, setEditSaving] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+  const [countries, setCountries] = useState<CountryOption[] | null>(null);
+  const [partnerOptions, setPartnerOptions] = useState<PartnerOption[] | null>(null);
+
+  useEffect(() => {
+    if (!editing) return;
+    if (countries === null) {
+      api.get<CountryOption[]>('/currencies/countries').then(setCountries).catch(() => setCountries([]));
+    }
+    if (partnerOptions === null) {
+      api.get<PartnerOption[]>('/partners').then(setPartnerOptions).catch(() => setPartnerOptions([]));
+    }
+  }, [editing, countries, partnerOptions]);
+
+  const editValid =
+    editForm.display_name.trim().length > 0 &&
+    (editForm.worker_type !== 'partner_worker' || editForm.partner_entity_id !== '');
+
+  async function handleSaveEdit() {
+    if (!editValid) return;
+    setEditSaving(true); setEditError(null);
+    try {
+      const body = {
+        display_name: editForm.display_name.trim(),
+        username: editForm.username.trim() || null,
+        country: editForm.country,
+        pay_tier: editForm.pay_tier,
+        status: editForm.status,
+        start_date: editForm.start_date,
+        worker_type: editForm.worker_type,
+        partner_entity_id: editForm.worker_type === 'partner_worker' ? editForm.partner_entity_id : null,
+        work_ready: editForm.work_ready,
+      };
+      const resp = await api.patch<Partial<Worker>>(`/workers/${worker.id}`, body);
+      const partnerName = editForm.worker_type === 'partner_worker'
+        ? (partnerOptions?.find((p) => p.id === editForm.partner_entity_id)?.name ?? worker.partner_entity_name)
+        : null;
+      onUpdated({ ...worker, ...body, ...resp, partner_entity_name: partnerName } as Worker);
+      setEditing(false);
+    } catch (e: unknown) {
+      setEditError(e instanceof Error ? e.message : 'Failed to save worker.');
+    } finally { setEditSaving(false); }
+  }
 
   useEffect(() => {
     if (!worker.admin_user_id || !worker.email) return;
@@ -174,7 +289,10 @@ function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () =>
           <div className="flex items-center justify-between p-5 border-b border-white/[0.06] shrink-0">
             <div>
               <h2 className="text-base font-bold text-white">{worker.display_name}</h2>
-              <p className="text-xs text-theme-muted mt-0.5">{TYPE_LABELS[worker.worker_type] ?? worker.worker_type}</p>
+              <p className="text-xs text-theme-muted mt-0.5">
+                {WORKER_TYPE_LABELS[worker.worker_type] ?? worker.worker_type}
+                {worker.worker_type === 'partner_worker' && worker.partner_entity_name ? ` · ${worker.partner_entity_name}` : ''}
+              </p>
             </div>
             <button type="button" onClick={onClose}
               className="flex items-center justify-center w-8 h-8 rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
@@ -194,15 +312,27 @@ function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () =>
           </div>
 
           <div className="overflow-y-auto flex-1">
-            {tab === 'profile' && (
+            {tab === 'profile' && !editing && (
               <div className="p-5 space-y-5">
+                <div className="flex justify-end">
+                  <button type="button"
+                    onClick={() => { setEditForm(editFormFromWorker(worker)); setEditError(null); setEditing(true); }}
+                    className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5">
+                    <Pencil size={12} /> Edit
+                  </button>
+                </div>
                 <div>
                   <p className="text-[10px] font-bold uppercase tracking-widest text-gold-accent mb-3">Identity</p>
                   <div className="grid grid-cols-2 gap-4">
                     <DetailField label="Display Name" value={worker.display_name} />
-                    <DetailField label="Country" value={worker.country} />
-                    <DetailField label="Worker Type" value={TYPE_LABELS[worker.worker_type] ?? worker.worker_type} />
+                    <DetailField label="Username" value={worker.username || '—'} />
+                    <DetailField label="Country" value={worker.country || '—'} />
+                    <DetailField label="Worker Type" value={<WorkerTypeBadge worker={worker} />} />
+                    {worker.worker_type === 'partner_worker' && worker.partner_entity_name && (
+                      <DetailField label="Partner Company" value={worker.partner_entity_name} />
+                    )}
                     <DetailField label="Status" value={<StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />} />
+                    <DetailField label="Work Ready" value={<WorkReadyBadge ready={worker.work_ready} />} />
                   </div>
                 </div>
                 <div className="border-t border-white/[0.06]" />
@@ -260,6 +390,115 @@ function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () =>
               </div>
             )}
 
+            {tab === 'profile' && editing && (
+              <div className="p-5 space-y-5">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gold-accent">Edit Worker Profile</p>
+                <div className="grid sm:grid-cols-2 gap-4">
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Display Name</label>
+                    <input value={editForm.display_name}
+                      onChange={(e) => setEditForm((f) => ({ ...f, display_name: e.target.value }))}
+                      className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Username</label>
+                    <input value={editForm.username}
+                      onChange={(e) => setEditForm((f) => ({ ...f, username: e.target.value }))}
+                      placeholder="username" className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Country</label>
+                    <div className="relative">
+                      <select value={editForm.country}
+                        onChange={(e) => setEditForm((f) => ({ ...f, country: e.target.value }))}
+                        className="input-field appearance-none pr-8">
+                        <option value="">Unassigned</option>
+                        {editForm.country && !(countries ?? []).some((c) => c.name === editForm.country) && (
+                          <option value={editForm.country}>{editForm.country}</option>
+                        )}
+                        {(countries ?? []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Pay Tier</label>
+                    <input value={editForm.pay_tier}
+                      onChange={(e) => setEditForm((f) => ({ ...f, pay_tier: e.target.value }))}
+                      className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Status</label>
+                    <div className="relative">
+                      <select value={editForm.status}
+                        onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                        className="input-field appearance-none pr-8 capitalize">
+                        {['active', 'inactive', 'suspended'].map((s) => <option key={s} value={s}>{s}</option>)}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Start Date</label>
+                    <input type="date" value={editForm.start_date}
+                      onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))}
+                      className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Worker Type</label>
+                    <div className="relative">
+                      <select value={editForm.worker_type}
+                        onChange={(e) => setEditForm((f) => ({ ...f, worker_type: e.target.value }))}
+                        className="input-field appearance-none pr-8">
+                        <option value="gs_registered">GS Member</option>
+                        <option value="partner_worker">Partner</option>
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                    </div>
+                  </div>
+                  {editForm.worker_type === 'partner_worker' && (
+                    <div>
+                      <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Partner Company *</label>
+                      <div className="relative">
+                        <select value={editForm.partner_entity_id}
+                          onChange={(e) => setEditForm((f) => ({ ...f, partner_entity_id: e.target.value }))}
+                          className="input-field appearance-none pr-8">
+                          <option value="">Select partner…</option>
+                          {(partnerOptions ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                      </div>
+                      {partnerOptions === null && <p className="text-[10px] text-theme-muted mt-1">Loading partners…</p>}
+                    </div>
+                  )}
+                </div>
+
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input type="checkbox" checked={editForm.work_ready}
+                    onChange={(e) => setEditForm((f) => ({ ...f, work_ready: e.target.checked }))}
+                    className="accent-emerald-400" />
+                  <span className="text-sm text-white">Cleared to work</span>
+                  <WorkReadyBadge ready={editForm.work_ready} />
+                </label>
+
+                {editError && (
+                  <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
+                    <AlertCircle size={14} /> {editError}
+                  </div>
+                )}
+
+                <div className="flex gap-3 justify-end border-t border-white/[0.06] pt-4">
+                  <button type="button" onClick={() => { setEditing(false); setEditError(null); }}
+                    className="btn-secondary text-sm py-2 px-4">Cancel</button>
+                  <button type="button" onClick={handleSaveEdit} disabled={editSaving || !editValid}
+                    className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
+                    {editSaving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={14} />}
+                    Save
+                  </button>
+                </div>
+              </div>
+            )}
+
             {tab === 'sessions' && (
               <div className="p-5">
                 {sessionsLoading ? (
@@ -312,11 +551,17 @@ function WorkerDetailModal({ worker, onClose }: { worker: Worker; onClose: () =>
 
 // ── Account Detail Modal (for Admins / Super Admins) ──────────────────────────
 
+interface ApproveBody {
+  worker_type?: string;
+  partner_entity_id?: string | null;
+  country?: string | null;
+}
+
 interface AccountModalProps {
   user: ManagedUser;
   actorRole: string;
   onClose: () => void;
-  onApprove: (uid: string) => void;
+  onApprove: (uid: string, body?: ApproveBody) => void;
   onReject: (uid: string) => void;
   onBan: (uid: string) => void;
   onUnban: (uid: string) => void;
@@ -326,6 +571,35 @@ interface AccountModalProps {
 function AccountDetailModal({ user, actorRole, onClose, onApprove, onReject, onBan, onUnban, actingOn }: AccountModalProps) {
   const isActing = actingOn === user.uid;
   const canBan = actorRole === 'super_admin' || user.role !== 'super_admin';
+  const isPendingWorker = user.status === 'pending' && user.role === 'user';
+
+  // Approval designation (worker accounts only)
+  const [workerType, setWorkerType] = useState<'gs_registered' | 'partner_worker'>('gs_registered');
+  const [partnerId, setPartnerId] = useState('');
+  const [country, setCountry] = useState('');
+  const [partners, setPartners] = useState<PartnerOption[] | null>(null);
+  const [countries, setCountries] = useState<CountryOption[] | null>(null);
+
+  useEffect(() => {
+    if (!isPendingWorker || countries !== null) return;
+    api.get<CountryOption[]>('/currencies/countries').then(setCountries).catch(() => setCountries([]));
+  }, [isPendingWorker, countries]);
+
+  useEffect(() => {
+    if (workerType !== 'partner_worker' || partners !== null) return;
+    api.get<PartnerOption[]>('/partners').then(setPartners).catch(() => setPartners([]));
+  }, [workerType, partners]);
+
+  const approveDisabled = workerType === 'partner_worker' && !partnerId;
+
+  function handleApproveClick() {
+    if (!isPendingWorker) { onApprove(user.uid); return; }
+    onApprove(user.uid, {
+      worker_type: workerType,
+      partner_entity_id: workerType === 'partner_worker' ? partnerId : null,
+      country: country || null,
+    });
+  }
 
   return (
     <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -394,15 +668,63 @@ function AccountDetailModal({ user, actorRole, onClose, onApprove, onReject, onB
               {isActing ? (
                 <div className="flex justify-center py-3"><SpinningDots size="sm" className="text-emerald-500" /></div>
               ) : (
-                <div className="flex gap-3">
-                  <button type="button" onClick={() => onApprove(user.uid)}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors">
-                    <CheckCircle size={13} /> Approve
-                  </button>
-                  <button type="button" onClick={() => onReject(user.uid)}
-                    className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
-                    <XCircle size={13} /> Reject
-                  </button>
+                <div className="space-y-3">
+                  {isPendingWorker && (
+                    <>
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Worker Designation</p>
+                        <div className="flex gap-4">
+                          {([
+                            ['gs_registered', 'GS Member'],
+                            ['partner_worker', 'Partner worker'],
+                          ] as const).map(([value, label]) => (
+                            <label key={value} className="flex items-center gap-2 cursor-pointer select-none">
+                              <input type="radio" name="worker_type" value={value}
+                                checked={workerType === value}
+                                onChange={() => { setWorkerType(value); if (value === 'gs_registered') setPartnerId(''); }}
+                                className="accent-emerald-500" />
+                              <span className="text-sm text-gray-800">{label}</span>
+                            </label>
+                          ))}
+                        </div>
+                      </div>
+                      {workerType === 'partner_worker' && (
+                        <div>
+                          <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Partner Company *</p>
+                          <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)}
+                            className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-emerald-400">
+                            <option value="">Select partner…</option>
+                            {(partners ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                          </select>
+                          {partners === null && <p className="text-[10px] text-gray-400 mt-1">Loading partners…</p>}
+                          {partners !== null && partners.length === 0 && (
+                            <p className="text-[10px] text-red-500 mt-1">No partner companies found. Create one in Partner Management first.</p>
+                          )}
+                        </div>
+                      )}
+                      <div>
+                        <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Country</p>
+                        <select value={country} onChange={(e) => setCountry(e.target.value)}
+                          className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-emerald-400">
+                          <option value="">Unassigned</option>
+                          {(countries ?? []).map((c) => <option key={c.id} value={c.name}>{c.name}</option>)}
+                        </select>
+                      </div>
+                      <p className="text-[10px] text-gray-400">
+                        New workers must complete onboarding training before they can start work.
+                      </p>
+                    </>
+                  )}
+                  <div className="flex gap-3">
+                    <button type="button" onClick={handleApproveClick} disabled={isPendingWorker && approveDisabled}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
+                      <CheckCircle size={13} /> Approve
+                    </button>
+                    <button type="button" onClick={() => onReject(user.uid)}
+                      className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
+                      <XCircle size={13} /> Reject
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -494,7 +816,7 @@ export default function PeopleManagementPage() {
   const filteredWorkers = useMemo(() => {
     const q = workerSearch.trim().toLowerCase();
     return workers.filter((w) => {
-      if (typeFilter && (TYPE_LABELS[w.worker_type] ?? w.worker_type) !== typeFilter) return false;
+      if (typeFilter && (WORKER_TYPE_LABELS[w.worker_type] ?? w.worker_type) !== typeFilter) return false;
       if (statusFilter && w.status !== statusFilter.toLowerCase()) return false;
       if (!q) return true;
       return (
@@ -535,9 +857,14 @@ export default function PeopleManagementPage() {
   }
 
   // ── Account actions
-  async function handleApprove(uid: string) {
+  async function handleApprove(uid: string, body?: ApproveBody) {
     setActingOn(uid); setActionError('');
-    try { await apiApproveUser(uid); await loadUsers(); setSelectedUser(null); }
+    try {
+      await apiApproveUser(uid, body);
+      await loadUsers();
+      await loadWorkers(); // approval may provision a new worker profile
+      setSelectedUser(null);
+    }
     catch (e: unknown) { setActionError(e instanceof Error ? e.message : 'Failed to approve.'); }
     finally { setActingOn(null); }
   }
@@ -573,12 +900,18 @@ export default function PeopleManagementPage() {
     id: w.id,
     name: w.display_name,
     country: w.country,
-    type: TYPE_LABELS[w.worker_type] ?? w.worker_type,
+    type: WORKER_TYPE_LABELS[w.worker_type] ?? w.worker_type,
+    work_ready: w.work_ready,
     pay_tier: w.pay_tier,
     start_date: new Date(w.start_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
     status: w.status,
     _worker: w,
   }));
+
+  function handleWorkerUpdated(updated: Worker) {
+    setWorkers((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
+    setSelectedWorker((prev) => (prev && prev.id === updated.id ? updated : prev));
+  }
 
   return (
     <div>
@@ -745,7 +1078,7 @@ export default function PeopleManagementPage() {
               )}
             </div>
             {[
-              { label: 'Type', options: ['GS RDP', 'Partner Multilog', 'Third Party'], setter: setTypeFilter, value: typeFilter },
+              { label: 'Type', options: ['GS Member', 'Partner'], setter: setTypeFilter, value: typeFilter },
               { label: 'Status', options: ['active', 'inactive', 'suspended'], setter: setStatusFilter, value: statusFilter },
             ].map(({ label, options, setter, value }) => (
               <select key={label} value={value} onChange={(e) => setter(e.target.value)}
@@ -768,7 +1101,14 @@ export default function PeopleManagementPage() {
               columns={[
                 { key: 'name', header: 'Name' },
                 { key: 'country', header: 'Country' },
-                { key: 'type', header: 'Type' },
+                {
+                  key: 'type', header: 'Type',
+                  render: (r) => <WorkerTypeBadge worker={(r as typeof workerRows[number])._worker} />,
+                },
+                {
+                  key: 'work_ready', header: 'Work Ready',
+                  render: (r) => <WorkReadyBadge ready={Boolean(r.work_ready)} />,
+                },
                 { key: 'pay_tier', header: 'Pay Tier' },
                 { key: 'start_date', header: 'Start Date' },
                 {
@@ -883,6 +1223,7 @@ export default function PeopleManagementPage() {
         <WorkerDetailModal
           worker={selectedWorker}
           onClose={() => setSelectedWorker(null)}
+          onUpdated={handleWorkerUpdated}
         />
       )}
       {selectedUser && (

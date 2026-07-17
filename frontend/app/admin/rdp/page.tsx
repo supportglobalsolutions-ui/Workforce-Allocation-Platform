@@ -15,11 +15,19 @@ import {
   unlockRdp,
   updateRdpResource,
 } from '@/lib/rdp';
+import { api } from '@/lib/api';
+
+interface ClientOption {
+  id: string;
+  name: string;
+  platform: string;
+}
 
 interface MachineForm {
   nickname: string;
   country: string;
   client_group: string;
+  client_id: string;
   monitor_host: string;
   monitor_port: string;
   guacamole_connection_id: string;
@@ -30,6 +38,7 @@ const EMPTY_FORM: MachineForm = {
   nickname: '',
   country: '',
   client_group: '',
+  client_id: '',
   monitor_host: '',
   monitor_port: '3389',
   guacamole_connection_id: '',
@@ -41,6 +50,7 @@ function formFromMachine(m: RdpResource): MachineForm {
     nickname: m.nickname,
     country: m.country,
     client_group: m.client_group,
+    client_id: m.client_id ?? '',
     monitor_host: m.monitor_host ?? '',
     monitor_port: String(m.monitor_port ?? 3389),
     guacamole_connection_id: m.guacamole_connection_id ?? '',
@@ -54,6 +64,7 @@ function bodyFromForm(form: MachineForm) {
     nickname: form.nickname.trim(),
     country: form.country.trim(),
     client_group: form.client_group.trim(),
+    client_id: form.client_id || null,
     monitor_host: form.monitor_host.trim() || null,
     monitor_port: monitorPort,
     guacamole_connection_id: form.guacamole_connection_id.trim() || null,
@@ -68,6 +79,7 @@ function formatHealthCheck(at: string | null) {
 
 export default function RdpManagementPage() {
   const [machines, setMachines] = useState<RdpResource[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -90,7 +102,11 @@ export default function RdpManagementPage() {
 
   useEffect(() => {
     reload().finally(() => setLoading(false));
+    api.get<ClientOption[]>('/clients').then(setClients).catch(() => setClients([]));
   }, []);
+
+  const clientName = (id: string | null) =>
+    id ? clients.find((c) => c.id === id)?.name ?? null : null;
 
   const runAction = async (id: string, action: () => Promise<unknown>) => {
     setBusyId(id);
@@ -182,6 +198,19 @@ export default function RdpManagementPage() {
           placeholder="ClientA"
           className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
         />
+      </label>
+      <label className="block sm:col-span-2">
+        <span className="text-xs text-brand-on-surface-variant mb-1 block">Client account</span>
+        <select
+          value={form.client_id}
+          onChange={(e) => setForm((f) => ({ ...f, client_id: e.target.value }))}
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+        >
+          <option value="">None</option>
+          {clients.map((c) => (
+            <option key={c.id} value={c.id}>{c.name} — {c.platform}</option>
+          ))}
+        </select>
       </label>
       <label className="block">
         <span className="text-xs text-brand-on-surface-variant mb-1 block">Monitor host (IP) *</span>
@@ -304,6 +333,7 @@ export default function RdpManagementPage() {
                       <p className="font-bold text-white">{m.nickname}</p>
                       <p className="text-xs text-brand-on-surface-variant">
                         {m.country} · {m.client_group}
+                        {clientName(m.client_id) ? ` · ${clientName(m.client_id)}` : ''}
                         {m.monitor_host ? ` · ${m.monitor_host}:${m.monitor_port ?? 3389}` : ' · no monitor IP'}
                         {m.health_notes ? ` · ${m.health_notes}` : ''}
                       </p>

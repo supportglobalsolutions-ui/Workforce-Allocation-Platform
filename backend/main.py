@@ -9,7 +9,11 @@ from fastapi.responses import JSONResponse
 
 from core.config import settings
 from core.firebase_admin import init_firebase
-from routers import assessments, audit, auth, leaderboard, notifications, payroll, quality, rdp, sessions, shifts, task_assessments, uptime_kuma, workers
+from routers import (
+    assessments, audit, auth, clients, communications, currencies, leaderboard,
+    notifications, partners, payroll, quality, rates, rdp, sessions, shifts,
+    task_assessments, training, uptime_kuma, wallets, workers,
+)
 from services.leaderboard_sync import run_leaderboard_sync_loop
 from services.mirror_reconcile import run_mirror_reconcile_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
@@ -68,6 +72,13 @@ app.include_router(auth.router, prefix="/auth", tags=["auth"])
 app.include_router(assessments.router, prefix="/assessments", tags=["assessments"])
 app.include_router(task_assessments.router, prefix="/task-assessments", tags=["task-assessments"])
 app.include_router(workers.router, prefix="/workers", tags=["workers"])
+app.include_router(partners.router, prefix="/partners", tags=["partners"])
+app.include_router(clients.router, prefix="/clients", tags=["clients"])
+app.include_router(currencies.router, prefix="/currencies", tags=["currencies"])
+app.include_router(wallets.router, prefix="/wallets", tags=["wallets"])
+app.include_router(rates.router, prefix="/rates", tags=["rates"])
+app.include_router(training.router, prefix="/training", tags=["training"])
+app.include_router(communications.router, prefix="/communications", tags=["communications"])
 app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
 app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])

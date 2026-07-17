@@ -12,6 +12,7 @@ class RDPResourceBase(SQLModel):
     nickname:                str
     country:                 str
     client_group:            str
+    client_id:               Optional[UUID] = None
     status:                  RdpStatusEnum
     assigned_worker_id:      Optional[UUID] = None
     guacamole_connection_id: Optional[str]  = None
@@ -29,6 +30,7 @@ class RDPResourceUpdate(SQLModel):
     nickname:                Optional[str]           = None
     country:                 Optional[str]           = None
     client_group:            Optional[str]           = None
+    client_id:               Optional[UUID]          = None
     status:                  Optional[RdpStatusEnum] = None
     assigned_worker_id:      Optional[UUID]          = None
     guacamole_connection_id: Optional[str]           = None

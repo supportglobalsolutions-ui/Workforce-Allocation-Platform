@@ -10,9 +10,10 @@ from models.enums import EntityStatusEnum
 
 
 class PartnerEntityBase(SQLModel):
-    name:   str
-    notes:  Optional[str]  = None
-    status: EntityStatusEnum
+    name:    str
+    notes:   Optional[str]  = None
+    status:  EntityStatusEnum
+    is_self: bool = False
 
 
 class PartnerEntityCreate(PartnerEntityBase):
@@ -20,15 +21,17 @@ class PartnerEntityCreate(PartnerEntityBase):
 
 
 class PartnerEntityUpdate(SQLModel):
-    name:   Optional[str]             = None
-    notes:  Optional[str]             = None
-    status: Optional[EntityStatusEnum] = None
+    name:    Optional[str]             = None
+    notes:   Optional[str]             = None
+    status:  Optional[EntityStatusEnum] = None
+    is_self: Optional[bool]            = None
 
 
 class PartnerEntityResponse(PartnerEntityBase):
     model_config = ConfigDict(from_attributes=True)
     id:         UUID
     created_at: datetime
+    worker_count: Optional[int] = None
 
 
 # ── PartnerArrangement ─────────────────────────────────────────────────────────
