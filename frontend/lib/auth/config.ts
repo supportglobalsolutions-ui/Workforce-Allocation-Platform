@@ -26,9 +26,9 @@ export const ROLE_ALLOWED_PORTALS: Record<AuthRole, PortalRole[]> = {
 };
 
 export const ROLE_DISPLAY: Record<AuthRole, string> = {
-  user: 'User',
-  admin: 'Admin',
-  super_admin: 'Super Admin / Executive',
+  user: 'Worker',
+  admin: 'Operations Lead',
+  super_admin: 'Executive',
 };
 
 export function canAccessPortal(session: AuthSession | null, portal: PortalRole): boolean {

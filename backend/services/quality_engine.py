@@ -42,7 +42,7 @@ TWO_DP = Decimal("0.01")
 DEFAULT_RATING_INDICATOR = {
     "code": "admin_overall",
     "name": "Admin Overall Rating",
-    "description": "Overall 1-5 admin rating with mandatory reason, given at each payroll period end.",
+    "description": "Overall 1-5 admin rating, given at each payroll period end.",
     "weight_in_subjective_pool": Decimal("100.00"),
     "input_mode": IndicatorInputEnum.manual,
     "scale_min": 1,

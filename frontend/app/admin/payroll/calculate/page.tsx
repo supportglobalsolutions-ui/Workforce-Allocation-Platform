@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { FINANCE_TABS, PAYROLL_SUBTABS } from '@/components/platform/AdminSectionTabs';
+import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { api } from '@/lib/api';
@@ -54,8 +54,7 @@ export default function PayrollCalculationPage() {
         description="Per-worker earnings with partner splits, GS revenue, exception flags, and approval status."
         actions={<button className="btn-primary text-sm">Approve Period</button>}
       />
-      <AdminSectionTabs tabs={FINANCE_TABS} />
-      <AdminSectionTabs tabs={PAYROLL_SUBTABS} />
+      <AdminSectionTabs tabs={PAYROLL_TABS} />
       {loading ? (
         <p className="text-theme-muted text-sm mt-4">Loading payroll...</p>
       ) : error ? (

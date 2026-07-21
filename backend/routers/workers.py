@@ -114,7 +114,7 @@ def update_worker(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Admin edit of any worker field, including Member ↔ Partner conversion."""
+    """Admin ops: pay tier, status, designation, work-ready — identity is worker-owned."""
     worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")

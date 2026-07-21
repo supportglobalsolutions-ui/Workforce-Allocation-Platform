@@ -63,10 +63,6 @@ function RateWorkerModal({
       setError('Select a worker and a score.');
       return;
     }
-    if (!reason.trim()) {
-      setError('A reason is required.');
-      return;
-    }
     setSaving(true);
     setError(null);
     try {
@@ -75,7 +71,7 @@ function RateWorkerModal({
         worker_id: workerId,
         indicator_id: indicator.id,
         score,
-        reason_note: reason.trim(),
+        reason_note: reason.trim() || null,
         session_id: null,
       });
       onSaved();
@@ -144,11 +140,12 @@ function RateWorkerModal({
           </div>
 
           <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Reason (required)</label>
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
+              Comment <span className="font-medium normal-case tracking-normal text-theme-muted/70">(optional)</span>
+            </label>
             <textarea
               rows={3}
-              required
-              placeholder="Why this score? e.g. task accuracy, communication, reliability this period…"
+              placeholder="Optional note — e.g. task accuracy, communication, reliability…"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
               className="input-field resize-none"
@@ -327,7 +324,7 @@ export default function AdminQualityPage() {
                 <tr className="border-b border-white/[0.06] bg-white/[0.02]">
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Score</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Reason</th>
+                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Comment</th>
                   <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Date</th>
                 </tr>
               </thead>

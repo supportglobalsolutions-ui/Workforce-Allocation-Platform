@@ -6,7 +6,6 @@ import {
   RefreshCw, ScrollText, Send, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { FINANCE_TABS, PAYROLL_SUBTABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
@@ -566,9 +565,6 @@ export default function CommunicationsPage() {
         title="Communications"
         description="Send payslip emails, broadcast announcements to workers, and audit email deliveries."
       />
-      <AdminSectionTabs tabs={FINANCE_TABS} />
-      <AdminSectionTabs tabs={PAYROLL_SUBTABS} />
-
       <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit mb-6">
         {TABS.map(({ key, label, icon }) => (
           <button key={key} type="button" onClick={() => setTab(key)}

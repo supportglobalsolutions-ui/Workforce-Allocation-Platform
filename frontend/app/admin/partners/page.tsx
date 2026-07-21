@@ -6,7 +6,6 @@ import {
   Plus, Search, Users, UserCheck, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { PEOPLE_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import KpiCard from '@/components/platform/KpiCard';
@@ -631,8 +630,6 @@ export default function PartnerManagementPage() {
           </button>
         }
       />
-      <AdminSectionTabs tabs={PEOPLE_TABS} />
-
       <HowPartnersWork />
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">

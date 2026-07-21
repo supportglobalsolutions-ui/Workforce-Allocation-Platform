@@ -21,6 +21,8 @@ function pathMatches(pathname: string, match: string): boolean {
 export function AdminSectionTabs({ tabs }: { tabs: SectionTab[] }) {
   const pathname = usePathname() || '';
 
+  if (!tabs.length) return null;
+
   return (
     <div className="flex flex-wrap gap-1.5 mb-6 p-1 rounded-xl bg-white/[0.04] border border-white/10 w-fit max-w-full">
       {tabs.map((tab) => {
@@ -53,17 +55,10 @@ export function AdminSectionTabs({ tabs }: { tabs: SectionTab[] }) {
 
 export default AdminSectionTabs;
 
-export const PEOPLE_TABS: SectionTab[] = [
-  { label: 'Workers', href: '/admin/workers' },
-  { label: 'Partners', href: '/admin/partners' },
-  { label: 'Clients', href: '/admin/clients' },
-];
-
-export const OPERATIONS_TABS: SectionTab[] = [
-  { label: 'RDP Resources', href: '/admin/rdp' },
-  { label: 'Live Sessions', href: '/admin/live-sessions' },
-  { label: 'Sessions', href: '/admin/sessions' },
-  { label: 'Shifts', href: '/admin/shifts' },
+/** Session history sits under Live Sessions in the sidebar. */
+export const SESSIONS_TABS: SectionTab[] = [
+  { label: 'Live', href: '/admin/live-sessions' },
+  { label: 'History', href: '/admin/sessions' },
 ];
 
 export const QUALITY_TABS: SectionTab[] = [
@@ -72,23 +67,27 @@ export const QUALITY_TABS: SectionTab[] = [
   { label: 'Training', href: '/admin/training' },
 ];
 
-export const FINANCE_TABS: SectionTab[] = [
-  { label: 'Payroll', href: '/admin/payroll', match: '/admin/payroll' },
-  { label: 'Communications', href: '/admin/payroll/receipts' },
+/** Payouts hub: payroll workbench + wallets / FX / reports. */
+export const PAYROLL_TABS: SectionTab[] = [
+  { label: 'Workbench', href: '/admin/payroll' },
+  { label: 'Calculate', href: '/admin/payroll/calculate' },
+  { label: 'Export', href: '/admin/payroll/export' },
   { label: 'Wallets', href: '/admin/wallets' },
   { label: 'Currencies', href: '/admin/currencies' },
   { label: 'Reports', href: '/admin/reports' },
 ];
 
-/** Sub-tabs only on payroll workbench routes (not wallets/currencies). */
-export const PAYROLL_SUBTABS: SectionTab[] = [
-  { label: 'Workbench', href: '/admin/payroll' },
-  { label: 'Calculate', href: '/admin/payroll/calculate' },
-  { label: 'Export', href: '/admin/payroll/export' },
-  { label: 'Send Receipts', href: '/admin/payroll/receipts' },
-];
+/** @deprecated use PAYROLL_TABS */
+export const PAYROLL_SUBTABS = PAYROLL_TABS;
+/** @deprecated use PAYROLL_TABS */
+export const WALLETS_TABS = PAYROLL_TABS;
 
 export const SYSTEM_TABS: SectionTab[] = [
   { label: 'Settings', href: '/admin/settings' },
   { label: 'Audit Logs', href: '/admin/audit-logs' },
 ];
+
+/** @deprecated kept for any leftover imports — prefer sidebar destinations */
+export const PEOPLE_TABS: SectionTab[] = [];
+export const OPERATIONS_TABS: SectionTab[] = SESSIONS_TABS;
+export const FINANCE_TABS: SectionTab[] = PAYROLL_TABS;

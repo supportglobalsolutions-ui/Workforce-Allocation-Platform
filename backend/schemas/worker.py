@@ -26,19 +26,20 @@ class WorkerCreate(WorkerBase):
 
 
 class WorkerUpdate(SQLModel):
-    username:          Optional[str]             = None
-    display_name:      Optional[str]             = None
-    country:           Optional[str]             = None
-    pay_tier:          Optional[str]             = None
+    """Worker self-service: identity fields only."""
+    username:     Optional[str] = None
+    display_name: Optional[str] = None
+    country:      Optional[str] = None
+
+
+class WorkerAdminUpdate(SQLModel):
+    """Admin ops: designation, readiness, and employment — not identity."""
+    pay_tier:          Optional[str]              = None
     status:            Optional[WorkerStatusEnum] = None
-    partner_entity_id: Optional[UUID]            = None
-
-
-class WorkerAdminUpdate(WorkerUpdate):
-    """Admin-only update: every worker field is editable."""
-    worker_type: Optional[WorkerTypeEnum] = None
-    start_date:  Optional[date]           = None
-    work_ready:  Optional[bool]           = None
+    partner_entity_id: Optional[UUID]             = None
+    worker_type:       Optional[WorkerTypeEnum]   = None
+    start_date:        Optional[date]             = None
+    work_ready:        Optional[bool]             = None
 
 
 class WorkerResponse(WorkerBase):

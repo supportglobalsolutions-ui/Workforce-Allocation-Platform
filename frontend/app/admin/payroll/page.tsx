@@ -7,7 +7,7 @@ import {
   Users, Wallet, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { FINANCE_TABS, PAYROLL_SUBTABS } from '@/components/platform/AdminSectionTabs';
+import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -731,8 +731,7 @@ export default function PayrollWorkbenchPage() {
           </button>
         }
       />
-      <AdminSectionTabs tabs={FINANCE_TABS} />
-      <AdminSectionTabs tabs={PAYROLL_SUBTABS} />
+      <AdminSectionTabs tabs={PAYROLL_TABS} />
 
       {/* ── Period selector ── */}
       {periodsLoading ? (

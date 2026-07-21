@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ChevronDown, ChevronUp, Globe, Plus, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { FINANCE_TABS } from '@/components/platform/AdminSectionTabs';
+import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -416,7 +416,7 @@ export default function CurrenciesPage() {
         title="Currencies & FX Rates"
         description="Base currencies are USD and GBP; local payouts convert using these rates. Manual entries override API rates, and rates are frozen per payslip on pay day."
       />
-      <AdminSectionTabs tabs={FINANCE_TABS} />
+      <AdminSectionTabs tabs={PAYROLL_TABS} />
       <div className="space-y-6">
         <CountriesPanel />
         <FxRatesPanel countries={countries} />

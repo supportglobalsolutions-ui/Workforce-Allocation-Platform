@@ -5,7 +5,7 @@ import { Calendar, ChevronDown, Download, Eye, Users, X } from 'lucide-react';
 
 import DataTable from '@/components/platform/DataTable';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { OPERATIONS_TABS } from '@/components/platform/AdminSectionTabs';
+import AdminSectionTabs, { SESSIONS_TABS } from '@/components/platform/AdminSectionTabs';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
@@ -389,7 +389,7 @@ export default function AdminSessionsPage() {
           </button>
         }
       />
-      <AdminSectionTabs tabs={OPERATIONS_TABS} />
+      <AdminSectionTabs tabs={SESSIONS_TABS} />
 
       {/* ── Filters ── */}
       <div className="space-y-3 mb-6">

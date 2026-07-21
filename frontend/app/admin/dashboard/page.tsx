@@ -34,7 +34,6 @@ export default function AdminDashboard() {
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
 
   useEffect(() => {
-    // Greeting name — worker username preferred; admins without a worker row fall back to their account name
     api.get<{ username: string | null }>('/workers/me')
       .then((w) => setUsername(w.username))
       .catch(() => {});
@@ -68,81 +67,65 @@ export default function AdminDashboard() {
   const name = rawName ? rawName.charAt(0).toUpperCase() + rawName.slice(1) : '';
 
   return (
-    <div className="space-y-6">
-      {/* Greeting header — title left, month pill right */}
+    <div className="space-y-5">
       <div className="flex items-start justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-black text-theme-heading tracking-tight">Admin Command Center</h1>
+          <h1 className="text-2xl font-black text-theme-heading tracking-tight">Command Center</h1>
           <p className="text-sm text-theme-muted mt-1">
-            {greeting()}{name ? ` ${name}` : ''}, here&apos;s your operations overview.
+            {greeting()}{name ? ` ${name}` : ''} — operations overview.
           </p>
         </div>
-        <span className="shrink-0 px-4 py-1.5 rounded-full border border-theme bg-theme-card text-xs font-semibold text-theme-muted">
+        <span className="shrink-0 px-3 py-1 rounded-full border border-theme bg-theme-card text-[11px] font-semibold text-theme-muted">
           {new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}
         </span>
       </div>
 
-      {/* Stat cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
-        <KpiCard label="Workers Online" value={workersOnline} icon={Users} />
-        <KpiCard label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
-        <KpiCard label="Payroll Pending" value="—" icon={DollarSign} accent="gold" highlight />
-        <KpiCard label="Machines Online" value={machinesOnline} icon={Server} />
-        <KpiCard label="Quality Index" value={qualityIndex} icon={TrendingUp} />
-        <KpiCard label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+        <KpiCard compact label="Workers Online" value={workersOnline} icon={Users} />
+        <KpiCard compact label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
+        <KpiCard compact label="Machines Online" value={machinesOnline} icon={Server} />
+        <KpiCard compact label="Quality Index" value={qualityIndex} icon={TrendingUp} />
+        <KpiCard compact label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
+        <KpiCard compact label="Payroll Pending" value="—" icon={DollarSign} accent="gold" />
       </div>
 
-      {/* Lower layout — activity table left (2/3), stacked panels right (1/3) */}
-      <div className="grid lg:grid-cols-3 gap-6 items-start">
-        <div className="lg:col-span-2 glass-panel">
-          <div className="flex items-center justify-between px-6 pt-5 pb-4">
-            <h2 className="text-base font-bold text-theme-heading">Live activity</h2>
-            <Link href="/admin/audit-logs" className="text-xs font-semibold text-emerald-accent hover:underline">
-              View all logs
-            </Link>
-          </div>
-          {auditLogs.length === 0 ? (
-            <p className="text-sm text-theme-muted px-6 pb-6">No recent activity.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-t border-b border-theme">
-                  <th className="text-left px-6 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Time</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Actor</th>
-                  <th className="text-left px-4 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Action</th>
-                  <th className="text-left px-6 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Target</th>
+      <div className="glass-panel overflow-hidden">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-theme">
+          <h2 className="text-sm font-bold text-theme-heading">Live activity</h2>
+          <Link href="/admin/audit-logs" className="text-xs font-semibold text-emerald-accent hover:underline">
+            View all logs
+          </Link>
+        </div>
+        {auditLogs.length === 0 ? (
+          <p className="text-sm text-theme-muted px-4 py-8 text-center">No recent activity.</p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-theme">
+                <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Time</th>
+                <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Actor</th>
+                <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Action</th>
+                <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Target</th>
+              </tr>
+            </thead>
+            <tbody>
+              {auditLogs.map((log) => (
+                <tr key={log.id} className="border-b border-theme/60 last:border-0 hover:bg-white/[0.02]">
+                  <td className="px-4 py-2.5 text-xs font-mono text-theme-muted whitespace-nowrap">
+                    {new Date(log.created_at).toLocaleString()}
+                  </td>
+                  <td className="px-3 py-2.5 font-medium text-theme-heading whitespace-nowrap">
+                    {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'}
+                  </td>
+                  <td className="px-3 py-2.5 text-emerald-accent font-semibold text-xs">{log.action}</td>
+                  <td className="px-4 py-2.5 text-theme-muted text-xs hidden md:table-cell">
+                    {log.target_type} {log.target_id.slice(0, 8)}…
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {auditLogs.map((log) => (
-                  <tr key={log.id} className="border-b border-theme last:border-0">
-                    <td className="px-6 py-3 text-xs font-mono text-theme-muted whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString()}
-                    </td>
-                    <td className="px-4 py-3 font-medium text-theme-heading whitespace-nowrap">
-                      {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'}
-                    </td>
-                    <td className="px-4 py-3 text-emerald-accent font-semibold">{log.action}</td>
-                    <td className="px-6 py-3 text-theme-muted hidden md:table-cell">
-                      {log.target_type} {log.target_id.slice(0, 8)}…
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </div>
-
-        <div className="flex flex-col gap-6">
-          <div className="glass-panel">
-            <h2 className="text-base font-bold text-theme-heading px-6 pt-5 pb-3 border-b border-theme">Session trends</h2>
-            <p className="text-sm text-theme-muted px-6 py-4">No trend data available yet.</p>
-          </div>
-          <div className="glass-panel">
-            <h2 className="text-base font-bold text-theme-heading px-6 pt-5 pb-3 border-b border-theme">Country performance</h2>
-            <p className="text-sm text-theme-muted px-6 py-4">No country breakdown available yet.</p>
-          </div>
-        </div>
+              ))}
+            </tbody>
+          </table>
+        )}
       </div>
     </div>
   );

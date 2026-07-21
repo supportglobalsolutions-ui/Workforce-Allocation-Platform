@@ -94,12 +94,6 @@ def create_quality_rating(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    # Every admin rating must carry a reason (kept + averaged over past periods).
-    if not (body.reason_note or "").strip():
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A reason note is required for every rating.",
-        )
     indicator = db.get(QualityIndicator, body.indicator_id)
     if not indicator:
         raise HTTPException(status_code=404, detail="Quality indicator not found")

@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, ArrowLeftRight, Coins, Receipt, Search, Wallet, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { FINANCE_TABS } from '@/components/platform/AdminSectionTabs';
+import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -268,7 +268,7 @@ export default function WalletsPage() {
         title="Worker Wallets"
         description="Wallets are credited when a payroll period is pushed; admins can make manual adjustments with a reason."
       />
-      <AdminSectionTabs tabs={FINANCE_TABS} />
+      <AdminSectionTabs tabs={PAYROLL_TABS} />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
         <KpiCard label="Total Wallets" value={wallets.length} icon={Wallet} accent="emerald" />
