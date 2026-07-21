@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, ShieldCheck, User, UserPlus, X, XCircle,
+  AlertCircle, Ban, Briefcase, CheckCircle, ChevronDown, Eye, Search, ShieldCheck, User, UserPlus, X, XCircle,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -20,7 +20,7 @@ import {
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 
-type AccountsTab = 'ops_lead' | 'executive' | 'pending';
+type AccountsTab = 'ops_lead' | 'executive' | 'partner' | 'pending';
 
 interface PartnerOption { id: string; name: string; }
 interface CountryOption { id: string; name: string; currency_code: string; is_active: boolean; }
@@ -34,16 +34,495 @@ interface ApproveBody {
 const ROLE_BADGE: Record<AuthRole, string> = {
   super_admin: 'bg-gold-accent/20 text-gold-accent border border-gold-accent/30',
   admin: 'bg-emerald-accent/20 text-emerald-accent border border-emerald-accent/30',
+  partner: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
   user: 'bg-white/10 text-theme-muted border border-white/10',
 };
 
+const ROLE_HINT: Record<AuthRole, string> = {
+  user: 'Worker portal access — sessions, shifts, wallet.',
+  partner: 'External partner person — same worker portal; listed under Partners on Accounts.',
+  admin: 'Admin portal — ops, payroll, machines, accounts.',
+  super_admin: 'Full executive access across leadership and admin.',
+};
+
 function RoleBadge({ role }: { role: AuthRole }) {
-  const isPrivileged = role === 'super_admin' || role === 'admin';
+  const Icon = role === 'partner' ? Briefcase : (role === 'super_admin' || role === 'admin') ? ShieldCheck : User;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_BADGE[role]}`}>
-      {isPrivileged ? <ShieldCheck size={10} /> : <User size={10} />}
+      <Icon size={10} />
       {ROLE_DISPLAY[role]}
     </span>
+  );
+}
+
+type PromoteModalTab = 'promote' | 'promoted';
+
+/** Promote workers or demote elevated accounts. */
+function PromoteAccountModal({
+  accounts,
+  actorRole,
+  actorUid,
+  actingOn,
+  onClose,
+  onPromote,
+}: {
+  accounts: ManagedUser[];
+  actorRole: AuthRole;
+  actorUid: string | null;
+  actingOn: string | null;
+  onClose: () => void;
+  onPromote: (uid: string, role: AuthRole) => void;
+}) {
+  const roles = assignableRoles(actorRole);
+  const elevateRoles = roles.filter((r) => r === 'admin' || r === 'super_admin');
+  const canDemote = roles.includes('user');
+  const [tab, setTab] = useState<PromoteModalTab>('promote');
+  const [query, setQuery] = useState('');
+  const [targetRole, setTargetRole] = useState<AuthRole>(
+    elevateRoles[0] ?? roles[0] ?? 'admin',
+  );
+
+  const toPromote = useMemo(() => {
+    return accounts.filter((u) => {
+      if (u.status !== 'approved' || u.role !== 'user') return false;
+      if (actorUid && u.uid === actorUid) return false;
+      return true;
+    });
+  }, [accounts, actorUid]);
+
+  const promoted = useMemo(() => {
+    return accounts.filter((u) => {
+      if (u.status !== 'approved') return false;
+      if (u.role !== 'admin' && u.role !== 'super_admin') return false;
+      if (actorUid && u.uid === actorUid) return false;
+      if (actorRole === 'admin' && u.role === 'super_admin') return false;
+      return true;
+    });
+  }, [accounts, actorRole, actorUid]);
+
+  const list = tab === 'promote' ? toPromote : promoted;
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return list.filter(
+      (u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+    );
+  }, [list, query]);
+
+  return (
+    <div
+      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="h-1 bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-400" />
+        <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
+          <div>
+            <p className="text-[15px] font-bold text-gray-900">Promote</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Raise access for workers, or demote Operations Leads / Executives anytime.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="px-6 pt-3 pb-3 space-y-3 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+            <button
+              type="button"
+              onClick={() => setTab('promote')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                tab === 'promote' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Promote
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-bold">
+                {toPromote.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('promoted')}
+              className={`flex-1 flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                tab === 'promoted' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Promoted
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 text-gray-500 font-bold">
+                {promoted.length}
+              </span>
+            </button>
+          </div>
+
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+            <input
+              type="text"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or email…"
+              className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-emerald-400"
+              autoFocus
+            />
+          </div>
+
+          {tab === 'promote' && elevateRoles.length > 0 && (
+            <div>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">Promote to</p>
+              <div className="relative">
+                <select
+                  value={targetRole}
+                  onChange={(e) => setTargetRole(e.target.value as AuthRole)}
+                  className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-emerald-400"
+                >
+                  {elevateRoles.map((r) => (
+                    <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+              </div>
+              <p className="text-[10px] text-gray-400 mt-1.5">{ROLE_HINT[targetRole]}</p>
+            </div>
+          )}
+        </div>
+
+        <div className="overflow-y-auto flex-1">
+          {filtered.length === 0 ? (
+            <p className="text-sm text-gray-400 text-center py-12 px-6">
+              {list.length === 0
+                ? tab === 'promote'
+                  ? 'No worker accounts available to promote.'
+                  : 'No promoted accounts to manage.'
+                : 'No accounts match your search.'}
+            </p>
+          ) : tab === 'promote' ? (
+            <ul className="divide-y divide-gray-100">
+              {filtered.map((u) => {
+                const busy = actingOn === u.uid;
+                return (
+                  <li key={u.uid} className="px-6 py-3.5 flex items-center gap-3 hover:bg-gray-50/80">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{u.displayName || '—'}</p>
+                      <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                      <div className="mt-1"><RoleBadge role={u.role} /></div>
+                    </div>
+                    <button
+                      type="button"
+                      disabled={busy || elevateRoles.length === 0}
+                      onClick={() => onPromote(u.uid, targetRole)}
+                      className="shrink-0 px-3 py-2 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    >
+                      {busy ? <SpinningDots size="sm" /> : <ShieldCheck size={12} />}
+                      Promote
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          ) : (
+            <ul className="divide-y divide-gray-100">
+              {filtered.map((u) => {
+                const busy = actingOn === u.uid;
+                return (
+                  <li key={u.uid} className="px-6 py-3.5 flex items-center gap-3 hover:bg-gray-50/80">
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-semibold text-gray-900 truncate">{u.displayName || '—'}</p>
+                      <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                      <div className="mt-1"><RoleBadge role={u.role} /></div>
+                    </div>
+                    <div className="shrink-0 flex flex-col sm:flex-row gap-1.5">
+                      {u.role === 'super_admin' && elevateRoles.includes('admin') && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onPromote(u.uid, 'admin')}
+                          className="px-2.5 py-2 rounded-xl border border-gray-200 bg-white hover:bg-gray-50 text-gray-700 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
+                        >
+                          {busy ? <SpinningDots size="sm" /> : 'To Ops Lead'}
+                        </button>
+                      )}
+                      {u.role === 'admin' && elevateRoles.includes('super_admin') && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onPromote(u.uid, 'super_admin')}
+                          className="px-2.5 py-2 rounded-xl border border-amber-200 bg-amber-50 hover:bg-amber-100 text-amber-800 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40"
+                        >
+                          {busy ? <SpinningDots size="sm" /> : 'To Executive'}
+                        </button>
+                      )}
+                      {canDemote && (
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onPromote(u.uid, 'user')}
+                          className="px-2.5 py-2 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-[10px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 flex items-center gap-1"
+                        >
+                          {busy ? <SpinningDots size="sm" /> : 'Demote'}
+                        </button>
+                      )}
+                    </div>
+                  </li>
+                );
+              })}
+            </ul>
+          )}
+        </div>
+
+        <div className="px-6 py-3 border-t border-gray-100 text-[11px] text-gray-400 shrink-0">
+          {filtered.length} of {list.length} on {tab === 'promote' ? 'Promote' : 'Promoted'}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type PartnerModalMode = 'create' | 'promote';
+
+/** Create a partner person or promote an existing account to partner. */
+function PartnerAccountModal({
+  accounts,
+  actorUid,
+  actingOn,
+  creating,
+  onClose,
+  onCreate,
+  onPromote,
+}: {
+  accounts: ManagedUser[];
+  actorUid: string | null;
+  actingOn: string | null;
+  creating: boolean;
+  onClose: () => void;
+  onCreate: (data: {
+    email: string;
+    password: string;
+    displayName: string;
+    partnerEntityId: string | null;
+  }) => void;
+  onPromote: (uid: string, partnerEntityId: string | null) => void;
+}) {
+  const [mode, setMode] = useState<PartnerModalMode>('create');
+  const [query, setQuery] = useState('');
+  const [partnerEntityId, setPartnerEntityId] = useState('');
+  const [partners, setPartners] = useState<PartnerOption[] | null>(null);
+  const [form, setForm] = useState({ email: '', password: '', displayName: '' });
+  const [formError, setFormError] = useState('');
+
+  useEffect(() => {
+    api.get<PartnerOption[]>('/partners')
+      .then(setPartners)
+      .catch(() => setPartners([]));
+  }, []);
+
+  const candidates = useMemo(() => {
+    return accounts.filter((u) => {
+      if (u.status !== 'approved') return false;
+      if (u.role === 'partner' || u.role === 'super_admin') return false;
+      if (actorUid && u.uid === actorUid) return false;
+      return true;
+    });
+  }, [accounts, actorUid]);
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return candidates.filter(
+      (u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+    );
+  }, [candidates, query]);
+
+  function handleCreateSubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setFormError('');
+    if (form.password.length < 8) {
+      setFormError('Password must be at least 8 characters.');
+      return;
+    }
+    onCreate({
+      email: form.email,
+      password: form.password,
+      displayName: form.displayName,
+      partnerEntityId: partnerEntityId || null,
+    });
+  }
+
+  return (
+    <div
+      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
+        <div className="h-1 bg-gradient-to-r from-sky-400 via-sky-500 to-emerald-400" />
+        <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
+          <div>
+            <p className="text-[15px] font-bold text-gray-900">Partner account</p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              A partner is a person (external work). Same worker portal; optional company link.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
+          >
+            <X size={14} />
+          </button>
+        </div>
+
+        <div className="px-6 pt-3 pb-3 space-y-3 border-b border-gray-100 shrink-0">
+          <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
+            <button
+              type="button"
+              onClick={() => setMode('create')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                mode === 'create' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Create new
+            </button>
+            <button
+              type="button"
+              onClick={() => setMode('promote')}
+              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                mode === 'promote' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
+              }`}
+            >
+              Promote existing
+            </button>
+          </div>
+
+          <div>
+            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+              Company <span className="normal-case tracking-normal font-medium">(optional)</span>
+            </p>
+            <div className="relative">
+              <select
+                value={partnerEntityId}
+                onChange={(e) => setPartnerEntityId(e.target.value)}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-sky-400"
+              >
+                <option value="">No company</option>
+                {(partners ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>{p.name}</option>
+                ))}
+              </select>
+              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+            </div>
+          </div>
+        </div>
+
+        {mode === 'create' ? (
+          <form onSubmit={handleCreateSubmit} className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Display name</label>
+              <input
+                required
+                value={form.displayName}
+                onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
+                placeholder="Full name"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Email</label>
+              <input
+                type="email"
+                required
+                value={form.email}
+                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
+                placeholder="partner@example.com"
+              />
+            </div>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Password</label>
+              <input
+                type="password"
+                required
+                minLength={8}
+                value={form.password}
+                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
+                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
+                placeholder="Min 8 characters"
+              />
+            </div>
+            {formError && (
+              <div className="flex items-center gap-2 text-xs text-red-600">
+                <AlertCircle size={14} /> {formError}
+              </div>
+            )}
+            <div className="flex justify-end gap-2 pt-2">
+              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={creating}
+                className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm font-bold disabled:opacity-50 flex items-center gap-2"
+              >
+                {creating ? <SpinningDots size="sm" /> : <UserPlus size={14} />}
+                Create Partner
+              </button>
+            </div>
+          </form>
+        ) : (
+          <>
+            <div className="px-6 pt-3 pb-2 shrink-0">
+              <div className="relative">
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+                <input
+                  type="text"
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="Search name or email…"
+                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
+                />
+              </div>
+            </div>
+            <div className="overflow-y-auto flex-1">
+              {filtered.length === 0 ? (
+                <p className="text-sm text-gray-400 text-center py-12 px-6">
+                  {candidates.length === 0 ? 'No accounts available to promote.' : 'No accounts match your search.'}
+                </p>
+              ) : (
+                <ul className="divide-y divide-gray-100">
+                  {filtered.map((u) => {
+                    const busy = actingOn === u.uid;
+                    return (
+                      <li key={u.uid} className="px-6 py-3.5 flex items-center gap-3 hover:bg-gray-50/80">
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm font-semibold text-gray-900 truncate">{u.displayName || '—'}</p>
+                          <p className="text-xs text-gray-400 truncate">{u.email}</p>
+                          <div className="mt-1"><RoleBadge role={u.role} /></div>
+                        </div>
+                        <button
+                          type="button"
+                          disabled={busy}
+                          onClick={() => onPromote(u.uid, partnerEntityId || null)}
+                          className="shrink-0 px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 flex items-center gap-1.5"
+                        >
+                          {busy ? <SpinningDots size="sm" /> : <Briefcase size={12} />}
+                          Make partner
+                        </button>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+            <div className="px-6 py-3 border-t border-gray-100 text-[11px] text-gray-400 shrink-0">
+              {filtered.length} of {candidates.length} account{candidates.length !== 1 ? 's' : ''}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -55,7 +534,7 @@ interface AccountModalProps {
   onReject: (uid: string) => void;
   onBan: (uid: string) => void;
   onUnban: (uid: string) => void;
-  onRoleChange: (uid: string, role: AuthRole) => void;
+  onRoleChange: (uid: string, role: AuthRole, partnerEntityId?: string | null) => void;
   actingOn: string | null;
 }
 
@@ -68,14 +547,22 @@ function AccountDetailModal({
     actorRole === 'super_admin' ||
     (actorRole === 'admin' && user.role !== 'super_admin');
   const isPendingWorker = user.status === 'pending' && user.role === 'user';
-  const canChangeRole = user.status === 'approved' && assignableRoles(actorRole).length > 0;
+  const roleOptions = assignableRoles(actorRole).filter((r) => r !== 'partner');
+  // Admins may promote workers ↔ ops lead; they cannot touch Executive accounts.
+  // Partner role is assigned via Partner account modal.
+  const canChangeRole =
+    user.status === 'approved' &&
+    roleOptions.length > 0 &&
+    (actorRole === 'super_admin' || user.role !== 'super_admin');
 
   const [workerType, setWorkerType] = useState<'gs_registered' | 'partner_worker'>('gs_registered');
   const [partnerId, setPartnerId] = useState('');
   const [country, setCountry] = useState('');
   const [partners, setPartners] = useState<PartnerOption[] | null>(null);
   const [countries, setCountries] = useState<CountryOption[] | null>(null);
-  const [nextRole, setNextRole] = useState<AuthRole>(user.role);
+  const [nextRole, setNextRole] = useState<AuthRole>(
+    roleOptions.includes(user.role) ? user.role : (roleOptions[0] ?? user.role),
+  );
 
   // Reset approval form + role picker whenever a different account is opened.
   useEffect(() => {
@@ -84,8 +571,9 @@ function AccountDetailModal({
     setCountry('');
     setPartners(null);
     setCountries(null);
-    setNextRole(user.role);
-  }, [user.uid, user.role]);
+    const opts = assignableRoles(actorRole).filter((r) => r !== 'partner');
+    setNextRole(opts.includes(user.role) ? user.role : (opts[0] ?? user.role));
+  }, [user.uid, user.role, actorRole]);
 
   useEffect(() => {
     if (!isPendingWorker || countries !== null) return;
@@ -98,7 +586,6 @@ function AccountDetailModal({
   }, [workerType, partners]);
 
   const approveDisabled = workerType === 'partner_worker' && !partnerId;
-  const roleOptions = assignableRoles(actorRole);
 
   function handleApproveClick() {
     if (!isPendingWorker) { onApprove(user.uid); return; }
@@ -160,49 +647,56 @@ function AccountDetailModal({
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Login</p>
                 <p className="text-sm text-gray-800 font-medium">{user.disabled ? 'Disabled' : 'Enabled'}</p>
               </div>
+              {user.role === 'partner' && (
+                <div className="col-span-2">
+                  <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Company link</p>
+                  <p className="text-sm text-gray-800 font-medium">
+                    {user.partnerEntityId ? 'Linked to a partner company' : 'No company (person only)'}
+                  </p>
+                </div>
+              )}
             </div>
-          </div>
-
-          <div className="border-t border-gray-100 pt-4">
-            <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-2">Firebase UID</p>
-            <p className="text-[11px] font-mono text-gray-500 break-all bg-gray-50 px-3 py-2.5 rounded-xl border border-gray-100 select-all">
-              {user.uid}
-            </p>
           </div>
 
           {canChangeRole && (
             <div className="border-t border-gray-100 pt-4">
-              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Change Role</p>
+              <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-1">Change role</p>
+              <p className="text-[11px] text-gray-500 mb-3">
+                Promote to Operations Lead / Executive, or reduce to Worker.
+              </p>
               {isActing ? (
                 <div className="flex justify-center py-3"><SpinningDots size="sm" className="text-emerald-500" /></div>
               ) : (
-                <div className="flex gap-2">
-                  <div className="relative flex-1">
-                    <select
-                      value={nextRole}
-                      onChange={(e) => setNextRole(e.target.value as AuthRole)}
-                      className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-emerald-400"
+                <div className="space-y-2">
+                  <div className="flex gap-2">
+                    <div className="relative flex-1">
+                      <select
+                        value={nextRole}
+                        onChange={(e) => setNextRole(e.target.value as AuthRole)}
+                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-emerald-400"
+                      >
+                        {roleOptions.map((r) => (
+                          <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                    <button
+                      type="button"
+                      disabled={nextRole === user.role}
+                      onClick={() => onRoleChange(user.uid, nextRole)}
+                      className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
                     >
-                      {roleOptions.map((r) => (
-                        <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
-                      ))}
-                    </select>
-                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                      Save
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    disabled={nextRole === user.role}
-                    onClick={() => onRoleChange(user.uid, nextRole)}
-                    className="px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-                  >
-                    Save
-                  </button>
+                  <p className="text-[10px] text-gray-400">{ROLE_HINT[nextRole]}</p>
+                  {actorRole === 'admin' && (
+                    <p className="text-[10px] text-gray-400">
+                      Only Executives can grant or change Executive access.
+                    </p>
+                  )}
                 </div>
-              )}
-              {actorRole === 'admin' && (
-                <p className="text-[10px] text-gray-400 mt-2">
-                  Only Executives can grant Executive access.
-                </p>
               )}
             </div>
           )}
@@ -295,8 +789,12 @@ function AccountDetailModal({
 export default function AccountsPage() {
   const { session } = useAuth();
   const actorRole = (session?.authRole ?? 'user') as AuthRole;
-  const isExecutive = actorRole === 'super_admin';
-  const canCreateOpsLead = assignableRoles(actorRole).includes('admin');
+  const actorUid = session?.uid ?? null;
+  const allAssignable = assignableRoles(actorRole);
+  const createRoleOptions = allAssignable.filter((r) => r !== 'partner');
+  const canCreate = createRoleOptions.length > 0;
+  const canPromote = allAssignable.some((r) => r === 'admin' || r === 'super_admin');
+  const canPartner = allAssignable.includes('partner');
 
   const [activeTab, setActiveTab] = useState<AccountsTab>('ops_lead');
   const [allUsers, setAllUsers] = useState<ManagedUser[]>([]);
@@ -306,18 +804,29 @@ export default function AccountsPage() {
   const [actingOn, setActingOn] = useState<string | null>(null);
   const [actionError, setActionError] = useState('');
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
+  const [showPromote, setShowPromote] = useState(false);
+  const [showPartner, setShowPartner] = useState(false);
 
   const [showCreate, setShowCreate] = useState(false);
-  const [form, setForm] = useState({ email: '', password: '', displayName: '' });
+  const [form, setForm] = useState({
+    email: '',
+    password: '',
+    displayName: '',
+    role: (createRoleOptions.includes('admin') ? 'admin' : createRoleOptions[0] ?? 'admin') as AuthRole,
+  });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
 
   async function loadUsers() {
     setLoading(true); setError('');
-    try { setAllUsers(await apiListUsers()); }
-    catch (e: unknown) { setError(e instanceof Error ? e.message : 'Failed to load accounts.'); }
-    finally { setLoading(false); }
+    try {
+      setAllUsers(await apiListUsers());
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to load accounts.');
+    } finally {
+      setLoading(false);
+    }
   }
 
   useEffect(() => { loadUsers(); }, []);
@@ -336,6 +845,13 @@ export default function AccountsPage() {
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
+  const partners = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allUsers
+      .filter((u) => u.role === 'partner' && u.status !== 'pending')
+      .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  }, [allUsers, search]);
+
   const pendingUsers = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allUsers
@@ -346,31 +862,78 @@ export default function AccountsPage() {
   const tabUsers =
     activeTab === 'ops_lead' ? opsLeads
       : activeTab === 'executive' ? executives
-        : pendingUsers;
+        : activeTab === 'partner' ? partners
+          : pendingUsers;
 
   const TABS: { key: AccountsTab; label: string; count: number }[] = [
     { key: 'ops_lead', label: 'Operations Lead', count: opsLeads.length },
     { key: 'executive', label: 'Executive', count: executives.length },
+    { key: 'partner', label: 'Partners', count: partners.length },
     { key: 'pending', label: 'Pending Approval', count: pendingUsers.length },
   ];
 
-  const canCreateOnTab =
-    (activeTab === 'ops_lead' && canCreateOpsLead) ||
-    (activeTab === 'executive' && isExecutive);
+  function defaultRoleForTab(tab: AccountsTab): AuthRole {
+    if (tab === 'executive' && createRoleOptions.includes('super_admin')) return 'super_admin';
+    if (createRoleOptions.includes('admin')) return 'admin';
+    return createRoleOptions[0] ?? 'admin';
+  }
 
-  const createRole: AuthRole = activeTab === 'executive' ? 'super_admin' : 'admin';
+  function openCreate() {
+    setShowCreate((v) => !v);
+    setShowPromote(false);
+    setShowPartner(false);
+    setCreateError('');
+    setCreateSuccess('');
+    setForm((f) => ({ ...f, role: defaultRoleForTab(activeTab === 'partner' ? 'ops_lead' : activeTab) }));
+  }
 
   async function handleCreate(e: React.FormEvent) {
     e.preventDefault();
+    if (!createRoleOptions.includes(form.role)) {
+      setCreateError('You are not allowed to create that role.');
+      return;
+    }
     setCreating(true); setCreateError(''); setCreateSuccess('');
+    const role = form.role;
     try {
-      const created = await apiCreateUser(form.email, form.password, form.displayName, createRole);
-      setCreateSuccess(`${ROLE_DISPLAY[createRole]} account created for ${created.email}`);
-      setForm({ email: '', password: '', displayName: '' });
+      const created = await apiCreateUser(form.email, form.password, form.displayName, role);
+      setCreateSuccess(`${ROLE_DISPLAY[role]} account created for ${created.email}`);
+      setForm({
+        email: '',
+        password: '',
+        displayName: '',
+        role: defaultRoleForTab(activeTab === 'partner' ? 'ops_lead' : activeTab),
+      });
       setShowCreate(false);
+      if (role === 'admin') setActiveTab('ops_lead');
+      else if (role === 'super_admin') setActiveTab('executive');
       await loadUsers();
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create account.');
+    } finally { setCreating(false); }
+  }
+
+  async function handleCreatePartner(data: {
+    email: string;
+    password: string;
+    displayName: string;
+    partnerEntityId: string | null;
+  }) {
+    setCreating(true); setActionError(''); setCreateSuccess('');
+    try {
+      const created = await apiCreateUser(
+        data.email,
+        data.password,
+        data.displayName,
+        'partner',
+        data.partnerEntityId,
+      );
+      setCreateSuccess(`Partner account created for ${created.email}`);
+      setShowPartner(false);
+      setActiveTab('partner');
+      await loadUsers();
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to create partner.');
     } finally { setCreating(false); }
   }
 
@@ -406,32 +969,60 @@ export default function AccountsPage() {
     finally { setActingOn(null); }
   }
 
-  async function handleRoleChange(uid: string, role: AuthRole) {
+  async function handleRoleChange(uid: string, role: AuthRole, partnerEntityId?: string | null) {
     setActingOn(uid); setActionError('');
     try {
-      await apiUpdateUserRole(uid, role);
+      await apiUpdateUserRole(uid, role, partnerEntityId);
+      const promoted = allUsers.find((u) => u.uid === uid);
       await loadUsers();
       setSelectedUser(null);
+      if (role === 'user') {
+        setCreateSuccess(promoted
+          ? `${promoted.displayName || promoted.email} reduced to Worker.`
+          : 'Role updated to Worker.');
+      } else if (role === 'partner') {
+        setActiveTab('partner');
+        setShowPartner(false);
+        setCreateSuccess(promoted
+          ? `${promoted.displayName || promoted.email} set as Partner.`
+          : 'Promoted to Partner.');
+      } else if (role === 'admin') {
+        setActiveTab('ops_lead');
+        setCreateSuccess(promoted
+          ? `${promoted.displayName || promoted.email} promoted to Operations Lead.`
+          : 'Promoted to Operations Lead.');
+      } else {
+        setActiveTab('executive');
+        setCreateSuccess(promoted
+          ? `${promoted.displayName || promoted.email} promoted to Executive.`
+          : 'Promoted to Executive.');
+      }
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Failed to update role.');
     } finally { setActingOn(null); }
   }
 
+  const emptyLabel =
+    activeTab === 'pending' ? 'No pending approval requests.'
+      : activeTab === 'ops_lead' ? 'No Operations Lead accounts found.'
+        : activeTab === 'partner' ? 'No Partner accounts found.'
+          : 'No Executive accounts found.';
+
   return (
     <div>
       <PageHeader
         title="Accounts"
-        description="Manage Operations Lead and Executive access, approve new signups, and change roles."
+        description="Create accounts with a role claim, manage Partners, approve signups, and promote or demote."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1">
+        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 overflow-x-auto">
           {TABS.map(({ key, label, count }) => (
             <button
               key={key}
               type="button"
               onClick={() => { setActiveTab(key); setShowCreate(false); setCreateError(''); setSearch(''); }}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors whitespace-nowrap ${
                 activeTab === key
                   ? 'bg-emerald-accent/20 text-emerald-400'
                   : 'text-theme-muted hover:text-white'
@@ -453,27 +1044,51 @@ export default function AccountsPage() {
           ))}
         </div>
 
-        {canCreateOnTab && (
-          <button
-            type="button"
-            onClick={() => { setShowCreate((v) => !v); setCreateError(''); setCreateSuccess(''); }}
-            className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
-          >
-            <UserPlus size={15} />
-            {activeTab === 'executive' ? 'Add Executive' : 'Add Operations Lead'}
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {canPartner && (
+            <button
+              type="button"
+              onClick={() => {
+                setShowPartner(true);
+                setShowCreate(false);
+                setShowPromote(false);
+                setActionError('');
+              }}
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <Briefcase size={15} />
+              Partner account
+            </button>
+          )}
+          {canPromote && (
+            <button
+              type="button"
+              onClick={() => { setShowPromote(true); setShowCreate(false); setShowPartner(false); setActionError(''); }}
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <ShieldCheck size={15} />
+              Promote
+            </button>
+          )}
+          {canCreate && (
+            <button
+              type="button"
+              onClick={openCreate}
+              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <UserPlus size={15} />
+              New account
+            </button>
+          )}
+        </div>
       </div>
 
-      {showCreate && canCreateOnTab && (
+      {showCreate && canCreate && (
         <div className="glass-panel p-6 mb-5">
-          <h2 className="text-sm font-bold text-white mb-1">
-            New {ROLE_DISPLAY[createRole]} account
-          </h2>
+          <h2 className="text-sm font-bold text-white mb-1">New account</h2>
           <p className="text-xs text-theme-muted mb-4">
-            {createRole === 'super_admin'
-              ? 'Executives can only be created by an Executive. Access is granted immediately.'
-              : 'Creates an Operations Lead with immediate access to the admin portal.'}
+            Choose a role — it is written as a Firebase custom claim on create so portal access matches immediately.
+            To change an existing account, use Promote.
           </p>
           <form onSubmit={handleCreate} className="grid sm:grid-cols-2 gap-4">
             <div>
@@ -489,8 +1104,23 @@ export default function AccountsPage() {
               <input type="password" required minLength={8} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 8 characters" className="input-field" />
             </div>
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Role</label>
-              <input disabled value={ROLE_DISPLAY[createRole]} className="input-field opacity-80" />
+              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
+                Role <span className="text-emerald-accent normal-case tracking-normal">(required — sets custom claims)</span>
+              </label>
+              <div className="relative">
+                <select
+                  required
+                  value={form.role}
+                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AuthRole }))}
+                  className="input-field appearance-none pr-8"
+                >
+                  {createRoleOptions.map((r) => (
+                    <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
+                  ))}
+                </select>
+                <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+              </div>
+              <p className="text-[10px] text-theme-muted mt-1.5">{ROLE_HINT[form.role]}</p>
             </div>
             {createError && (
               <div className="sm:col-span-2 flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
@@ -501,7 +1131,7 @@ export default function AccountsPage() {
               <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary text-sm py-2 px-4">Cancel</button>
               <button type="submit" disabled={creating} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
                 {creating ? <SpinningDots size="sm" className="text-emerald-accent" /> : <UserPlus size={14} />}
-                Create
+                Create {ROLE_DISPLAY[form.role]}
               </button>
             </div>
           </form>
@@ -602,11 +1232,7 @@ export default function AccountsPage() {
               {tabUsers.length === 0 && (
                 <tr>
                   <td colSpan={activeTab === 'pending' ? 3 : 5} className="px-4 py-12 text-center text-theme-muted text-sm">
-                    {activeTab === 'pending'
-                      ? 'No pending approval requests.'
-                      : search
-                        ? 'No accounts match your search.'
-                        : `No ${activeTab === 'ops_lead' ? 'Operations Lead' : 'Executive'} accounts found.`}
+                    {search ? 'No accounts match your search.' : emptyLabel}
                   </td>
                 </tr>
               )}
@@ -627,6 +1253,29 @@ export default function AccountsPage() {
           onUnban={handleUnban}
           onRoleChange={handleRoleChange}
           actingOn={actingOn}
+        />
+      )}
+
+      {showPromote && (
+        <PromoteAccountModal
+          accounts={allUsers}
+          actorRole={actorRole}
+          actorUid={actorUid}
+          actingOn={actingOn}
+          onClose={() => setShowPromote(false)}
+          onPromote={handleRoleChange}
+        />
+      )}
+
+      {showPartner && (
+        <PartnerAccountModal
+          accounts={allUsers}
+          actorUid={actorUid}
+          actingOn={actingOn}
+          creating={creating}
+          onClose={() => setShowPartner(false)}
+          onCreate={handleCreatePartner}
+          onPromote={(uid, partnerEntityId) => handleRoleChange(uid, 'partner', partnerEntityId)}
         />
       )}
     </div>

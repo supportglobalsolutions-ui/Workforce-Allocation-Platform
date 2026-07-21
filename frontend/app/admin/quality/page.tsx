@@ -12,8 +12,6 @@ import { api } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-type Period = 'calendar' | 'payroll';
-
 interface WorkerOption {
   id: string;
   display_name: string;
@@ -38,15 +36,9 @@ interface PendingRatings {
   total_workers: number;
 }
 
-const PERIOD_PILLS: { key: Period; label: string }[] = [
-  { key: 'calendar', label: 'Calendar Month' },
-  { key: 'payroll', label: 'Payroll Period' },
-];
-
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function AdminQualityPage() {
-  const [period, setPeriod] = useState<Period>('calendar');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [workers, setWorkers] = useState<WorkerOption[]>([]);
   const [ratings, setRatings] = useState<QualityRating[]>([]);
@@ -59,11 +51,12 @@ export default function AdminQualityPage() {
   const [showRateModal, setShowRateModal] = useState(false);
   const [rateWorkerId, setRateWorkerId] = useState('');
 
-  const loadLeaderboard = useCallback(async (p: Period) => {
+  const loadLeaderboard = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      setEntries(await api.get<LeaderboardEntry[]>(`/leaderboard?period=${p}&limit=100`));
+      // Leaderboard is always scoped to the working month (payroll period).
+      setEntries(await api.get<LeaderboardEntry[]>('/leaderboard?period=payroll&limit=100'));
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
     } finally {
@@ -87,7 +80,7 @@ export default function AdminQualityPage() {
     }
   }, []);
 
-  useEffect(() => { loadLeaderboard(period); }, [loadLeaderboard, period]);
+  useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
 
   useEffect(() => {
     api.get<WorkerOption[]>('/workers').then(setWorkers).catch(() => {});
@@ -112,7 +105,7 @@ export default function AdminQualityPage() {
     try {
       await api.post('/quality/recalculate', {});
       setRecalcMessage('Leaderboard recalculated.');
-      await loadLeaderboard(period);
+      await loadLeaderboard();
     } catch (e) {
       setRecalcMessage(e instanceof Error ? e.message : 'Recalculation failed');
     } finally {
@@ -130,13 +123,14 @@ export default function AdminQualityPage() {
     loadPending();
   }
 
-  const periodLabel = entries[0]?.period_label;
+  // Prefer the working-month label from pending ratings; fall back to leaderboard rows.
+  const workingMonthLabel = pending?.period_label ?? entries[0]?.period_label ?? null;
 
   return (
     <div>
       <PageHeader
         title="Quality & Leaderboard"
-        description="Composite quality scores, worker rankings, and admin ratings."
+        description="Composite quality scores and admin ratings by working month."
         actions={
           <>
             <button
@@ -166,16 +160,23 @@ export default function AdminQualityPage() {
         </div>
       )}
 
-      {/* Pending ratings for current payroll period */}
+      {workingMonthLabel && (
+        <p className="text-xs text-theme-muted mb-4">
+          Working month{' '}
+          <span className="font-semibold text-emerald-accent">{workingMonthLabel}</span>
+        </p>
+      )}
+
+      {/* Pending ratings for current working month */}
       {pending && pending.pending.length > 0 && (
         <section aria-label="Pending ratings" className="mb-6">
           <div className="flex items-center justify-between gap-3 mb-3">
             <div>
               <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent">
-                Pending Ratings · {pending.period_label}
+                Pending Ratings
               </h2>
               <p className="text-[11px] text-theme-muted mt-0.5">
-                {pending.rated_count} of {pending.total_workers} active workers rated this period
+                {pending.rated_count} of {pending.total_workers} active workers rated for {pending.period_label}
               </p>
             </div>
           </div>
@@ -207,25 +208,6 @@ export default function AdminQualityPage() {
           All {pending.total_workers} active workers rated for {pending.period_label}.
         </div>
       )}
-
-      {/* Period toggle */}
-      <div className="flex flex-wrap items-center gap-3 mb-5">
-        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
-          {PERIOD_PILLS.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              onClick={() => setPeriod(key)}
-              className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
-                period === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-white'
-              }`}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-        {periodLabel && <span className="text-xs font-mono text-emerald-accent">{periodLabel}</span>}
-      </div>
 
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>

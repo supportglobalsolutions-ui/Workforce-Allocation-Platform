@@ -10,7 +10,7 @@ from .firebase_admin import verify_firebase_token
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
 
-ROLES = {"user", "admin", "super_admin"}
+ROLES = {"user", "partner", "admin", "super_admin"}
 
 # Fixed identity used when DEV_AUTH_BYPASS is enabled (development only).
 _DEV_USER_UID = "dev-test-user"
@@ -45,7 +45,7 @@ def get_current_user(
     """
     Verify the Firebase ID token sent as Bearer <token>.
     Returns decoded payload with uid, email, and role custom claim.
-    Roles: user | admin | super_admin
+    Roles: user | partner | admin | super_admin
     """
     if not credentials:
         if _dev_bypass_enabled():

@@ -69,7 +69,8 @@ export const QUALITY_TABS: SectionTab[] = [
 
 /** Payouts hub: payroll workbench + wallets / FX / reports. */
 export const PAYROLL_TABS: SectionTab[] = [
-  { label: 'Workbench', href: '/admin/payroll' },
+  { label: 'Calendar', href: '/admin/calendar' },
+  { label: 'Payroll', href: '/admin/payroll' },
   { label: 'Calculate', href: '/admin/payroll/calculate' },
   { label: 'Export', href: '/admin/payroll/export' },
   { label: 'Wallets', href: '/admin/wallets' },

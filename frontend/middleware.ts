@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-type Role = 'user' | 'admin' | 'super_admin';
+type Role = 'user' | 'partner' | 'admin' | 'super_admin';
 
 // Which roles may enter each portal prefix
 const PORTAL_ROLES: Record<string, Role[]> = {
-  '/worker':     ['user', 'admin', 'super_admin'],
+  '/worker':     ['user', 'partner', 'admin', 'super_admin'],
   '/admin':      ['admin', 'super_admin'],
   '/leadership': ['super_admin'],
 };
@@ -12,13 +12,16 @@ const PORTAL_ROLES: Record<string, Role[]> = {
 // Where each role lands after a successful login
 const ROLE_LANDING: Record<Role, string> = {
   user:        '/worker/dashboard',
+  partner:     '/worker/dashboard',
   admin:       '/admin/dashboard',
   super_admin: '/leadership/ceo-command',
 };
 
 function getRole(req: NextRequest): Role | null {
   const cookie = req.cookies.get('gs-role')?.value;
-  if (cookie === 'user' || cookie === 'admin' || cookie === 'super_admin') return cookie;
+  if (cookie === 'user' || cookie === 'partner' || cookie === 'admin' || cookie === 'super_admin') {
+    return cookie;
+  }
   return null;
 }
 

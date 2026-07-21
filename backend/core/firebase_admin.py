@@ -11,7 +11,7 @@ from .config import settings
 logger = logging.getLogger(__name__)
 _initialized = False
 
-VALID_ROLES = {"user", "admin", "super_admin"}
+VALID_ROLES = {"user", "admin", "super_admin", "partner"}
 VALID_STATUSES = {"pending", "approved", "rejected", "banned"}
 SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
 
@@ -112,19 +112,45 @@ def verify_firebase_token(id_token: str) -> dict:
         raise ValueError(f"Token verification failed: {exc}")
 
 
-def set_user_role(uid: str, role: str) -> None:
+def set_user_role(
+    uid: str,
+    role: str,
+    *,
+    partner_entity_id: str | None = None,
+) -> None:
+    """
+    Update the role claim. When role is partner, optional partner_entity_id is stored.
+    When leaving partner, partner_entity_id is cleared from claims.
+    """
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
-    existing = auth.get_user(uid).custom_claims or {}
-    auth.set_custom_user_claims(uid, {**existing, "role": role})
+    existing = dict(auth.get_user(uid).custom_claims or {})
+    existing["role"] = role
+    if role == "partner":
+        if partner_entity_id:
+            existing["partner_entity_id"] = partner_entity_id
+        else:
+            existing.pop("partner_entity_id", None)
+    else:
+        existing.pop("partner_entity_id", None)
+    auth.set_custom_user_claims(uid, existing)
 
 
-def set_user_claims(uid: str, *, role: str, status: str) -> None:
+def set_user_claims(
+    uid: str,
+    *,
+    role: str,
+    status: str,
+    partner_entity_id: str | None = None,
+) -> None:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
     if status not in VALID_STATUSES:
         raise ValueError(f"Invalid status: {status}")
-    auth.set_custom_user_claims(uid, {"role": role, "status": status})
+    claims: dict[str, Any] = {"role": role, "status": status}
+    if role == "partner" and partner_entity_id:
+        claims["partner_entity_id"] = partner_entity_id
+    auth.set_custom_user_claims(uid, claims)
 
 
 def create_firebase_user(
@@ -132,6 +158,7 @@ def create_firebase_user(
     password: str,
     display_name: str,
     role: str,
+    partner_entity_id: str | None = None,
 ) -> auth.UserRecord:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
@@ -141,7 +168,12 @@ def create_firebase_user(
         display_name=display_name,
         disabled=False,
     )
-    set_user_claims(user.uid, role=role, status="approved")
+    set_user_claims(
+        user.uid,
+        role=role,
+        status="approved",
+        partner_entity_id=partner_entity_id if role == "partner" else None,
+    )
     return user
 
 
@@ -212,6 +244,7 @@ def _user_to_dict(u: auth.UserRecord) -> dict:
         "banned": claims.get("status") == "banned",
         "disabled": u.disabled,
         "createdAt": u.user_metadata.creation_timestamp,
+        "partnerEntityId": claims.get("partner_entity_id"),
     }
 
 

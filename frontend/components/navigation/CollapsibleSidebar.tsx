@@ -17,7 +17,7 @@ interface CollapsibleSidebarProps {
 function sectionMatch(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
 
-  // Payouts owns workbench + wallets; Communications owns receipts
+  // Payouts owns workbench + wallets; Communications owns receipts; Calendar is its own nav item
   if (href === '/admin/payroll') {
     if (pathname === '/admin/payroll/receipts' || pathname.startsWith('/admin/payroll/receipts/')) {
       return false;

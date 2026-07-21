@@ -9,7 +9,7 @@ from sqlmodel import SQLModel
 class NotificationSend(SQLModel):
     title: str
     message: str
-    target_type: str  # "all" | "specific"
+    target_type: str  # "all" | "specific" | "partners"
     channels: str = "in_app"  # "in_app" | "email" | "both"
     category: str = "general"  # "general" | "payment"
     target_username: Optional[str] = None

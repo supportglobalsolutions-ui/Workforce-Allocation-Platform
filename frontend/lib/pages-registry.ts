@@ -202,6 +202,16 @@ export const PAGES: PageEntry[] = [
     roles: ['Handler', 'Operations Lead'],
   },
   {
+    id: 'working-period-calendar',
+    title: 'Working Period Calendar',
+    href: '/admin/calendar',
+    portal: 'admin',
+    purpose: '3D calendar of working months with historical periods, hours, and payout totals.',
+    features: ['Working months', 'Period history', 'Revenue / payout totals', 'Worker hours'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
     id: 'payroll-dashboard',
     title: 'Payroll Dashboard',
     href: '/admin/payroll',

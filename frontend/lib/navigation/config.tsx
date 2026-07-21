@@ -1,7 +1,7 @@
 import {
   LayoutDashboard, Users, Monitor, Settings, Trophy, Landmark,
   Bell, DollarSign, BarChart3, Activity, BookOpen, Briefcase,
-  Zap, History, Home, Lock, Shield, CalendarDays, UserCircle,
+  Zap, History, Home, Lock, Shield, CalendarDays, CalendarRange, UserCircle,
   Wallet, GraduationCap, Building2, Mail, ShieldCheck,
 } from 'lucide-react';
 
@@ -40,6 +40,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <Activity size={18} />, label: 'Live Sessions', href: '/admin/live-sessions', shortLabel: 'Live' },
     { icon: <CalendarDays size={18} />, label: 'Shifts', href: '/admin/shifts' },
     { icon: <Trophy size={18} />, label: 'Quality', href: '/admin/quality' },
+    { icon: <CalendarRange size={18} />, label: 'Calendar', href: '/admin/calendar' },
     { icon: <DollarSign size={18} />, label: 'Payouts', href: '/admin/payroll', shortLabel: 'Pay' },
     { icon: <Mail size={18} />, label: 'Communications', href: '/admin/payroll/receipts', shortLabel: 'Comms' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/admin/notifications', shortLabel: 'Alerts' },

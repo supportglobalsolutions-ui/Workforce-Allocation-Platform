@@ -22,6 +22,7 @@ _AUTH_TO_ORG_ROLE = {
     "super_admin": AdminRoleEnum.ceo_leadership,
     "admin": AdminRoleEnum.operations_lead,
     "user": AdminRoleEnum.technical_admin,
+    "partner": AdminRoleEnum.technical_admin,
 }
 
 

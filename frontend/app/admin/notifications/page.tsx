@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
+  Briefcase, AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import { api } from '@/lib/api';
@@ -13,7 +13,7 @@ interface NotificationResponse {
   title: string;
   message: string;
   category?: string;
-  target_type: 'all' | 'specific';
+  target_type: 'all' | 'specific' | 'partners';
   target_worker_id: string | null;
   target_worker_name: string | null;
   target_worker_username: string | null;
@@ -39,7 +39,7 @@ interface SendResult {
 
 type Channel = 'in_app' | 'email' | 'both';
 type Category = 'general' | 'payment';
-type RecipientMode = 'all' | 'selected' | 'typed';
+type RecipientMode = 'all' | 'partners' | 'selected' | 'typed';
 
 /** Full address with a dotted domain — rejects incomplete values like user@gmail */
 function isValidEmail(value: string): boolean {
@@ -64,15 +64,25 @@ function emailValidationError(value: string): string | null {
 }
 
 function SentCard({ n }: { n: NotificationResponse }) {
+  const audienceLabel =
+    n.target_type === 'all' ? 'All Workers'
+      : n.target_type === 'partners' ? 'Partners only'
+        : `@${n.target_worker_username ?? n.target_worker_name ?? 'Unknown'}`;
+  const audienceClass =
+    n.target_type === 'all' ? 'bg-gold-accent/10 text-gold-accent'
+      : n.target_type === 'partners' ? 'bg-sky-500/15 text-sky-300'
+        : 'bg-emerald-accent/10 text-emerald-accent';
+  const AudienceIcon = n.target_type === 'all' ? Users : n.target_type === 'partners' ? Briefcase : User;
+  const iconClass =
+    n.target_type === 'all' ? 'text-gold-accent'
+      : n.target_type === 'partners' ? 'text-sky-300'
+        : 'text-emerald-accent';
+
   return (
     <div className="glass-panel rounded-xl border border-white/5 p-4 space-y-2">
       <div className="flex items-start justify-between gap-3">
         <div className="flex items-center gap-2 min-w-0">
-          {n.target_type === 'all' ? (
-            <Users size={14} className="text-gold-accent shrink-0" />
-          ) : (
-            <User size={14} className="text-emerald-accent shrink-0" />
-          )}
+          <AudienceIcon size={14} className={`${iconClass} shrink-0`} />
           <span className="text-sm font-semibold text-white truncate">{n.title}</span>
         </div>
         <span className="text-[10px] text-theme-muted shrink-0 whitespace-nowrap">
@@ -81,8 +91,8 @@ function SentCard({ n }: { n: NotificationResponse }) {
       </div>
       <p className="text-xs text-theme-muted leading-relaxed">{n.message}</p>
       <div className="flex items-center gap-2 text-[10px] text-theme-muted flex-wrap">
-        <span className={`px-2 py-0.5 rounded-full font-medium ${n.target_type === 'all' ? 'bg-gold-accent/10 text-gold-accent' : 'bg-emerald-accent/10 text-emerald-accent'}`}>
-          {n.target_type === 'all' ? 'All Workers' : `@${n.target_worker_username ?? n.target_worker_name ?? 'Unknown'}`}
+        <span className={`px-2 py-0.5 rounded-full font-medium ${audienceClass}`}>
+          {audienceLabel}
         </span>
         {n.category === 'payment' && (
           <span className="px-2 py-0.5 rounded-full font-medium bg-emerald-accent/10 text-emerald-accent">Payment</span>
@@ -279,7 +289,10 @@ export default function AdminNotificationsPage() {
         message: form.message.trim(),
         channels: form.channels,
         category: form.category,
-        target_type: form.recipientMode === 'all' ? 'all' : 'specific',
+        target_type:
+          form.recipientMode === 'all' ? 'all'
+            : form.recipientMode === 'partners' ? 'partners'
+              : 'specific',
         extra_emails: emails,
       };
       if (form.recipientMode === 'selected' && selectedIds.size > 0) {
@@ -423,6 +436,18 @@ export default function AdminNotificationsPage() {
               <input
                 type="radio"
                 name="recipientMode"
+                checked={form.recipientMode === 'partners'}
+                onChange={() => setForm((f) => ({ ...f, recipientMode: 'partners' }))}
+                className="accent-sky-400"
+              />
+              <span className="text-sm text-white flex items-center gap-1.5">
+                <Briefcase size={14} className="text-sky-300" /> Partners only
+              </span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer">
+              <input
+                type="radio"
+                name="recipientMode"
                 checked={form.recipientMode === 'selected'}
                 onChange={() => setForm((f) => ({ ...f, recipientMode: 'selected' }))}
                 className="accent-emerald-400"
@@ -447,6 +472,12 @@ export default function AdminNotificationsPage() {
               </span>
             </label>
           </div>
+
+          {form.recipientMode === 'partners' && (
+            <p className="text-[11px] text-sky-300/90">
+              Sends only to accounts with the Partner login role (listed under Accounts → Partners).
+            </p>
+          )}
 
           {form.recipientMode === 'all' && wantsEmail && (
             <p className="text-[11px] text-amber-400/90">

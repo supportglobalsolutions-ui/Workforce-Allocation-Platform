@@ -1,6 +1,6 @@
 import { PortalRole } from '@/lib/navigation/config';
 
-export type AuthRole = 'user' | 'admin' | 'super_admin';
+export type AuthRole = 'user' | 'partner' | 'admin' | 'super_admin';
 
 export interface AuthSession {
   uid: string;
@@ -15,18 +15,21 @@ export const SUPER_ADMIN_EMAIL = 'support.globalsolutions@gmail.com';
 
 export const ROLE_TO_PORTAL: Record<AuthRole, PortalRole> = {
   user: 'worker',
+  partner: 'worker',
   admin: 'admin',
   super_admin: 'leadership',
 };
 
 export const ROLE_ALLOWED_PORTALS: Record<AuthRole, PortalRole[]> = {
   user: ['worker'],
+  partner: ['worker'],
   admin: ['admin', 'worker'],
   super_admin: ['leadership', 'admin', 'worker'],
 };
 
 export const ROLE_DISPLAY: Record<AuthRole, string> = {
   user: 'Worker',
+  partner: 'Partner',
   admin: 'Operations Lead',
   super_admin: 'Executive',
 };
@@ -45,7 +48,7 @@ export function portalFromPath(pathname: string): PortalRole | null {
 
 /** Returns which roles the actor is allowed to assign when creating/elevating accounts. */
 export function assignableRoles(actorRole: AuthRole): AuthRole[] {
-  if (actorRole === 'super_admin') return ['user', 'admin', 'super_admin'];
-  if (actorRole === 'admin') return ['user', 'admin'];
+  if (actorRole === 'super_admin') return ['user', 'partner', 'admin', 'super_admin'];
+  if (actorRole === 'admin') return ['user', 'partner', 'admin'];
   return [];
 }

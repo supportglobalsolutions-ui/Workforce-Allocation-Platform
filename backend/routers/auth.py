@@ -43,11 +43,13 @@ class CreateUserRequest(BaseModel):
     email: EmailStr
     password: str
     displayName: str
-    role: str  # "user" | "admin" | "super_admin"
+    role: str  # "user" | "partner" | "admin" | "super_admin"
+    partnerEntityId: Optional[UUID] = None
 
 
 class UpdateRoleRequest(BaseModel):
     role: str
+    partnerEntityId: Optional[UUID] = None
 
 
 class RegisterRequest(BaseModel):
@@ -61,6 +63,56 @@ class ApproveUserRequest(BaseModel):
     worker_type: Optional[str] = None        # "gs_registered" | "partner_worker"
     partner_entity_id: Optional[UUID] = None
     country: Optional[str] = None
+
+
+def _validate_optional_partner_entity(db: Session, role: str, entity_id: Optional[UUID]) -> Optional[str]:
+    """Return partner_entity_id string for claims, or None. Raises HTTPException if invalid."""
+    if role != "partner":
+        return None
+    if entity_id is None:
+        return None
+    if not db.get(PartnerEntity, entity_id):
+        raise HTTPException(status_code=404, detail="Partner company not found.")
+    return str(entity_id)
+
+
+def _ensure_login_profile(
+    db: Session,
+    *,
+    uid: str,
+    email: str,
+    display_name: str,
+) -> Worker:
+    """Ensure admin_users + workers rows exist so partner can use worker APIs / inbox."""
+    admin_row = db.exec(select(AdminUser).where(AdminUser.firebase_uid == uid)).first()
+    if not admin_row:
+        admin_row = AdminUser(
+            firebase_uid=uid,
+            email=email or f"{uid}@unknown.local",
+            role=AdminRoleEnum.technical_admin,
+            display_name=display_name or (email or "").split("@")[0] or "Partner",
+            status=AccountStatusEnum.active,
+        )
+        db.add(admin_row)
+        db.commit()
+        db.refresh(admin_row)
+
+    worker = db.exec(select(Worker).where(Worker.admin_user_id == admin_row.id)).first()
+    if not worker:
+        worker = Worker(
+            admin_user_id=admin_row.id,
+            worker_type=WorkerTypeEnum.gs_registered,
+            display_name=admin_row.display_name,
+            country="Unassigned",
+            pay_tier="unassigned",
+            status=WorkerStatusEnum.active,
+            start_date=date.today(),
+            work_ready=False,
+        )
+        db.add(worker)
+        db.commit()
+        db.refresh(worker)
+    return worker
 
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
@@ -96,12 +148,13 @@ def list_users(current_user: dict = Depends(require_admin)):
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_user(
     body: CreateUserRequest,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
     """
     Create a new Firebase user with a role claim.
-    - admin       : can only create 'user' accounts
-    - super_admin : can create any role
+    - admin       : can create worker, partner, or operations lead
+    - super_admin : can create any role including executive
     """
     actor_role = current_user["role"]
     allowed = ROLE_CAN_ASSIGN.get(actor_role, set())
@@ -112,24 +165,28 @@ def create_user(
             detail=f"Your role '{actor_role}' cannot create accounts with role '{body.role}'.",
         )
 
+    partner_entity_id = _validate_optional_partner_entity(db, body.role, body.partnerEntityId)
+
     try:
         user = create_firebase_user(
             email=body.email,
             password=body.password,
             display_name=body.displayName,
             role=body.role,
+            partner_entity_id=partner_entity_id,
         )
     except Exception as exc:
         raise http_error_from_firebase(exc) from exc
 
-    return {
-        "uid": user.uid,
-        "email": user.email,
-        "displayName": user.display_name,
-        "role": body.role,
-        "status": "approved",
-        "disabled": False,
-    }
+    if body.role in {"user", "partner"}:
+        _ensure_login_profile(
+            db,
+            uid=user.uid,
+            email=user.email or body.email,
+            display_name=user.display_name or body.displayName,
+        )
+
+    return user_to_dict(user)
 
 
 @router.patch("/users/{uid}/approve")
@@ -225,12 +282,14 @@ def reject_user(
 def update_user_role(
     uid: str,
     body: UpdateRoleRequest,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
     """
-    Update the role of an existing user.
-    - admin       : cannot elevate (no elevation rights per policy)
+    Update the role of an existing user (promote/demote).
+    - admin       : can set worker, partner, or operations lead (not executive)
     - super_admin : can set any role
+    Admins cannot change Executive accounts.
     """
     actor_role = current_user["role"]
     allowed = ROLE_CAN_ASSIGN.get(actor_role, set())
@@ -242,11 +301,33 @@ def update_user_role(
         )
 
     try:
-        set_user_role(uid, body.role)
+        target = get_firebase_user(uid)
     except Exception as exc:
         raise http_error_from_firebase(exc) from exc
 
-    return {"uid": uid, "role": body.role}
+    target_role = (target.custom_claims or {}).get("role", "user")
+    if actor_role == "admin" and target_role == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins cannot change Executive account roles.",
+        )
+
+    partner_entity_id = _validate_optional_partner_entity(db, body.role, body.partnerEntityId)
+
+    try:
+        set_user_role(uid, body.role, partner_entity_id=partner_entity_id)
+    except Exception as exc:
+        raise http_error_from_firebase(exc) from exc
+
+    if body.role == "partner":
+        _ensure_login_profile(
+            db,
+            uid=uid,
+            email=target.email or f"{uid}@unknown.local",
+            display_name=target.display_name or (target.email or "").split("@")[0] or "Partner",
+        )
+
+    return user_to_dict(get_firebase_user(uid))
 
 
 @router.get("/account-status")

@@ -5,18 +5,20 @@ from fastapi import Depends, HTTPException, status
 
 from .security import get_current_user
 
-AuthRole = str  # "user" | "admin" | "super_admin"
+AuthRole = str  # "user" | "partner" | "admin" | "super_admin"
 
 ROLE_HIERARCHY: dict[AuthRole, int] = {
     "user": 1,
+    "partner": 1,  # same worker APIs as user; distinct claim for Accounts / notify
     "admin": 2,
     "super_admin": 3,
 }
 
 # What each role is allowed to assign when creating/elevating another account.
 ROLE_CAN_ASSIGN: dict[AuthRole, set[AuthRole]] = {
-    "super_admin": {"user", "admin", "super_admin"},
-    "admin": {"user", "admin"},
+    "super_admin": {"user", "partner", "admin", "super_admin"},
+    "admin": {"user", "partner", "admin"},
+    "partner": set(),
     "user": set(),
 }
 

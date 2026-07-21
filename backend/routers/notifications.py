@@ -5,6 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, or_, select
 
 from core.database import get_db
+from core.firebase_admin import list_firebase_users
 from core.permissions import require_admin, require_user
 from models.admin_users import AdminUser
 from models.notification import Notification
@@ -46,9 +47,33 @@ def _worker_email(db: Session, worker: Worker) -> str | None:
     return admin_user.email if admin_user else None
 
 
+def _resolve_partner_workers(db: Session) -> list[Worker]:
+    """Workers linked to Firebase accounts with role=partner."""
+    partner_uids = {
+        u["uid"] for u in list_firebase_users()
+        if u.get("role") == "partner" and u.get("status") == "approved"
+    }
+    if not partner_uids:
+        return []
+    admins = list(db.exec(select(AdminUser).where(AdminUser.firebase_uid.in_(partner_uids))).all())
+    if not admins:
+        return []
+    admin_ids = [a.id for a in admins]
+    return list(db.exec(select(Worker).where(Worker.admin_user_id.in_(admin_ids)).order_by(Worker.display_name)).all())
+
+
 def _resolve_workers(db: Session, body: NotificationSend) -> list[Worker]:
     if body.target_type == "all":
         return list(db.exec(select(Worker).order_by(Worker.display_name)).all())
+
+    if body.target_type == "partners":
+        workers = _resolve_partner_workers(db)
+        if not workers:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="No partner accounts with worker profiles found.",
+            )
+        return workers
 
     if body.worker_ids:
         workers = list(db.exec(select(Worker).where(Worker.id.in_(body.worker_ids))).all())
@@ -102,8 +127,11 @@ def send_notification(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    if body.target_type not in {"all", "specific"}:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="target_type must be 'all' or 'specific'")
+    if body.target_type not in {"all", "specific", "partners"}:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="target_type must be 'all', 'specific', or 'partners'",
+        )
 
     channels = (body.channels or "in_app").strip().lower()
     if channels not in {"in_app", "email", "both"}:
@@ -123,7 +151,12 @@ def send_notification(
         if e and is_valid_email_address(e)
     ]
 
-    has_worker_target = bool(body.worker_ids or body.target_username or body.target_email or body.target_type == "all")
+    has_worker_target = bool(
+        body.worker_ids
+        or body.target_username
+        or body.target_email
+        or body.target_type in {"all", "partners"}
+    )
     if body.target_type == "specific" and not has_worker_target and not extra_emails:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -161,6 +194,17 @@ def send_notification(
                 message=body.message.strip(),
                 category=category,
                 target_type="all",
+                target_worker_id=None,
+            )
+            db.add(notification)
+            created.append(notification)
+        elif body.target_type == "partners":
+            notification = Notification(
+                sender_admin_id=sender.id,
+                title=body.title.strip(),
+                message=body.message.strip(),
+                category=category,
+                target_type="partners",
                 target_worker_id=None,
             )
             db.add(notification)
@@ -248,14 +292,17 @@ def get_my_notifications(
     current_user: dict = Depends(require_user),
 ):
     worker = get_worker_for_user(db, current_user)
+    role = current_user.get("role", "user")
+    visibility = [
+        Notification.target_type == "all",
+        Notification.target_worker_id == worker.id,
+    ]
+    if role == "partner":
+        visibility.append(Notification.target_type == "partners")
+
     stmt = (
         select(Notification)
-        .where(
-            or_(
-                Notification.target_type == "all",
-                Notification.target_worker_id == worker.id,
-            )
-        )
+        .where(or_(*visibility))
         .order_by(Notification.created_at.desc())
     )
     if category:
@@ -283,6 +330,10 @@ def mark_as_read(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
     if notification.target_type == "specific" and notification.target_worker_id != worker.id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your notification")
+    if notification.target_type == "partners" and current_user.get("role") != "partner":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not your notification")
+    if notification.target_type == "all":
+        pass  # visible to all worker-portal users
 
     if not notification.is_read:
         notification.is_read = True

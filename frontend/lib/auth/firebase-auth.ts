@@ -91,6 +91,7 @@ export interface ManagedUser {
   disabled: boolean;
   banned: boolean;
   createdAt: number;
+  partnerEntityId?: string | null;
 }
 
 export const apiListUsers = () =>
@@ -101,10 +102,25 @@ export const apiCreateUser = (
   password: string,
   displayName: string,
   role: AuthRole,
-) => api.post<ManagedUser>('/auth/users', { email, password, displayName, role });
+  partnerEntityId?: string | null,
+) => api.post<ManagedUser>('/auth/users', {
+  email,
+  password,
+  displayName,
+  role,
+  ...(partnerEntityId ? { partnerEntityId } : {}),
+});
 
-export const apiUpdateUserRole = (uid: string, role: AuthRole) =>
-  api.patch<void>(`/auth/users/${uid}/role`, { role });
+export const apiUpdateUserRole = (
+  uid: string,
+  role: AuthRole,
+  partnerEntityId?: string | null,
+) => api.patch<ManagedUser>(`/auth/users/${uid}/role`, {
+  role,
+  ...(role === 'partner'
+    ? { partnerEntityId: partnerEntityId ?? null }
+    : {}),
+});
 
 export const apiRegisterUser = (email: string, password: string, displayName: string) =>
   api.post<ManagedUser>('/auth/register', { email, password, displayName });

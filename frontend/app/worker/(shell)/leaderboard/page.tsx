@@ -8,8 +8,6 @@ import LeaderboardTable, { LeaderboardEntry } from '@/components/platform/Leader
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
-type Period = 'calendar' | 'payroll';
-
 interface MyScore {
   composite_score: number;
   global_rank: number | null;
@@ -17,24 +15,18 @@ interface MyScore {
   period_label: string | null;
 }
 
-const PERIOD_PILLS: { key: Period; label: string }[] = [
-  { key: 'calendar', label: 'Calendar Month' },
-  { key: 'payroll', label: 'Payroll Period' },
-];
-
 export default function LeaderboardPage() {
-  const [period, setPeriod] = useState<Period>('calendar');
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [myScore, setMyScore] = useState<MyScore | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback(async (p: Period) => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const [rows, mine] = await Promise.all([
-        api.get<LeaderboardEntry[]>(`/leaderboard?period=${p}&limit=100`),
+        api.get<LeaderboardEntry[]>('/leaderboard?period=payroll&limit=100'),
         api.get<MyScore | null>('/quality/me'),
       ]);
       setEntries(rows);
@@ -46,37 +38,23 @@ export default function LeaderboardPage() {
     }
   }, []);
 
-  useEffect(() => { load(period); }, [load, period]);
+  useEffect(() => { load(); }, [load]);
 
-  const periodLabel = entries[0]?.period_label;
+  const workingMonthLabel = entries[0]?.period_label ?? myScore?.period_label ?? null;
 
   return (
     <div className="space-y-6 pb-10">
       <PageHeader
         title="Leaderboard"
-        description="Worker rankings powered by composite quality scores."
-        actions={
-          periodLabel ? (
-            <span className="text-xs font-mono text-emerald-accent self-center">{periodLabel}</span>
-          ) : undefined
-        }
+        description="Worker rankings by working month."
       />
 
-      {/* Period toggle pills */}
-      <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
-        {PERIOD_PILLS.map(({ key, label }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setPeriod(key)}
-            className={`px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
-              period === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-white'
-            }`}
-          >
-            {label}
-          </button>
-        ))}
-      </div>
+      {workingMonthLabel && (
+        <p className="text-xs text-theme-muted">
+          Working month{' '}
+          <span className="font-semibold text-emerald-accent">{workingMonthLabel}</span>
+        </p>
+      )}
 
       {/* My rank card */}
       {myScore && (
@@ -96,9 +74,6 @@ export default function LeaderboardPage() {
               {Number(myScore.composite_score).toFixed(1)}
             </p>
           </div>
-          {myScore.period_label && (
-            <p className="text-xs text-theme-muted ml-auto">{myScore.period_label}</p>
-          )}
         </div>
       )}
 
