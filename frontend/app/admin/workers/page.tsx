@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Settings2,
+  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Settings2, Star,
   Search, ShieldOff, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
+import RateWorkerModal from '@/components/quality/RateWorkerModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import {
@@ -37,8 +38,6 @@ interface Worker {
   updated_at: string;
   email: string | null;
 }
-
-interface PartnerOption { id: string; name: string; }
 
 interface WorkSession {
   id: string;
@@ -124,8 +123,6 @@ interface WorkerAdminForm {
   pay_tier: string;
   status: string;
   start_date: string;
-  worker_type: string;
-  partner_entity_id: string;
   work_ready: boolean;
 }
 
@@ -134,8 +131,6 @@ function adminFormFromWorker(w: Worker): WorkerAdminForm {
     pay_tier: w.pay_tier ?? '',
     status: w.status,
     start_date: (w.start_date ?? '').slice(0, 10),
-    worker_type: w.worker_type,
-    partner_entity_id: w.partner_entity_id ?? '',
     work_ready: w.work_ready,
   };
 }
@@ -156,33 +151,19 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
   const [editForm, setEditForm] = useState<WorkerAdminForm>(() => adminFormFromWorker(worker));
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
-  const [partnerOptions, setPartnerOptions] = useState<PartnerOption[] | null>(null);
-
-  useEffect(() => {
-    if (!editing || partnerOptions !== null) return;
-    api.get<PartnerOption[]>('/partners').then(setPartnerOptions).catch(() => setPartnerOptions([]));
-  }, [editing, partnerOptions]);
-
-  const editValid =
-    editForm.worker_type !== 'partner_worker' || editForm.partner_entity_id !== '';
+  const [showRate, setShowRate] = useState(false);
 
   async function handleSaveEdit() {
-    if (!editValid) return;
     setEditSaving(true); setEditError(null);
     try {
       const body = {
         pay_tier: editForm.pay_tier,
         status: editForm.status,
         start_date: editForm.start_date,
-        worker_type: editForm.worker_type,
-        partner_entity_id: editForm.worker_type === 'partner_worker' ? editForm.partner_entity_id : null,
         work_ready: editForm.work_ready,
       };
       const resp = await api.patch<Partial<Worker>>(`/workers/${worker.id}`, body);
-      const partnerName = editForm.worker_type === 'partner_worker'
-        ? (partnerOptions?.find((p) => p.id === editForm.partner_entity_id)?.name ?? worker.partner_entity_name)
-        : null;
-      onUpdated({ ...worker, ...body, ...resp, partner_entity_name: partnerName } as Worker);
+      onUpdated({ ...worker, ...body, ...resp } as Worker);
       setEditing(false);
     } catch (e: unknown) {
       setEditError(e instanceof Error ? e.message : 'Failed to save worker.');
@@ -260,11 +241,18 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
             </div>
             <div className="flex items-center gap-1.5 shrink-0">
               {tab === 'profile' && !editing && (
-                <button type="button"
-                  onClick={() => { setEditForm(adminFormFromWorker(worker)); setEditError(null); setEditing(true); }}
-                  className="btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5">
-                  <Settings2 size={11} /> Manage
-                </button>
+                <>
+                  <button type="button"
+                    onClick={() => setShowRate(true)}
+                    className="btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5">
+                    <Star size={11} /> Rate
+                  </button>
+                  <button type="button"
+                    onClick={() => { setEditForm(adminFormFromWorker(worker)); setEditError(null); setEditing(true); }}
+                    className="btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5">
+                    <Settings2 size={11} /> Manage
+                  </button>
+                </>
               )}
               <button type="button" onClick={onClose}
                 className="flex items-center justify-center w-8 h-8 rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
@@ -344,12 +332,7 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
 
             {tab === 'profile' && editing && (
               <div className="px-5 py-4 space-y-4">
-                <div>
-                  <SectionLabel>Admin Controls</SectionLabel>
-                  <p className="text-xs text-theme-muted mb-3 leading-relaxed">
-                    Name, username, and country are managed by the worker. Use Quality to rate performance.
-                  </p>
-                </div>
+                <SectionLabel>Admin Controls</SectionLabel>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Pay Tier</label>
@@ -367,49 +350,30 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                       </select>
                       <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
                     </div>
+                    <p className="text-[10px] text-theme-muted mt-1 leading-snug">
+                      Only <span className="text-white/70">active</span> can claim machines. Suspended/inactive keep login but block new sessions.
+                    </p>
                   </div>
-                  <div>
+                  <div className="col-span-2">
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Start Date</label>
                     <input type="date" value={editForm.start_date}
                       onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))}
                       className="input-field" />
                   </div>
-                  <div>
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Worker Type</label>
-                    <div className="relative">
-                      <select value={editForm.worker_type}
-                        onChange={(e) => setEditForm((f) => ({ ...f, worker_type: e.target.value }))}
-                        className="input-field appearance-none pr-8">
-                        <option value="gs_registered">GS Member</option>
-                        <option value="partner_worker">Partner</option>
-                      </select>
-                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-                    </div>
-                  </div>
-                  {editForm.worker_type === 'partner_worker' && (
-                    <div className="col-span-2">
-                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Partner Company *</label>
-                      <div className="relative">
-                        <select value={editForm.partner_entity_id}
-                          onChange={(e) => setEditForm((f) => ({ ...f, partner_entity_id: e.target.value }))}
-                          className="input-field appearance-none pr-8">
-                          <option value="">Select partner…</option>
-                          {(partnerOptions ?? []).map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                        </select>
-                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-                      </div>
-                      {partnerOptions === null && <p className="text-[10px] text-theme-muted mt-1">Loading partners…</p>}
-                    </div>
-                  )}
                 </div>
 
-                <label className="flex items-center gap-2.5 cursor-pointer select-none">
-                  <input type="checkbox" checked={editForm.work_ready}
-                    onChange={(e) => setEditForm((f) => ({ ...f, work_ready: e.target.checked }))}
-                    className="accent-emerald-400" />
-                  <span className="text-[13px] text-white">Cleared to work</span>
-                  <WorkReadyBadge ready={editForm.work_ready} />
-                </label>
+                <div>
+                  <label className="flex items-center gap-2.5 cursor-pointer select-none">
+                    <input type="checkbox" checked={editForm.work_ready}
+                      onChange={(e) => setEditForm((f) => ({ ...f, work_ready: e.target.checked }))}
+                      className="accent-emerald-400" />
+                    <span className="text-[13px] text-white">Cleared to work</span>
+                    <WorkReadyBadge ready={editForm.work_ready} />
+                  </label>
+                  <p className="text-[10px] text-theme-muted mt-1.5 leading-snug pl-6">
+                    Onboarding gate — uncheck until training is done. Blocks machine claims even if status is active.
+                  </p>
+                </div>
 
                 {editError && (
                   <div className="flex items-center gap-2 p-2.5 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
@@ -420,7 +384,7 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                 <div className="flex gap-2 justify-end border-t border-white/[0.06] pt-3">
                   <button type="button" onClick={() => { setEditing(false); setEditError(null); }}
                     className="btn-secondary text-xs py-2 px-3.5">Cancel</button>
-                  <button type="button" onClick={handleSaveEdit} disabled={editSaving || !editValid}
+                  <button type="button" onClick={handleSaveEdit} disabled={editSaving}
                     className="btn-primary text-xs py-2 px-3.5 flex items-center gap-2 disabled:opacity-60">
                     {editSaving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
                     Save
@@ -475,6 +439,14 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, [`${type}_image_url`]: url } : s));
         }}
       />
+      {showRate && (
+        <RateWorkerModal
+          workers={[{ id: worker.id, display_name: worker.display_name, country: worker.country }]}
+          lockedWorkerId={worker.id}
+          onClose={() => setShowRate(false)}
+          onSaved={() => setShowRate(false)}
+        />
+      )}
     </>
   );
 }

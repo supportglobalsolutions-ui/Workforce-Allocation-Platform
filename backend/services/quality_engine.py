@@ -100,16 +100,57 @@ def _assessment_component(db: Session, worker_id) -> Optional[Decimal]:
 
 
 def _rating_component(db: Session, worker_id, indicators: dict) -> Optional[Decimal]:
-    """Average manual ratings over the trailing 5 payroll periods (~5 months)."""
-    cutoff = datetime.now(timezone.utc) - timedelta(days=155)
-    ratings = db.exec(
-        select(QualityIndicatorRating).where(
-            QualityIndicatorRating.worker_id == worker_id,
-            QualityIndicatorRating.created_at >= cutoff,
-        )
+    """Average manual ratings over the trailing 5 payroll periods, normalized to 0-100.
+
+    Prefers ratings linked to a payroll_period_id. Legacy ratings (no period) still
+    count if created within the same calendar window as those periods.
+    """
+    periods = db.exec(
+        select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc()).limit(5)
     ).all()
-    normalized: list[Decimal] = []
+    period_ids = [p.id for p in periods]
+
+    ratings: list[QualityIndicatorRating] = []
+    if period_ids:
+        ratings.extend(
+            db.exec(
+                select(QualityIndicatorRating).where(
+                    QualityIndicatorRating.worker_id == worker_id,
+                    QualityIndicatorRating.payroll_period_id.in_(period_ids),
+                )
+            ).all()
+        )
+
+    # Include legacy (unscoped) ratings from the same trailing window.
+    if periods:
+        window_start = datetime.combine(periods[-1].start_date, time.min, tzinfo=timezone.utc)
+        legacy = db.exec(
+            select(QualityIndicatorRating).where(
+                QualityIndicatorRating.worker_id == worker_id,
+                QualityIndicatorRating.payroll_period_id.is_(None),
+                QualityIndicatorRating.created_at >= window_start,
+            )
+        ).all()
+        ratings.extend(legacy)
+    else:
+        cutoff = datetime.now(timezone.utc) - timedelta(days=155)
+        ratings.extend(
+            db.exec(
+                select(QualityIndicatorRating).where(
+                    QualityIndicatorRating.worker_id == worker_id,
+                    QualityIndicatorRating.created_at >= cutoff,
+                )
+            ).all()
+        )
+
+    # One score per period (or per legacy rating id) — prefer period-linked.
+    by_key: dict = {}
     for r in ratings:
+        key = r.payroll_period_id or r.id
+        by_key[key] = r
+
+    normalized: list[Decimal] = []
+    for r in by_key.values():
         indicator = indicators.get(r.indicator_id)
         scale_max = Decimal(indicator.scale_max) if indicator else Decimal(5)
         if scale_max > 0:

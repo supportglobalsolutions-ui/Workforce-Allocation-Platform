@@ -21,7 +21,7 @@ from core.permissions import require_admin, require_user
 from core.redis import get_redis
 from models.admin_users import AdminUser
 from models.allocation import Allocation
-from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, SessionTypeEnum
+from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, SessionTypeEnum, WorkerStatusEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.worker import Worker
@@ -568,6 +568,11 @@ def claim_rdp_resource(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Complete your onboarding training first — an admin must clear you to start work.",
+        )
+    if worker.status != WorkerStatusEnum.active:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Your worker status is {worker.status.value} — you cannot claim machines until an admin sets you to active.",
         )
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:

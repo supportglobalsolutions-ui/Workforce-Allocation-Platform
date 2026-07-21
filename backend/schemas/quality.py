@@ -38,17 +38,13 @@ class QualityIndicatorResponse(QualityIndicatorBase):
 
 # ── QualityIndicatorRating ─────────────────────────────────────────────────────
 
-class QualityIndicatorRatingBase(SQLModel):
-    worker_id:    UUID
+class QualityIndicatorRatingCreate(SQLModel):
+    worker_id: UUID
     indicator_id: UUID
-    score:        Decimal
-    reason_note:  Optional[str] = None
-    rated_by:     UUID
-    session_id:   Optional[UUID] = None
-
-
-class QualityIndicatorRatingCreate(QualityIndicatorRatingBase):
-    pass
+    score: Decimal
+    reason_note: Optional[str] = None
+    session_id: Optional[UUID] = None
+    payroll_period_id: Optional[UUID] = None
 
 
 class QualityIndicatorRatingUpdate(SQLModel):
@@ -56,10 +52,33 @@ class QualityIndicatorRatingUpdate(SQLModel):
     reason_note: Optional[str]    = None
 
 
-class QualityIndicatorRatingResponse(QualityIndicatorRatingBase):
+class QualityIndicatorRatingResponse(SQLModel):
     model_config = ConfigDict(from_attributes=True)
+
     id:         UUID
+    worker_id:  UUID
+    indicator_id: UUID
+    score:      Decimal
+    reason_note: Optional[str] = None
+    rated_by:   UUID
+    session_id: Optional[UUID] = None
+    payroll_period_id: Optional[UUID] = None
     created_at: datetime
+
+
+class PendingRatingWorker(SQLModel):
+    worker_id:    UUID
+    display_name: str
+    country:      str
+    worker_type:  str
+
+
+class PendingRatingsResponse(SQLModel):
+    payroll_period_id: UUID
+    period_label: str
+    pending: list[PendingRatingWorker]
+    rated_count: int
+    total_workers: int
 
 
 # ── QualityCompositeScore ──────────────────────────────────────────────────────

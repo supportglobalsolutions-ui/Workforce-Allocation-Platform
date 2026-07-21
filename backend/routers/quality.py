@@ -5,8 +5,13 @@ from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
+from models.enums import WorkerStatusEnum
+from models.payroll import PayrollPeriod
 from models.quality import QualityCompositeScore, QualityIndicator, QualityIndicatorRating
+from models.worker import Worker
 from schemas.quality import (
+    PendingRatingWorker,
+    PendingRatingsResponse,
     QualityCompositeScoreResponse,
     QualityIndicatorCreate,
     QualityIndicatorRatingCreate,
@@ -19,6 +24,10 @@ from services import quality_engine
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
+
+
+def _latest_payroll_period(db: Session) -> PayrollPeriod | None:
+    return db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).first()
 
 
 @router.get("/me", response_model=QualityCompositeScoreResponse | None)
@@ -76,6 +85,7 @@ def update_quality_indicator(
 @router.get("/ratings", response_model=list[QualityIndicatorRatingResponse])
 def list_quality_ratings(
     worker_id: UUID | None = None,
+    payroll_period_id: UUID | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
@@ -85,7 +95,56 @@ def list_quality_ratings(
         stmt = stmt.where(QualityIndicatorRating.worker_id == worker.id)
     elif worker_id:
         stmt = stmt.where(QualityIndicatorRating.worker_id == worker_id)
+    if payroll_period_id:
+        stmt = stmt.where(QualityIndicatorRating.payroll_period_id == payroll_period_id)
     return db.exec(stmt.order_by(QualityIndicatorRating.created_at.desc())).all()
+
+
+@router.get("/pending-ratings", response_model=PendingRatingsResponse)
+def list_pending_ratings(
+    payroll_period_id: UUID | None = None,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Workers still missing an admin overall rating for the given (or latest) payroll period."""
+    period = db.get(PayrollPeriod, payroll_period_id) if payroll_period_id else _latest_payroll_period(db)
+    if not period:
+        raise HTTPException(status_code=404, detail="No payroll period found.")
+
+    indicator = quality_engine.ensure_default_indicator(db)
+    rated_ids = {
+        r.worker_id
+        for r in db.exec(
+            select(QualityIndicatorRating).where(
+                QualityIndicatorRating.indicator_id == indicator.id,
+                QualityIndicatorRating.payroll_period_id == period.id,
+            )
+        ).all()
+    }
+
+    workers = db.exec(
+        select(Worker)
+        .where(Worker.status == WorkerStatusEnum.active)
+        .order_by(Worker.display_name)
+    ).all()
+
+    pending = [
+        PendingRatingWorker(
+            worker_id=w.id,
+            display_name=w.display_name,
+            country=w.country or "",
+            worker_type=w.worker_type.value if hasattr(w.worker_type, "value") else str(w.worker_type),
+        )
+        for w in workers
+        if w.id not in rated_ids
+    ]
+    return PendingRatingsResponse(
+        payroll_period_id=period.id,
+        period_label=period.label,
+        pending=pending,
+        rated_count=len(rated_ids),
+        total_workers=len(workers),
+    )
 
 
 @router.post("/ratings", response_model=QualityIndicatorRatingResponse, status_code=status.HTTP_201_CREATED)
@@ -102,10 +161,44 @@ def create_quality_rating(
             status_code=400,
             detail=f"Score must be between {indicator.scale_min} and {indicator.scale_max}.",
         )
+
+    period_id = body.payroll_period_id
+    if period_id is None:
+        latest = _latest_payroll_period(db)
+        if latest:
+            period_id = latest.id
+    elif not db.get(PayrollPeriod, period_id):
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+
     admin = get_admin_user(db, current_user)
-    data = body.model_dump()
-    data["rated_by"] = admin.id
-    rating = QualityIndicatorRating(**data)
+
+    # One overall rating per worker per payroll period — update if it already exists.
+    if period_id is not None:
+        existing = db.exec(
+            select(QualityIndicatorRating).where(
+                QualityIndicatorRating.worker_id == body.worker_id,
+                QualityIndicatorRating.indicator_id == body.indicator_id,
+                QualityIndicatorRating.payroll_period_id == period_id,
+            )
+        ).first()
+        if existing:
+            existing.score = body.score
+            existing.reason_note = body.reason_note
+            existing.rated_by = admin.id
+            db.add(existing)
+            db.commit()
+            db.refresh(existing)
+            return existing
+
+    rating = QualityIndicatorRating(
+        worker_id=body.worker_id,
+        indicator_id=body.indicator_id,
+        score=body.score,
+        reason_note=body.reason_note,
+        session_id=body.session_id,
+        payroll_period_id=period_id,
+        rated_by=admin.id,
+    )
     db.add(rating)
     db.commit()
     db.refresh(rating)

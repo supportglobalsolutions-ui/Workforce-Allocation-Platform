@@ -1,11 +1,12 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle, RefreshCw, Star, X } from 'lucide-react';
+import { AlertCircle, CheckCircle, RefreshCw, Star } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import LeaderboardTable, { LeaderboardEntry } from '@/components/platform/LeaderboardTable';
+import RateWorkerModal from '@/components/quality/RateWorkerModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -20,156 +21,27 @@ interface WorkerOption {
   worker_type: string;
 }
 
-interface QualityIndicator {
-  id: string;
-  name: string;
-  scale_min: number;
-  scale_max: number;
-}
-
 interface QualityRating {
   id: string;
   worker_id: string;
   score: number;
   reason_note: string | null;
+  payroll_period_id: string | null;
   created_at: string;
+}
+
+interface PendingRatings {
+  payroll_period_id: string;
+  period_label: string;
+  pending: { worker_id: string; display_name: string; country: string; worker_type: string }[];
+  rated_count: number;
+  total_workers: number;
 }
 
 const PERIOD_PILLS: { key: Period; label: string }[] = [
   { key: 'calendar', label: 'Calendar Month' },
   { key: 'payroll', label: 'Payroll Period' },
 ];
-
-// ── Rate Worker modal ──────────────────────────────────────────────────────────
-
-function RateWorkerModal({
-  workers,
-  onClose,
-  onSaved,
-}: {
-  workers: WorkerOption[];
-  onClose: () => void;
-  onSaved: () => void;
-}) {
-  const [workerId, setWorkerId] = useState('');
-  const [score, setScore] = useState<number | null>(null);
-  const [reason, setReason] = useState('');
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (!workerId || score == null) {
-      setError('Select a worker and a score.');
-      return;
-    }
-    setSaving(true);
-    setError(null);
-    try {
-      const indicator = await api.get<QualityIndicator>('/quality/default-indicator');
-      await api.post('/quality/ratings', {
-        worker_id: workerId,
-        indicator_id: indicator.id,
-        score,
-        reason_note: reason.trim() || null,
-        session_id: null,
-      });
-      onSaved();
-      onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save rating');
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-md">
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <h2 className="text-base font-bold text-white">Rate Worker</h2>
-          <button
-            type="button"
-            onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-xs text-theme-muted">
-            Rate each worker at the end of every payroll period; ratings are stored and averaged over the trailing 5 periods.
-          </p>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Worker</label>
-            <select value={workerId} onChange={(e) => setWorkerId(e.target.value)} className="input-field" required>
-              <option value="">Select a worker…</option>
-              {workers.map((w) => (
-                <option key={w.id} value={w.id}>{w.display_name} ({w.country})</option>
-              ))}
-            </select>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Score</label>
-            <div className="flex items-center gap-1.5">
-              {[1, 2, 3, 4, 5].map((n) => (
-                <button
-                  key={n}
-                  type="button"
-                  onClick={() => setScore(n)}
-                  className={`w-11 h-11 rounded-xl flex items-center justify-center transition-colors border ${
-                    score != null && n <= score
-                      ? 'bg-gold-accent/20 border-gold-accent/50 text-gold-accent'
-                      : 'bg-white/[0.03] border-white/10 text-theme-muted hover:text-gold-accent hover:border-gold-accent/30'
-                  }`}
-                  aria-label={`${n} out of 5`}
-                >
-                  <Star size={18} fill={score != null && n <= score ? 'currentColor' : 'none'} />
-                </button>
-              ))}
-              <span className="ml-2 text-sm font-bold text-white tabular-nums">
-                {score != null ? `${score} / 5` : '—'}
-              </span>
-            </div>
-          </div>
-
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
-              Comment <span className="font-medium normal-case tracking-normal text-theme-muted/70">(optional)</span>
-            </label>
-            <textarea
-              rows={3}
-              placeholder="Optional note — e.g. task accuracy, communication, reliability…"
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              className="input-field resize-none"
-            />
-          </div>
-
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
-              <AlertCircle size={14} /> {error}
-            </div>
-          )}
-
-          <div className="flex gap-3 justify-end">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-              {saving ? <SpinningDots size="sm" className="text-white" /> : <Star size={14} />}
-              Save rating
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
-  );
-}
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
@@ -178,12 +50,14 @@ export default function AdminQualityPage() {
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
   const [workers, setWorkers] = useState<WorkerOption[]>([]);
   const [ratings, setRatings] = useState<QualityRating[]>([]);
+  const [pending, setPending] = useState<PendingRatings | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   const [recalculating, setRecalculating] = useState(false);
   const [recalcMessage, setRecalcMessage] = useState<string | null>(null);
   const [showRateModal, setShowRateModal] = useState(false);
+  const [rateWorkerId, setRateWorkerId] = useState('');
 
   const loadLeaderboard = useCallback(async (p: Period) => {
     setLoading(true);
@@ -205,12 +79,21 @@ export default function AdminQualityPage() {
     }
   }, []);
 
+  const loadPending = useCallback(async () => {
+    try {
+      setPending(await api.get<PendingRatings>('/quality/pending-ratings'));
+    } catch {
+      setPending(null);
+    }
+  }, []);
+
   useEffect(() => { loadLeaderboard(period); }, [loadLeaderboard, period]);
 
   useEffect(() => {
     api.get<WorkerOption[]>('/workers').then(setWorkers).catch(() => {});
     loadRatings();
-  }, [loadRatings]);
+    loadPending();
+  }, [loadRatings, loadPending]);
 
   const workerNames = useMemo(() => {
     const map = new Map<string, string>();
@@ -237,6 +120,16 @@ export default function AdminQualityPage() {
     }
   }
 
+  function openRate(workerId = '') {
+    setRateWorkerId(workerId);
+    setShowRateModal(true);
+  }
+
+  function handleRated() {
+    loadRatings();
+    loadPending();
+  }
+
   const periodLabel = entries[0]?.period_label;
 
   return (
@@ -257,7 +150,7 @@ export default function AdminQualityPage() {
             </button>
             <button
               type="button"
-              onClick={() => setShowRateModal(true)}
+              onClick={() => openRate()}
               className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
             >
               <Star size={14} /> Rate Worker
@@ -270,6 +163,48 @@ export default function AdminQualityPage() {
       {recalcMessage && (
         <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-4">
           <CheckCircle size={14} /> {recalcMessage}
+        </div>
+      )}
+
+      {/* Pending ratings for current payroll period */}
+      {pending && pending.pending.length > 0 && (
+        <section aria-label="Pending ratings" className="mb-6">
+          <div className="flex items-center justify-between gap-3 mb-3">
+            <div>
+              <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent">
+                Pending Ratings · {pending.period_label}
+              </h2>
+              <p className="text-[11px] text-theme-muted mt-0.5">
+                {pending.rated_count} of {pending.total_workers} active workers rated this period
+              </p>
+            </div>
+          </div>
+          <div className="glass-panel rounded-2xl border border-gold-accent/20 overflow-hidden">
+            <ul className="divide-y divide-white/[0.05] max-h-56 overflow-y-auto">
+              {pending.pending.map((w) => (
+                <li key={w.worker_id} className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-white/[0.02]">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-white truncate">{w.display_name}</p>
+                    <p className="text-[11px] text-theme-muted truncate">{w.country || '—'}</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => openRate(w.worker_id)}
+                    className="shrink-0 btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5"
+                  >
+                    <Star size={11} /> Rate
+                  </button>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </section>
+      )}
+
+      {pending && pending.pending.length === 0 && pending.total_workers > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-6">
+          <CheckCircle size={14} />
+          All {pending.total_workers} active workers rated for {pending.period_label}.
         </div>
       )}
 
@@ -307,7 +242,7 @@ export default function AdminQualityPage() {
       )}
 
       <p className="text-xs text-theme-muted mt-3">
-        Composite score: 30% assessments · 30% admin ratings · 25% reliability · 15% consistency
+        Composite score: 30% assessments · 30% admin ratings (1–5) · 25% reliability · 15% consistency
       </p>
 
       {/* Recent ratings */}
@@ -353,9 +288,12 @@ export default function AdminQualityPage() {
 
       {showRateModal && (
         <RateWorkerModal
+          key={rateWorkerId || 'new'}
           workers={workers}
+          lockedWorkerId={rateWorkerId || undefined}
+          initialWorkerId={rateWorkerId || undefined}
           onClose={() => setShowRateModal(false)}
-          onSaved={loadRatings}
+          onSaved={handleRated}
         />
       )}
     </div>

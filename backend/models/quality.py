@@ -56,6 +56,10 @@ class QualityIndicatorRating(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("sessions.id"), nullable=True),
     )
+    payroll_period_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True, index=True),
+    )
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

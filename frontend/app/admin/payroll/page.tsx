@@ -184,43 +184,168 @@ function ModalShell({ title, subtitle, onClose, children, wide }: {
   );
 }
 
-// ── New Period Modal ───────────────────────────────────────────────────────────
+// ── New Working Month Modal ────────────────────────────────────────────────────
+
+function toISODate(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const day = String(d.getDate()).padStart(2, '0');
+  return `${y}-${m}-${day}`;
+}
+
+function monthKeyFromDate(iso: string): string {
+  return iso.slice(0, 7); // YYYY-MM
+}
+
+function labelFromMonthKey(ym: string): string {
+  const [y, m] = ym.split('-').map(Number);
+  return new Date(y, m - 1, 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+}
+
+function boundsForMonth(ym: string): { start: string; end: string; label: string } {
+  const [y, m] = ym.split('-').map(Number);
+  const start = new Date(y, m - 1, 1);
+  const end = new Date(y, m, 0); // last day of month
+  return { start: toISODate(start), end: toISODate(end), label: labelFromMonthKey(ym) };
+}
+
+function currentMonthKey(): string {
+  const now = new Date();
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+}
 
 function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated: (p: PayrollPeriod) => void }) {
-  const [label, setLabel] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const initial = boundsForMonth(currentMonthKey());
+  const [monthKey, setMonthKey] = useState(currentMonthKey());
+  const [customDates, setCustomDates] = useState(false);
+  const [label, setLabel] = useState(initial.label);
+  const [labelTouched, setLabelTouched] = useState(false);
+  const [startDate, setStartDate] = useState(initial.start);
+  const [endDate, setEndDate] = useState(initial.end);
   const [currency, setCurrency] = useState<'USD' | 'GBP'>('USD');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  function applyMonth(ym: string, keepCustomRange: boolean) {
+    const b = boundsForMonth(ym);
+    setMonthKey(ym);
+    if (!keepCustomRange) {
+      setStartDate(b.start);
+      setEndDate(b.end);
+    }
+    if (!labelTouched) setLabel(b.label);
+  }
+
+  function handleMonthChange(ym: string) {
+    applyMonth(ym, customDates);
+  }
+
+  function handleToggleCustom(next: boolean) {
+    setCustomDates(next);
+    if (!next) {
+      // Snap back to full calendar month.
+      const b = boundsForMonth(monthKey);
+      setStartDate(b.start);
+      setEndDate(b.end);
+      if (!labelTouched) setLabel(b.label);
+    }
+  }
+
+  function handleStartChange(iso: string) {
+    setStartDate(iso);
+    const ym = monthKeyFromDate(iso);
+    setMonthKey(ym);
+    // Label follows the month the period starts in (e.g. 3 Apr–6 May → April 2026).
+    if (!labelTouched) setLabel(labelFromMonthKey(ym));
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (endDate < startDate) {
+      setError('End date must be on or after the start date.');
+      return;
+    }
     setSaving(true); setError(null);
     try {
       const created = await api.post<PayrollPeriod>('/payroll/periods', {
-        label, start_date: startDate, end_date: endDate, currency, status: 'open',
+        label: label.trim() || labelFromMonthKey(monthKey),
+        start_date: startDate,
+        end_date: endDate,
+        currency,
+        status: 'open',
       });
       onCreated(created);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to create period.');
+      setError(err instanceof Error ? err.message : 'Failed to create working month.');
     } finally { setSaving(false); }
   }
 
   return (
-    <ModalShell title="New Payroll Period" subtitle="Create an open period ready for calculation." onClose={onClose}>
+    <ModalShell
+      title="New Working Month"
+      subtitle="Defaults to a full calendar month. Turn on custom dates if pay runs across month boundaries."
+      onClose={onClose}
+    >
       <form onSubmit={handleSubmit} className="space-y-4">
-        <Field label="Label">
-          <input required value={label} onChange={(e) => setLabel(e.target.value)} placeholder='e.g. "January 2026"' className="input-field" />
+        <Field label="Working Month">
+          <input
+            type="month"
+            required
+            value={monthKey}
+            onChange={(e) => handleMonthChange(e.target.value)}
+            className="input-field"
+          />
+          <p className="text-[10px] text-theme-muted mt-1.5 leading-snug">
+            Name defaults to this month (from the start date). You can edit the label below.
+          </p>
         </Field>
+
+        <label className="flex items-center gap-2.5 cursor-pointer select-none">
+          <input
+            type="checkbox"
+            checked={customDates}
+            onChange={(e) => handleToggleCustom(e.target.checked)}
+            className="accent-emerald-400"
+          />
+          <span className="text-[13px] text-white">Custom date range</span>
+        </label>
+
         <div className="grid grid-cols-2 gap-4">
           <Field label="Start Date">
-            <input type="date" required value={startDate} onChange={(e) => setStartDate(e.target.value)} className="input-field" />
+            <input
+              type="date"
+              required
+              value={startDate}
+              disabled={!customDates}
+              onChange={(e) => handleStartChange(e.target.value)}
+              className="input-field disabled:opacity-60"
+            />
           </Field>
           <Field label="End Date">
-            <input type="date" required value={endDate} onChange={(e) => setEndDate(e.target.value)} className="input-field" />
+            <input
+              type="date"
+              required
+              value={endDate}
+              disabled={!customDates}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="input-field disabled:opacity-60"
+            />
           </Field>
         </div>
+
+        <Field label="Label">
+          <input
+            required
+            value={label}
+            onChange={(e) => { setLabel(e.target.value); setLabelTouched(true); }}
+            placeholder="e.g. April 2026"
+            className="input-field"
+          />
+          <p className="text-[10px] text-theme-muted mt-1.5 leading-snug">
+            Auto-fills from the start month (e.g. 3 Apr – 6 May → April 2026). Edit anytime.
+          </p>
+        </Field>
+
         <Field label="Reporting Currency">
           <div className="relative">
             <select value={currency} onChange={(e) => setCurrency(e.target.value as 'USD' | 'GBP')} className="input-field appearance-none pr-8">
@@ -234,7 +359,7 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
         <div className="flex gap-3 justify-end pt-1">
           <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
           <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-            {saving ? <SpinningDots size="sm" /> : <Plus size={14} />} Create Period
+            {saving ? <SpinningDots size="sm" /> : <Plus size={14} />} Create Working Month
           </button>
         </div>
       </form>
@@ -727,7 +852,7 @@ export default function PayrollWorkbenchPage() {
         description="Run the payroll workflow end-to-end: calculate, adjust costs, approve, push to wallets, and mark paid."
         actions={
           <button type="button" onClick={() => setShowNewPeriod(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-2">
-            <Plus size={15} /> New Period
+            <Plus size={15} /> New Working Month
           </button>
         }
       />
@@ -740,9 +865,9 @@ export default function PayrollWorkbenchPage() {
         <Banner kind="error">{periodsError}</Banner>
       ) : periods.length === 0 ? (
         <div className="glass-panel p-10 text-center">
-          <p className="text-theme-muted text-sm mb-4">No payroll periods yet. Create your first period to get started.</p>
+          <p className="text-theme-muted text-sm mb-4">No working months yet. Create your first period to get started.</p>
           <button type="button" onClick={() => setShowNewPeriod(true)} className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2">
-            <Plus size={15} /> New Period
+            <Plus size={15} /> New Working Month
           </button>
         </div>
       ) : (
