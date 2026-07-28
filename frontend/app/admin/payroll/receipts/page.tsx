@@ -479,7 +479,7 @@ function DeliveryLogTab({ periods }: { periods: PayrollPeriod[] }) {
         </div>
         <div className="relative">
           <select value={periodId} onChange={(e) => setPeriodId(e.target.value)}
-            className="input-field appearance-none pr-8 !py-2 w-56">
+            className="input-field appearance-none pr-8 !py-2 w-full sm:w-56">
             <option value="">Period: All</option>
             {periods.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
           </select>

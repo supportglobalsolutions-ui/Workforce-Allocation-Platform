@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
@@ -36,6 +37,8 @@ class SessionUpdate(SQLModel):
     admin_notes:            Optional[str]                 = None
     start_image_url:        Optional[str]                 = None
     end_image_url:          Optional[str]                 = None
+    image_start_at:         Optional[datetime]            = None
+    image_end_at:           Optional[datetime]            = None
     type_specific_fields:   Optional[dict[str, Any]]      = None
 
 
@@ -51,6 +54,9 @@ class SessionResponse(SessionBase):
     admin_notes:            Optional[str]
     start_image_url:        Optional[str]      = None
     end_image_url:          Optional[str]      = None
+    image_start_at:         Optional[datetime] = None
+    image_end_at:           Optional[datetime] = None
+    evidence_complete:      Optional[bool]     = None
     created_at:             Optional[datetime] = None
     updated_at:             Optional[datetime] = None
 
@@ -58,3 +64,17 @@ class SessionResponse(SessionBase):
     @classmethod
     def _default_type_fields(cls, v: Any) -> dict[str, Any]:
         return v if isinstance(v, dict) else {}
+
+
+class SessionEvidenceUpdate(SQLModel):
+    """Worker submits on-image times (and optionally confirms image URLs already uploaded)."""
+    image_start_at: Optional[datetime] = None
+    image_end_at:   Optional[datetime] = None
+    start_image_url: Optional[str] = None
+    end_image_url:   Optional[str] = None
+
+
+class WorkerHoursTotalsResponse(SQLModel):
+    total_minutes: int
+    total_hours: Decimal
+    sessions: list[SessionResponse]

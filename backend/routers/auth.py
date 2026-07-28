@@ -28,6 +28,7 @@ from models.admin_users import AdminUser
 from models.enums import (
     AccountStatusEnum,
     AdminRoleEnum,
+    EntityStatusEnum,
     WorkerStatusEnum,
     WorkerTypeEnum,
 )
@@ -76,14 +77,38 @@ def _validate_optional_partner_entity(db: Session, role: str, entity_id: Optiona
     return str(entity_id)
 
 
+def _ensure_partner_entity_id(
+    db: Session,
+    *,
+    display_name: str,
+    entity_id: Optional[str],
+) -> str:
+    """Require a partner company id; create a Self company from the display name if missing."""
+    if entity_id:
+        return entity_id
+    name = (display_name or "Partner").strip() or "Partner"
+    existing = db.exec(select(PartnerEntity).where(PartnerEntity.name == name)).first()
+    if existing:
+        return str(existing.id)
+    entity = PartnerEntity(name=name, status=EntityStatusEnum.active, is_self=True)
+    db.add(entity)
+    db.commit()
+    db.refresh(entity)
+    return str(entity.id)
+
+
 def _ensure_login_profile(
     db: Session,
     *,
     uid: str,
     email: str,
     display_name: str,
+    as_partner: bool = False,
+    partner_entity_id: str | None = None,
 ) -> Worker:
-    """Ensure admin_users + workers rows exist so partner can use worker APIs / inbox."""
+    """Ensure admin_users + workers rows exist so partner/worker can use worker APIs / inbox."""
+    from uuid import UUID as UUIDType
+
     admin_row = db.exec(select(AdminUser).where(AdminUser.firebase_uid == uid)).first()
     if not admin_row:
         admin_row = AdminUser(
@@ -98,10 +123,13 @@ def _ensure_login_profile(
         db.refresh(admin_row)
 
     worker = db.exec(select(Worker).where(Worker.admin_user_id == admin_row.id)).first()
+    entity_uuid = UUIDType(partner_entity_id) if partner_entity_id else None
+
     if not worker:
         worker = Worker(
             admin_user_id=admin_row.id,
-            worker_type=WorkerTypeEnum.gs_registered,
+            worker_type=WorkerTypeEnum.partner_worker if as_partner else WorkerTypeEnum.gs_registered,
+            partner_entity_id=entity_uuid if as_partner else None,
             display_name=admin_row.display_name,
             country="Unassigned",
             pay_tier="unassigned",
@@ -109,6 +137,18 @@ def _ensure_login_profile(
             start_date=date.today(),
             work_ready=False,
         )
+        db.add(worker)
+        db.commit()
+        db.refresh(worker)
+    elif as_partner:
+        worker.worker_type = WorkerTypeEnum.partner_worker
+        if entity_uuid:
+            worker.partner_entity_id = entity_uuid
+        if not worker.partner_entity_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Partner accounts require a company link (use Self if independent).",
+            )
         db.add(worker)
         db.commit()
         db.refresh(worker)
@@ -166,6 +206,12 @@ def create_user(
         )
 
     partner_entity_id = _validate_optional_partner_entity(db, body.role, body.partnerEntityId)
+    if body.role == "partner":
+        partner_entity_id = _ensure_partner_entity_id(
+            db,
+            display_name=body.displayName,
+            entity_id=partner_entity_id,
+        )
 
     try:
         user = create_firebase_user(
@@ -184,6 +230,8 @@ def create_user(
             uid=user.uid,
             email=user.email or body.email,
             display_name=user.display_name or body.displayName,
+            as_partner=body.role == "partner",
+            partner_entity_id=partner_entity_id,
         )
 
     return user_to_dict(user)
@@ -313,6 +361,12 @@ def update_user_role(
         )
 
     partner_entity_id = _validate_optional_partner_entity(db, body.role, body.partnerEntityId)
+    if body.role == "partner":
+        partner_entity_id = _ensure_partner_entity_id(
+            db,
+            display_name=target.display_name or (target.email or "").split("@")[0] or "Partner",
+            entity_id=partner_entity_id,
+        )
 
     try:
         set_user_role(uid, body.role, partner_entity_id=partner_entity_id)
@@ -325,6 +379,8 @@ def update_user_role(
             uid=uid,
             email=target.email or f"{uid}@unknown.local",
             display_name=target.display_name or (target.email or "").split("@")[0] or "Partner",
+            as_partner=True,
+            partner_entity_id=partner_entity_id,
         )
 
     return user_to_dict(get_firebase_user(uid))

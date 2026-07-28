@@ -100,6 +100,16 @@ class RateTypeEnum(str, enum.Enum):
     per_task = "per_task"
 
 
+# ── payment_tiers ──────────────────────────────────────────────────────────────
+
+class PaymentTierUnitEnum(str, enum.Enum):
+    per_hour  = "per_hour"
+    per_day   = "per_day"
+    per_week  = "per_week"
+    per_month = "per_month"
+    per_task  = "per_task"
+
+
 # ── payroll_periods ────────────────────────────────────────────────────────────
 
 class PayrollPeriodStatusEnum(str, enum.Enum):
@@ -177,6 +187,7 @@ SessionTypeType      = sa.Enum(SessionTypeEnum,         name="session_type_enum"
 SessionCloseType     = sa.Enum(SessionCloseEnum,        name="session_close_enum",      create_type=True)
 PayrollSessionType   = sa.Enum(PayrollSessionEnum,      name="payroll_session_enum",    create_type=True)
 RateTypeType         = sa.Enum(RateTypeEnum,            name="rate_type_enum",          create_type=True)
+PaymentTierUnitType  = sa.Enum(PaymentTierUnitEnum,     name="payment_tier_unit_enum",  create_type=True)
 PayrollPeriodStatus  = sa.Enum(PayrollPeriodStatusEnum, name="payroll_period_enum",     create_type=True)
 IndicatorInputType   = sa.Enum(IndicatorInputEnum,      name="indicator_input_enum",    create_type=True)
 TicketStatusType     = sa.Enum(TicketStatusEnum,        name="ticket_status_enum",      create_type=True)

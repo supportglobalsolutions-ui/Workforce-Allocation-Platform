@@ -100,6 +100,7 @@ class PayrollWorkerSummaryResponse(SQLModel):
     fx_rate:           Optional[Decimal] = None
     base_currency:     Optional[str] = None
     base_equivalent:   Optional[Decimal] = None
+    admin_locked:      bool = False
     exception_flags:   list[Any] = []
     created_at:        datetime
     updated_at:        datetime
@@ -107,7 +108,10 @@ class PayrollWorkerSummaryResponse(SQLModel):
     worker_country:      Optional[str] = None
     worker_email:        Optional[str] = None
     worker_type:         Optional[str] = None
+    worker_pay_tier:     Optional[str] = None
     period_label:        Optional[str] = None
+    suggested_hours:     Optional[Decimal] = None
+    evidence_incomplete: Optional[bool] = None
 
     @field_validator("exception_flags", mode="before")
     @classmethod
@@ -122,6 +126,38 @@ class PayrollWorkerSummaryUpdate(SQLModel):
     external_cost: Optional[Decimal] = None
     rate_per_hour: Optional[Decimal] = None
     hours_logged:  Optional[Decimal] = None
+    fx_rate:       Optional[Decimal] = None
+    admin_locked:  Optional[bool] = None
+
+
+class PayrollSummaryBulkItem(SQLModel):
+    worker_id:     UUID
+    hours_logged:  Optional[Decimal] = None
+    rate_per_hour: Optional[Decimal] = None
+    bonus:         Optional[Decimal] = None
+    transfer_cost: Optional[Decimal] = None
+    external_cost: Optional[Decimal] = None
+    fx_rate:       Optional[Decimal] = None
+    admin_locked:  Optional[bool] = True
+
+
+class PayrollSummaryBulkRequest(SQLModel):
+    rows: list[PayrollSummaryBulkItem]
+    # When True, create missing summary rows for workers with no prior row.
+    upsert: bool = True
+
+
+class LedgerSheetRow(SQLModel):
+    """One worker line for the anytime finance ledger (may not have a summary yet)."""
+    worker_id: UUID
+    worker_display_name: str
+    worker_country: str
+    worker_type: Optional[str] = None
+    worker_pay_tier: Optional[str] = None
+    partner_entity_id: Optional[UUID] = None
+    suggested_hours: Decimal = Decimal("0")
+    evidence_incomplete: bool = False
+    summary: Optional[PayrollWorkerSummaryResponse] = None
 
 
 # ── CountryCostPool ────────────────────────────────────────────────────────────

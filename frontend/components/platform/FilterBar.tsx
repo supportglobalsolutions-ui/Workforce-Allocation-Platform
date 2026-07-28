@@ -30,7 +30,7 @@ export default function FilterBar({
         <select
           key={f.label}
           onChange={(e) => onFilterChange?.(f.label, e.target.value)}
-          className="px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40"
+          className="px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 w-full sm:w-auto"
         >
           <option value="">{f.label}</option>
           {f.options.map((o) => (

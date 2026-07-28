@@ -1,6 +1,7 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import { usePathname } from 'next/navigation';
 import TopNav from './TopNav';
 import CollapsibleSidebar from './CollapsibleSidebar';
 import SiteFooter from '@/components/layout/SiteFooter';
@@ -12,11 +13,16 @@ interface AppShellProps {
 }
 
 export default function AppShell({ children, role }: AppShellProps) {
+  const pathname = usePathname();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  useEffect(() => {
+    setMobileSidebarOpen(false);
+  }, [pathname]);
 
   const toggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
@@ -52,7 +58,7 @@ export default function AppShell({ children, role }: AppShellProps) {
       </div>
 
       <div
-        className={`flex-1 relative min-h-screen z-10 flex flex-col w-full transition-[margin] duration-300 ease-in-out ${
+        className={`flex-1 relative min-h-screen z-10 flex flex-col w-full min-w-0 transition-[margin] duration-300 ease-in-out ${
           collapsed ? 'md:ml-[72px]' : 'md:ml-[240px]'
         }`}
       >
@@ -63,7 +69,7 @@ export default function AppShell({ children, role }: AppShellProps) {
           onToggleSidebar={toggleSidebar}
           showSidebarToggle
         />
-        <main className="p-4 md:p-6 lg:p-8 flex-1 w-full max-w-[1600px]">{children}</main>
+        <main className="p-4 md:p-6 lg:p-8 flex-1 w-full min-w-0 max-w-[1600px]">{children}</main>
         <SiteFooter />
       </div>
     </div>

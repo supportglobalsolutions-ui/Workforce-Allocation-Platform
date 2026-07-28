@@ -24,7 +24,7 @@ export function AdminSectionTabs({ tabs }: { tabs: SectionTab[] }) {
   if (!tabs.length) return null;
 
   return (
-    <div className="flex flex-wrap gap-1.5 mb-6 p-1 rounded-xl bg-white/[0.04] border border-white/10 w-fit max-w-full">
+    <div className="flex gap-1.5 mb-6 p-1 rounded-xl bg-white/[0.04] border border-white/10 w-full max-w-full overflow-x-auto scrollbar-thin">
       {tabs.map((tab) => {
         const match = tabMatch(tab);
         const active =
@@ -67,10 +67,11 @@ export const QUALITY_TABS: SectionTab[] = [
   { label: 'Training', href: '/admin/training' },
 ];
 
-/** Payouts hub: payroll workbench + wallets / FX / reports. */
+/** Finance hub: period ledger, tiers, wallets / FX / reports. */
 export const PAYROLL_TABS: SectionTab[] = [
+  { label: 'Period ledger', href: '/admin/payroll' },
+  { label: 'Tiers', href: '/admin/payroll/tiers' },
   { label: 'Calendar', href: '/admin/calendar' },
-  { label: 'Payroll', href: '/admin/payroll' },
   { label: 'Calculate', href: '/admin/payroll/calculate' },
   { label: 'Export', href: '/admin/payroll/export' },
   { label: 'Wallets', href: '/admin/wallets' },
@@ -82,6 +83,7 @@ export const PAYROLL_TABS: SectionTab[] = [
 export const PAYROLL_SUBTABS = PAYROLL_TABS;
 /** @deprecated use PAYROLL_TABS */
 export const WALLETS_TABS = PAYROLL_TABS;
+export const FINANCE_HUB_TABS = PAYROLL_TABS;
 
 export const SYSTEM_TABS: SectionTab[] = [
   { label: 'Settings', href: '/admin/settings' },

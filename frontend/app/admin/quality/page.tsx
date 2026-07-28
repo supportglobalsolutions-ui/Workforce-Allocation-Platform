@@ -235,8 +235,8 @@ export default function AdminQualityPage() {
             <p className="text-sm text-theme-muted">No ratings recorded yet.</p>
           </div>
         ) : (
-          <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="glass-panel rounded-2xl border border-white/5 overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="border-b border-white/[0.06] bg-white/[0.02]">
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>

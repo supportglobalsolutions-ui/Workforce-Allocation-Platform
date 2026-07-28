@@ -199,7 +199,7 @@ export default function ProfilePage() {
           <div className="border-t border-theme mt-7 mb-6 mx-2 md:mx-10" />
 
           {/* Stats row */}
-          <div className="grid grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Stat value={worker.pay_tier} label="Pay Tier" />
             <Stat
               value={

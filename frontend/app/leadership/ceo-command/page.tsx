@@ -63,7 +63,7 @@ export default function CeoCommandCenterPage() {
         title="CEO Command Center"
         description="Executive command view — real-time organisation state across workers, sessions, revenue, and quality."
       />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <KpiCard label="Workers Online" value={workersOnline} icon={Users} />
         <KpiCard label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
         <KpiCard label="Revenue" value={revenue} icon={DollarSign} accent="gold" />

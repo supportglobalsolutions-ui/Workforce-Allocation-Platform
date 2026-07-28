@@ -46,7 +46,7 @@ export default function UtilizationDashboardPage() {
         <p className="text-danger text-sm mt-4">{error}</p>
       ) : (
         <>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
             <KpiCard label="Avg Utilization" value={machines.length > 0 ? `${avgUtil}%` : '—'} icon={Zap} />
             <KpiCard label="Active Machines" value={activeCount} icon={Clock} />
             <KpiCard label="Idle / Free" value={idleCount} icon={Server} accent="gold" />

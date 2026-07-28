@@ -215,8 +215,8 @@ export default function MySchedulePage() {
                 <p className="text-sm text-theme-muted">No upcoming shifts scheduled.</p>
               </div>
             ) : (
-              <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
-                <table className="w-full text-sm">
+              <div className="glass-panel rounded-2xl border border-white/5 overflow-x-auto">
+                <table className="w-full text-sm min-w-[520px]">
                   <thead>
                     <tr className="border-b border-white/5 bg-white/[0.02]">
                       {['Start', 'End', 'Status', 'Rejection Reason'].map((h) => (

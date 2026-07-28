@@ -275,6 +275,14 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
 
         summary = existing_summaries.get(worker_id)
         bonus = summary.bonus if summary else Decimal("0")
+        # Sticky admin ledger: do not overwrite locked rows on recalculate.
+        if summary and getattr(summary, "admin_locked", False):
+            summary.bonus = bonus
+            summary.exception_flags = list({*(summary.exception_flags or []), *flags})
+            summary.updated_at = datetime.now(timezone.utc)
+            db.add(summary)
+            continue
+
         # Manual per-worker cost overrides survive recalculation when no pool exists.
         if summary and not pool:
             transfer_cost = summary.transfer_cost
@@ -322,13 +330,16 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
 def recompute_summary(db: Session, summary: PayrollWorkerSummary) -> PayrollWorkerSummary:
     """Recompute derived fields after an admin cost-evaluation edit."""
     period = db.get(PayrollPeriod, summary.payroll_period_id)
-    summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour) if summary.rate_per_hour else summary.base_pay
+    summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour) if summary.rate_per_hour is not None else summary.base_pay
     summary.gross_earned = _q(summary.base_pay + summary.bonus)
     summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
     summary.final_net = _q(summary.gross_earned - summary.total_deductions)
     if period:
-        fx = _fx_to_local(db, period, summary.local_currency)
-        summary.fx_rate = fx
+        if summary.admin_locked and summary.fx_rate and summary.fx_rate > 0:
+            fx = summary.fx_rate
+        else:
+            fx = _fx_to_local(db, period, summary.local_currency)
+            summary.fx_rate = fx
         summary.base_currency = period.currency
         summary.base_equivalent = _q(summary.final_net / fx) if fx and fx > 0 else None
     flags = [f for f in (summary.exception_flags or []) if f != "negative_net"]
@@ -354,8 +365,11 @@ def approve_period(db: Session, period_id: UUID, admin_user_id: UUID) -> Payroll
         select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
     ).all()
     for summary in summaries:
-        fx = _fx_to_local(db, period, summary.local_currency)
-        summary.fx_rate = fx
+        if summary.admin_locked and summary.fx_rate and summary.fx_rate > 0:
+            fx = summary.fx_rate
+        else:
+            fx = _fx_to_local(db, period, summary.local_currency)
+            summary.fx_rate = fx
         summary.base_currency = period.currency
         summary.base_equivalent = _q(summary.final_net / fx) if fx and fx > 0 else None
         db.add(summary)

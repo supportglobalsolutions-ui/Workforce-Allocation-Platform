@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -155,6 +155,11 @@ class PayrollWorkerSummary(SQLModel, table=True):
     fx_rate: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(18, 6), nullable=True))
     base_currency: Optional[str] = Field(default=None, sa_column=Column(String(3), nullable=True))
     base_equivalent: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
+    # When True, calculate_period keeps admin hours/rate/costs/fx instead of overwriting.
+    admin_locked: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
     exception_flags: list[Any] = Field(
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),

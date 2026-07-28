@@ -69,7 +69,7 @@ export default function PagesIndex() {
           </div>
         </div>
 
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-10">
+        <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 mb-10">
           {PORTAL_ORDER.map((portal) => {
             const count = PAGES.filter((p) => p.portal === portal).length;
             return (

@@ -32,11 +32,15 @@ interface Worker {
   work_ready: boolean;
   admin_user_id: string | null;
   pay_tier: string;
+  pay_amount?: number | string | null;
+  pay_frequency?: string | null;
   status: string;
   start_date: string;
   created_at: string;
   updated_at: string;
   email: string | null;
+  assigned_rdp_id?: string | null;
+  assigned_rdp_nickname?: string | null;
 }
 
 interface WorkSession {
@@ -51,7 +55,7 @@ interface WorkSession {
   end_image_url: string | null;
 }
 
-interface RDPResource { id: string; nickname: string; }
+interface RDPResource { id: string; nickname: string; status?: string; assigned_worker_id?: string | null; }
 
 // Session-type labels (for work sessions only)
 const TYPE_LABELS: Record<string, string> = {
@@ -118,20 +122,34 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
 
 type WorkerModalTab = 'profile' | 'sessions';
 
-/** Admin-only fields — identity (name, username, country) is edited by the worker. */
+/** Admin editable fields — personal, payment, assignment (no company for GS members). */
 interface WorkerAdminForm {
+  display_name: string;
+  username: string;
+  country: string;
   pay_tier: string;
+  pay_amount: string;
+  pay_frequency: '' | 'per_month' | 'per_task';
   status: string;
   start_date: string;
   work_ready: boolean;
+  assigned_rdp_id: string;
 }
 
 function adminFormFromWorker(w: Worker): WorkerAdminForm {
   return {
+    display_name: w.display_name ?? '',
+    username: w.username ?? '',
+    country: w.country ?? '',
     pay_tier: w.pay_tier ?? '',
+    pay_amount: w.pay_amount != null ? String(w.pay_amount) : '',
+    pay_frequency: (w.pay_frequency === 'per_month' || w.pay_frequency === 'per_task')
+      ? w.pay_frequency
+      : '',
     status: w.status,
     start_date: (w.start_date ?? '').slice(0, 10),
     work_ready: w.work_ready,
+    assigned_rdp_id: w.assigned_rdp_id ?? '',
   };
 }
 
@@ -146,21 +164,29 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
   const [banLoading, setBanLoading] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
 
-  // Admin controls (ops fields only — not identity)
+  // Admin controls
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<WorkerAdminForm>(() => adminFormFromWorker(worker));
   const [editSaving, setEditSaving] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
   const [showRate, setShowRate] = useState(false);
+  const [rdpOptions, setRdpOptions] = useState<RDPResource[] | null>(null);
+  const [paymentTiers, setPaymentTiers] = useState<{ name: string }[] | null>(null);
 
   async function handleSaveEdit() {
     setEditSaving(true); setEditError(null);
     try {
       const body = {
-        pay_tier: editForm.pay_tier,
+        display_name: editForm.display_name.trim(),
+        username: editForm.username.trim() || null,
+        country: editForm.country.trim() || 'Unassigned',
+        pay_tier: editForm.pay_tier.trim() || 'unassigned',
+        pay_amount: editForm.pay_amount === '' ? null : Number(editForm.pay_amount),
+        pay_frequency: editForm.pay_frequency || null,
         status: editForm.status,
         start_date: editForm.start_date,
         work_ready: editForm.work_ready,
+        assigned_rdp_id: editForm.assigned_rdp_id || null,
       };
       const resp = await api.patch<Partial<Worker>>(`/workers/${worker.id}`, body);
       onUpdated({ ...worker, ...body, ...resp } as Worker);
@@ -169,6 +195,18 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
       setEditError(e instanceof Error ? e.message : 'Failed to save worker.');
     } finally { setEditSaving(false); }
   }
+
+  useEffect(() => {
+    if (!editing || rdpOptions !== null) return;
+    api.get<RDPResource[]>('/rdp').then(setRdpOptions).catch(() => setRdpOptions([]));
+  }, [editing, rdpOptions]);
+
+  useEffect(() => {
+    if (!editing || paymentTiers !== null) return;
+    api.get<{ name: string; is_active: boolean }[]>('/payment-tiers?active_only=true')
+      .then((t) => setPaymentTiers(t.map((x) => ({ name: x.name }))))
+      .catch(() => setPaymentTiers([]));
+  }, [editing, paymentTiers]);
 
   useEffect(() => {
     if (!worker.admin_user_id || !worker.email) return;
@@ -277,26 +315,30 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
               <div className="px-5 py-4 space-y-4">
                 <div>
                   <SectionLabel>Identity</SectionLabel>
-                  <div className="grid grid-cols-2 gap-x-5 gap-y-3.5">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
                     <DetailField label="Display Name" value={worker.display_name} />
                     <DetailField label="Username" value={worker.username || '—'} />
                     <DetailField label="Country" value={worker.country || '—'} />
                     <DetailField label="Worker Type" value={<WorkerTypeBadge worker={worker} />} />
-                    {worker.worker_type === 'partner_worker' && worker.partner_entity_name && (
-                      <DetailField label="Partner Company" value={worker.partner_entity_name} />
-                    )}
                     <DetailField label="Status" value={<StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />} />
                     <DetailField label="Work Ready" value={<WorkReadyBadge ready={worker.work_ready} />} />
                   </div>
                 </div>
 
                 <div className="border-t border-white/[0.06] pt-4">
-                  <SectionLabel>Employment</SectionLabel>
-                  <div className="grid grid-cols-2 gap-x-5 gap-y-3.5">
+                  <SectionLabel>Payment & assignment</SectionLabel>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
                     <DetailField label="Pay Tier" value={worker.pay_tier || '—'} />
+                    <DetailField
+                      label="Pay amount"
+                      value={
+                        worker.pay_amount != null
+                          ? `${worker.pay_amount}${worker.pay_frequency === 'per_month' ? ' / month' : worker.pay_frequency === 'per_task' ? ' / task' : ''}`
+                          : '—'
+                      }
+                    />
+                    <DetailField label="Assigned RDP" value={worker.assigned_rdp_nickname || '—'} />
                     <DetailField label="Start Date" value={new Date(worker.start_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} />
-                    <DetailField label="Created" value={new Date(worker.created_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} />
-                    <DetailField label="Last Updated" value={new Date(worker.updated_at).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' })} />
                   </div>
                 </div>
 
@@ -332,33 +374,109 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
 
             {tab === 'profile' && editing && (
               <div className="px-5 py-4 space-y-4">
-                <SectionLabel>Admin Controls</SectionLabel>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Pay Tier</label>
-                    <input value={editForm.pay_tier}
-                      onChange={(e) => setEditForm((f) => ({ ...f, pay_tier: e.target.value }))}
-                      className="input-field" />
-                  </div>
-                  <div>
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Status</label>
-                    <div className="relative">
-                      <select value={editForm.status}
-                        onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
-                        className="input-field appearance-none pr-8 capitalize">
-                        {['active', 'inactive', 'suspended'].map((s) => <option key={s} value={s}>{s}</option>)}
-                      </select>
-                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-                    </div>
-                    <p className="text-[10px] text-theme-muted mt-1 leading-snug">
-                      Only <span className="text-white/70">active</span> can claim machines. Suspended/inactive keep login but block new sessions.
-                    </p>
-                  </div>
+                <SectionLabel>Personal details</SectionLabel>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                   <div className="col-span-2">
-                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Start Date</label>
-                    <input type="date" value={editForm.start_date}
-                      onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))}
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Display Name</label>
+                    <input value={editForm.display_name}
+                      onChange={(e) => setEditForm((f) => ({ ...f, display_name: e.target.value }))}
                       className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Username</label>
+                    <input value={editForm.username}
+                      onChange={(e) => setEditForm((f) => ({ ...f, username: e.target.value }))}
+                      className="input-field" placeholder="Optional" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Country</label>
+                    <input value={editForm.country}
+                      onChange={(e) => setEditForm((f) => ({ ...f, country: e.target.value }))}
+                      className="input-field" />
+                  </div>
+                </div>
+
+                <div className="border-t border-white/[0.06] pt-4">
+                  <SectionLabel>Payment</SectionLabel>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Amount</label>
+                      <input type="number" min="0" step="0.01" value={editForm.pay_amount}
+                        onChange={(e) => setEditForm((f) => ({ ...f, pay_amount: e.target.value }))}
+                        className="input-field" placeholder="0.00" />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Frequency</label>
+                      <div className="relative">
+                        <select value={editForm.pay_frequency}
+                          onChange={(e) => setEditForm((f) => ({
+                            ...f,
+                            pay_frequency: e.target.value as WorkerAdminForm['pay_frequency'],
+                          }))}
+                          className="input-field appearance-none pr-8">
+                          <option value="">Unset</option>
+                          <option value="per_month">Per month</option>
+                          <option value="per_task">Per task</option>
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Pay Tier</label>
+                      <div className="relative">
+                        <select
+                          value={editForm.pay_tier}
+                          onChange={(e) => setEditForm((f) => ({ ...f, pay_tier: e.target.value }))}
+                          className="input-field appearance-none pr-8"
+                        >
+                          <option value="unassigned">unassigned</option>
+                          {(paymentTiers ?? []).map((t) => (
+                            <option key={t.name} value={t.name}>{t.name}</option>
+                          ))}
+                          {editForm.pay_tier &&
+                            editForm.pay_tier !== 'unassigned' &&
+                            !(paymentTiers ?? []).some((t) => t.name === editForm.pay_tier) && (
+                              <option value={editForm.pay_tier}>{editForm.pay_tier} (current)</option>
+                            )}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                      </div>
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Status</label>
+                      <div className="relative">
+                        <select value={editForm.status}
+                          onChange={(e) => setEditForm((f) => ({ ...f, status: e.target.value }))}
+                          className="input-field appearance-none pr-8 capitalize">
+                          {['active', 'inactive', 'suspended'].map((s) => <option key={s} value={s}>{s}</option>)}
+                        </select>
+                        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Start Date</label>
+                      <input type="date" value={editForm.start_date}
+                        onChange={(e) => setEditForm((f) => ({ ...f, start_date: e.target.value }))}
+                        className="input-field" />
+                    </div>
+                  </div>
+                </div>
+
+                <div className="border-t border-white/[0.06] pt-4">
+                  <SectionLabel>Assigned RDP</SectionLabel>
+                  <div className="relative">
+                    <select value={editForm.assigned_rdp_id}
+                      onChange={(e) => setEditForm((f) => ({ ...f, assigned_rdp_id: e.target.value }))}
+                      className="input-field appearance-none pr-8">
+                      <option value="">None</option>
+                      {(rdpOptions ?? []).map((m) => (
+                        <option key={m.id} value={m.id}>
+                          {m.nickname}
+                          {m.assigned_worker_id && m.assigned_worker_id !== worker.id ? ' (assigned)' : ''}
+                        </option>
+                      ))}
+                    </select>
+                    <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
                   </div>
                 </div>
 
@@ -370,9 +488,6 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                     <span className="text-[13px] text-white">Cleared to work</span>
                     <WorkReadyBadge ready={editForm.work_ready} />
                   </label>
-                  <p className="text-[10px] text-theme-muted mt-1.5 leading-snug pl-6">
-                    Onboarding gate — uncheck until training is done. Blocks machine claims even if status is active.
-                  </p>
                 </div>
 
                 {editError && (
@@ -384,7 +499,7 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                 <div className="flex gap-2 justify-end border-t border-white/[0.06] pt-3">
                   <button type="button" onClick={() => { setEditing(false); setEditError(null); }}
                     className="btn-secondary text-xs py-2 px-3.5">Cancel</button>
-                  <button type="button" onClick={handleSaveEdit} disabled={editSaving}
+                  <button type="button" onClick={handleSaveEdit} disabled={editSaving || !editForm.display_name.trim()}
                     className="btn-primary text-xs py-2 px-3.5 flex items-center gap-2 disabled:opacity-60">
                     {editSaving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
                     Save
@@ -520,14 +635,14 @@ export default function WorkersPage() {
       />
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant" />
           <input
             type="text"
             placeholder="Search name, country, pay tier…"
             value={workerSearch}
             onChange={(e) => setWorkerSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-56"
+            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-full sm:w-56"
           />
           {workerSearch && (
             <button type="button" onClick={() => setWorkerSearch('')}
@@ -541,7 +656,7 @@ export default function WorkersPage() {
           { label: 'Status', options: ['active', 'inactive', 'suspended'], setter: setStatusFilter, value: statusFilter },
         ].map(({ label, options, setter, value }) => (
           <select key={label} value={value} onChange={(e) => setter(e.target.value)}
-            className="px-3 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 capitalize">
+            className="px-3 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 capitalize w-full sm:w-auto">
             <option value="">{label}: All</option>
             {options.map((o) => <option key={o} value={o} className="capitalize">{o}</option>)}
           </select>

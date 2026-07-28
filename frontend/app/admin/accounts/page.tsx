@@ -6,6 +6,7 @@ import {
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
+import AddPartnerModal from '@/components/admin/AddPartnerModal';
 import { api } from '@/lib/api';
 import {
   ManagedUser,
@@ -283,249 +284,6 @@ function PromoteAccountModal({
   );
 }
 
-type PartnerModalMode = 'create' | 'promote';
-
-/** Create a partner person or promote an existing account to partner. */
-function PartnerAccountModal({
-  accounts,
-  actorUid,
-  actingOn,
-  creating,
-  onClose,
-  onCreate,
-  onPromote,
-}: {
-  accounts: ManagedUser[];
-  actorUid: string | null;
-  actingOn: string | null;
-  creating: boolean;
-  onClose: () => void;
-  onCreate: (data: {
-    email: string;
-    password: string;
-    displayName: string;
-    partnerEntityId: string | null;
-  }) => void;
-  onPromote: (uid: string, partnerEntityId: string | null) => void;
-}) {
-  const [mode, setMode] = useState<PartnerModalMode>('create');
-  const [query, setQuery] = useState('');
-  const [partnerEntityId, setPartnerEntityId] = useState('');
-  const [partners, setPartners] = useState<PartnerOption[] | null>(null);
-  const [form, setForm] = useState({ email: '', password: '', displayName: '' });
-  const [formError, setFormError] = useState('');
-
-  useEffect(() => {
-    api.get<PartnerOption[]>('/partners')
-      .then(setPartners)
-      .catch(() => setPartners([]));
-  }, []);
-
-  const candidates = useMemo(() => {
-    return accounts.filter((u) => {
-      if (u.status !== 'approved') return false;
-      if (u.role === 'partner' || u.role === 'super_admin') return false;
-      if (actorUid && u.uid === actorUid) return false;
-      return true;
-    });
-  }, [accounts, actorUid]);
-
-  const filtered = useMemo(() => {
-    const q = query.trim().toLowerCase();
-    return candidates.filter(
-      (u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
-    );
-  }, [candidates, query]);
-
-  function handleCreateSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setFormError('');
-    if (form.password.length < 8) {
-      setFormError('Password must be at least 8 characters.');
-      return;
-    }
-    onCreate({
-      email: form.email,
-      password: form.password,
-      displayName: form.displayName,
-      partnerEntityId: partnerEntityId || null,
-    });
-  }
-
-  return (
-    <div
-      className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
-    >
-      <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[90vh] flex flex-col">
-        <div className="h-1 bg-gradient-to-r from-sky-400 via-sky-500 to-emerald-400" />
-        <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100 shrink-0">
-          <div>
-            <p className="text-[15px] font-bold text-gray-900">Partner account</p>
-            <p className="text-xs text-gray-400 mt-0.5">
-              A partner is a person (external work). Same worker portal; optional company link.
-            </p>
-          </div>
-          <button
-            type="button"
-            onClick={onClose}
-            className="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors"
-          >
-            <X size={14} />
-          </button>
-        </div>
-
-        <div className="px-6 pt-3 pb-3 space-y-3 border-b border-gray-100 shrink-0">
-          <div className="flex items-center gap-1 bg-gray-100 rounded-xl p-1">
-            <button
-              type="button"
-              onClick={() => setMode('create')}
-              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
-                mode === 'create' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              Create new
-            </button>
-            <button
-              type="button"
-              onClick={() => setMode('promote')}
-              className={`flex-1 px-3 py-2 rounded-lg text-xs font-semibold transition-colors ${
-                mode === 'promote' ? 'bg-white text-gray-900 shadow-sm' : 'text-gray-500 hover:text-gray-800'
-              }`}
-            >
-              Promote existing
-            </button>
-          </div>
-
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-              Company <span className="normal-case tracking-normal font-medium">(optional)</span>
-            </p>
-            <div className="relative">
-              <select
-                value={partnerEntityId}
-                onChange={(e) => setPartnerEntityId(e.target.value)}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-sky-400"
-              >
-                <option value="">No company</option>
-                {(partners ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>{p.name}</option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
-            </div>
-          </div>
-        </div>
-
-        {mode === 'create' ? (
-          <form onSubmit={handleCreateSubmit} className="px-6 py-4 space-y-3 overflow-y-auto flex-1">
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Display name</label>
-              <input
-                required
-                value={form.displayName}
-                onChange={(e) => setForm((f) => ({ ...f, displayName: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
-                placeholder="Full name"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Email</label>
-              <input
-                type="email"
-                required
-                value={form.email}
-                onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
-                placeholder="partner@example.com"
-              />
-            </div>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 block">Password</label>
-              <input
-                type="password"
-                required
-                minLength={8}
-                value={form.password}
-                onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))}
-                className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
-                placeholder="Min 8 characters"
-              />
-            </div>
-            {formError && (
-              <div className="flex items-center gap-2 text-xs text-red-600">
-                <AlertCircle size={14} /> {formError}
-              </div>
-            )}
-            <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={onClose} className="px-4 py-2 rounded-xl text-sm font-semibold text-gray-600 hover:bg-gray-100">
-                Cancel
-              </button>
-              <button
-                type="submit"
-                disabled={creating}
-                className="px-4 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-sm font-bold disabled:opacity-50 flex items-center gap-2"
-              >
-                {creating ? <SpinningDots size="sm" /> : <UserPlus size={14} />}
-                Create Partner
-              </button>
-            </div>
-          </form>
-        ) : (
-          <>
-            <div className="px-6 pt-3 pb-2 shrink-0">
-              <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
-                <input
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="Search name or email…"
-                  className="w-full pl-9 pr-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-sky-400"
-                />
-              </div>
-            </div>
-            <div className="overflow-y-auto flex-1">
-              {filtered.length === 0 ? (
-                <p className="text-sm text-gray-400 text-center py-12 px-6">
-                  {candidates.length === 0 ? 'No accounts available to promote.' : 'No accounts match your search.'}
-                </p>
-              ) : (
-                <ul className="divide-y divide-gray-100">
-                  {filtered.map((u) => {
-                    const busy = actingOn === u.uid;
-                    return (
-                      <li key={u.uid} className="px-6 py-3.5 flex items-center gap-3 hover:bg-gray-50/80">
-                        <div className="min-w-0 flex-1">
-                          <p className="text-sm font-semibold text-gray-900 truncate">{u.displayName || '—'}</p>
-                          <p className="text-xs text-gray-400 truncate">{u.email}</p>
-                          <div className="mt-1"><RoleBadge role={u.role} /></div>
-                        </div>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => onPromote(u.uid, partnerEntityId || null)}
-                          className="shrink-0 px-3 py-2 rounded-xl bg-sky-500 hover:bg-sky-600 text-white text-[11px] font-bold uppercase tracking-wider transition-colors disabled:opacity-40 flex items-center gap-1.5"
-                        >
-                          {busy ? <SpinningDots size="sm" /> : <Briefcase size={12} />}
-                          Make partner
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </div>
-            <div className="px-6 py-3 border-t border-gray-100 text-[11px] text-gray-400 shrink-0">
-              {filtered.length} of {candidates.length} account{candidates.length !== 1 ? 's' : ''}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-}
-
 interface AccountModalProps {
   user: ManagedUser;
   actorRole: AuthRole;
@@ -616,7 +374,7 @@ function AccountDetailModal({
         <div className="px-6 py-5 space-y-5">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Account Info</p>
-            <div className="grid grid-cols-2 gap-x-6 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</p>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -791,6 +549,7 @@ export default function AccountsPage() {
   const actorRole = (session?.authRole ?? 'user') as AuthRole;
   const actorUid = session?.uid ?? null;
   const allAssignable = assignableRoles(actorRole);
+  // Inline "New account" form: Worker / Ops Lead / Executive (Partner uses Add Partner modal).
   const createRoleOptions = allAssignable.filter((r) => r !== 'partner');
   const canCreate = createRoleOptions.length > 0;
   const canPromote = allAssignable.some((r) => r === 'admin' || r === 'super_admin');
@@ -813,11 +572,11 @@ export default function AccountsPage() {
     password: '',
     displayName: '',
     role: (createRoleOptions.includes('admin') ? 'admin' : createRoleOptions[0] ?? 'admin') as AuthRole,
+    partnerEntityId: '',
   });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
   const [createSuccess, setCreateSuccess] = useState('');
-
   async function loadUsers() {
     setLoading(true); setError('');
     try {
@@ -878,13 +637,16 @@ export default function AccountsPage() {
     return createRoleOptions[0] ?? 'admin';
   }
 
-  function openCreate() {
-    setShowCreate((v) => !v);
+  function openCreate(preferredRole?: AuthRole) {
+    setShowCreate(true);
     setShowPromote(false);
     setShowPartner(false);
     setCreateError('');
     setCreateSuccess('');
-    setForm((f) => ({ ...f, role: defaultRoleForTab(activeTab === 'partner' ? 'ops_lead' : activeTab) }));
+    const role = preferredRole && createRoleOptions.includes(preferredRole)
+      ? preferredRole
+      : defaultRoleForTab(activeTab);
+    setForm((f) => ({ ...f, role, partnerEntityId: '' }));
   }
 
   async function handleCreate(e: React.FormEvent) {
@@ -896,13 +658,19 @@ export default function AccountsPage() {
     setCreating(true); setCreateError(''); setCreateSuccess('');
     const role = form.role;
     try {
-      const created = await apiCreateUser(form.email, form.password, form.displayName, role);
+      const created = await apiCreateUser(
+        form.email,
+        form.password,
+        form.displayName,
+        role,
+      );
       setCreateSuccess(`${ROLE_DISPLAY[role]} account created for ${created.email}`);
       setForm({
         email: '',
         password: '',
         displayName: '',
-        role: defaultRoleForTab(activeTab === 'partner' ? 'ops_lead' : activeTab),
+        role: defaultRoleForTab(activeTab),
+        partnerEntityId: '',
       });
       setShowCreate(false);
       if (role === 'admin') setActiveTab('ops_lead');
@@ -910,30 +678,6 @@ export default function AccountsPage() {
       await loadUsers();
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create account.');
-    } finally { setCreating(false); }
-  }
-
-  async function handleCreatePartner(data: {
-    email: string;
-    password: string;
-    displayName: string;
-    partnerEntityId: string | null;
-  }) {
-    setCreating(true); setActionError(''); setCreateSuccess('');
-    try {
-      const created = await apiCreateUser(
-        data.email,
-        data.password,
-        data.displayName,
-        'partner',
-        data.partnerEntityId,
-      );
-      setCreateSuccess(`Partner account created for ${created.email}`);
-      setShowPartner(false);
-      setActiveTab('partner');
-      await loadUsers();
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to create partner.');
     } finally { setCreating(false); }
   }
 
@@ -1012,7 +756,7 @@ export default function AccountsPage() {
     <div>
       <PageHeader
         title="Accounts"
-        description="Create accounts with a role claim, manage Partners, approve signups, and promote or demote."
+        description="Create accounts, manage Partners (same as Partners page), approve signups, and promote or demote."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
@@ -1053,11 +797,12 @@ export default function AccountsPage() {
                 setShowCreate(false);
                 setShowPromote(false);
                 setActionError('');
+                setCreateSuccess('');
               }}
-              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
             >
               <Briefcase size={15} />
-              Partner account
+              Add Partner
             </button>
           )}
           {canPromote && (
@@ -1073,8 +818,14 @@ export default function AccountsPage() {
           {canCreate && (
             <button
               type="button"
-              onClick={openCreate}
-              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
+              onClick={() => {
+                if (showCreate) {
+                  setShowCreate(false);
+                  return;
+                }
+                openCreate();
+              }}
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
             >
               <UserPlus size={15} />
               New account
@@ -1088,7 +839,7 @@ export default function AccountsPage() {
           <h2 className="text-sm font-bold text-white mb-1">New account</h2>
           <p className="text-xs text-theme-muted mb-4">
             Choose a role — it is written as a Firebase custom claim on create so portal access matches immediately.
-            To change an existing account, use Promote.
+            For Partner logins, use Add Partner.
           </p>
           <form onSubmit={handleCreate} className="grid sm:grid-cols-2 gap-4">
             <div>
@@ -1111,7 +862,7 @@ export default function AccountsPage() {
                 <select
                   required
                   value={form.role}
-                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AuthRole }))}
+                  onChange={(e) => setForm((f) => ({ ...f, role: e.target.value as AuthRole, partnerEntityId: '' }))}
                   className="input-field appearance-none pr-8"
                 >
                   {createRoleOptions.map((r) => (
@@ -1150,13 +901,13 @@ export default function AccountsPage() {
       )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <input
             type="text"
             placeholder="Search name or email…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-3 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-56"
+            className="pl-3 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-full sm:w-56"
           />
         </div>
         <span className="text-xs text-theme-muted ml-1">
@@ -1171,8 +922,8 @@ export default function AccountsPage() {
           <AlertCircle size={16} /> {error}
         </div>
       ) : (
-        <div className="glass-panel overflow-hidden">
-          <table className="w-full text-sm">
+        <div className="glass-panel overflow-x-auto">
+          <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="border-b border-white/[0.06]">
                 <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">
@@ -1268,14 +1019,18 @@ export default function AccountsPage() {
       )}
 
       {showPartner && (
-        <PartnerAccountModal
+        <AddPartnerModal
           accounts={allUsers}
           actorUid={actorUid}
           actingOn={actingOn}
-          creating={creating}
           onClose={() => setShowPartner(false)}
-          onCreate={handleCreatePartner}
           onPromote={(uid, partnerEntityId) => handleRoleChange(uid, 'partner', partnerEntityId)}
+          onCreated={async () => {
+            setShowPartner(false);
+            setActiveTab('partner');
+            setCreateSuccess('Partner account created.');
+            await loadUsers();
+          }}
         />
       )}
     </div>

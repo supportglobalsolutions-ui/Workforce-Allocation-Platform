@@ -368,7 +368,7 @@ export default function WorkingPeriodCalendarPage() {
                           <div
                             key={ymd}
                             className={[
-                              'relative aspect-square rounded-xl flex flex-col items-center justify-center text-sm transition-colors',
+                              'relative aspect-square rounded-lg sm:rounded-xl flex flex-col items-center justify-center text-xs sm:text-sm transition-colors',
                               inRange
                                 ? 'bg-emerald-accent/15 text-white border border-emerald-accent/25'
                                 : 'text-theme-muted/50',
@@ -378,12 +378,12 @@ export default function WorkingPeriodCalendarPage() {
                               isToday && !isStart && !isEnd ? 'outline outline-1 outline-white/30' : '',
                             ].join(' ')}
                           >
-                            <span className={`font-semibold tabular-nums ${isStart || isEnd ? 'text-base' : ''}`}>
+                            <span className={`font-semibold tabular-nums ${isStart || isEnd ? 'text-sm sm:text-base' : ''}`}>
                               {day}
                             </span>
                             {(isStart || isEnd) && (
                               <span
-                                className={`absolute bottom-1 left-1/2 -translate-x-1/2 text-[8px] font-black uppercase tracking-wide leading-none ${
+                                className={`absolute bottom-0.5 sm:bottom-1 left-1/2 -translate-x-1/2 text-[7px] sm:text-[8px] font-black uppercase tracking-wide leading-none hidden sm:inline ${
                                   isStart ? 'text-emerald-accent' : 'text-gold-accent'
                                 }`}
                               >

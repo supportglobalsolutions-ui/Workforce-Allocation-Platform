@@ -41,7 +41,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <CalendarDays size={18} />, label: 'Shifts', href: '/admin/shifts' },
     { icon: <Trophy size={18} />, label: 'Quality', href: '/admin/quality' },
     { icon: <CalendarRange size={18} />, label: 'Calendar', href: '/admin/calendar' },
-    { icon: <DollarSign size={18} />, label: 'Payouts', href: '/admin/payroll', shortLabel: 'Pay' },
+    { icon: <DollarSign size={18} />, label: 'Finance', href: '/admin/payroll', shortLabel: 'Finance' },
     { icon: <Mail size={18} />, label: 'Communications', href: '/admin/payroll/receipts', shortLabel: 'Comms' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/admin/notifications', shortLabel: 'Alerts' },
     { icon: <Settings size={18} />, label: 'Settings', href: '/admin/settings' },
@@ -67,7 +67,7 @@ export const PORTAL_TOP_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <Users size={16} />, label: 'Workers', href: '/admin/workers' },
     { icon: <Monitor size={16} />, label: 'RDP', href: '/admin/rdp' },
     { icon: <Activity size={16} />, label: 'Live', href: '/admin/live-sessions' },
-    { icon: <DollarSign size={16} />, label: 'Payouts', href: '/admin/payroll' },
+    { icon: <DollarSign size={16} />, label: 'Finance', href: '/admin/payroll' },
   ],
   leadership: [
     { icon: <Landmark size={16} />, label: 'CEO', href: '/leadership/ceo-command' },

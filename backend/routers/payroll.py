@@ -1,7 +1,8 @@
 import csv
 import io
 import zipfile
-from datetime import date, datetime, timezone
+from datetime import date, datetime, time, timezone
+from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
@@ -10,24 +11,28 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import require_admin, require_user
 from models.admin_users import AdminUser
-from models.enums import PayrollPeriodStatusEnum
+from models.enums import PayrollPeriodStatusEnum, WorkerStatusEnum
 from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
 from schemas.payroll import (
     CountryCostPoolResponse,
     CountryCostPoolUpsert,
+    LedgerSheetRow,
     PayrollLineItemCreate,
     PayrollLineItemResponse,
     PayrollLineItemUpdate,
     PayrollPeriodCreate,
     PayrollPeriodResponse,
     PayrollPeriodUpdate,
+    PayrollSummaryBulkRequest,
     PayrollWorkerSummaryResponse,
     PayrollWorkerSummaryUpdate,
     WorkerPayrollOverviewResponse,
 )
 from services import payroll_engine
+from services.fx import currency_for_country
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
+from services.session_evidence import evidence_hours_for_worker
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -210,16 +215,25 @@ def mark_period_paid(
 
 # ── Worker summaries (payslip rows) ────────────────────────────────────────────
 
-def _summary_response(db: Session, summary: PayrollWorkerSummary) -> PayrollWorkerSummaryResponse:
+def _summary_response(db: Session, summary: PayrollWorkerSummary, period: PayrollPeriod | None = None) -> PayrollWorkerSummaryResponse:
     resp = PayrollWorkerSummaryResponse.model_validate(summary)
     worker = db.get(Worker, summary.worker_id)
     if worker:
         resp.worker_display_name = worker.display_name
         resp.worker_country = worker.country
         resp.worker_type = worker.worker_type.value if worker.worker_type else None
+        resp.worker_pay_tier = worker.pay_tier
         if worker.admin_user_id:
             admin_user = db.get(AdminUser, worker.admin_user_id)
             resp.worker_email = admin_user.email if admin_user else None
+    if period is None:
+        period = db.get(PayrollPeriod, summary.payroll_period_id)
+    if period:
+        start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
+        end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+        hours, incomplete = evidence_hours_for_worker(db, summary.worker_id, start, end)
+        resp.suggested_hours = hours
+        resp.evidence_incomplete = incomplete
     return resp
 
 
@@ -229,13 +243,112 @@ def list_period_summaries(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    period = db.get(PayrollPeriod, period_id)
     summaries = db.exec(
         select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
     ).all()
     return sorted(
-        (_summary_response(db, s) for s in summaries),
+        (_summary_response(db, s, period) for s in summaries),
         key=lambda r: (r.worker_display_name or ""),
     )
+
+
+@router.get("/periods/{period_id}/ledger", response_model=list[LedgerSheetRow])
+def period_ledger_sheet(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Anytime finance ledger: all active workers + suggested evidence hours + summary if any."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+
+    workers = db.exec(
+        select(Worker).where(Worker.status == WorkerStatusEnum.active).order_by(Worker.display_name)
+    ).all()
+    summaries = {
+        s.worker_id: s
+        for s in db.exec(
+            select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
+        ).all()
+    }
+    start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+
+    rows: list[LedgerSheetRow] = []
+    for w in workers:
+        hours, incomplete = evidence_hours_for_worker(db, w.id, start, end)
+        summary = summaries.get(w.id)
+        rows.append(
+            LedgerSheetRow(
+                worker_id=w.id,
+                worker_display_name=w.display_name,
+                worker_country=w.country,
+                worker_type=w.worker_type.value if w.worker_type else None,
+                worker_pay_tier=w.pay_tier,
+                partner_entity_id=w.partner_entity_id,
+                suggested_hours=hours,
+                evidence_incomplete=incomplete,
+                summary=_summary_response(db, summary, period) if summary else None,
+            )
+        )
+    return rows
+
+
+@router.post("/periods/{period_id}/summaries/bulk", response_model=list[PayrollWorkerSummaryResponse])
+def bulk_upsert_summaries(
+    period_id: UUID,
+    body: PayrollSummaryBulkRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    if period.status == PayrollPeriodStatusEnum.paid:
+        raise HTTPException(status_code=400, detail="This period is already paid.")
+
+    existing = {
+        s.worker_id: s
+        for s in db.exec(
+            select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
+        ).all()
+    }
+    results: list[PayrollWorkerSummary] = []
+    for item in body.rows:
+        summary = existing.get(item.worker_id)
+        if summary is None:
+            if not body.upsert:
+                continue
+            worker = db.get(Worker, item.worker_id)
+            if not worker:
+                continue
+            summary = PayrollWorkerSummary(
+                payroll_period_id=period_id,
+                worker_id=item.worker_id,
+                local_currency=currency_for_country(db, worker.country) or period.currency,
+                base_currency=period.currency,
+            )
+            existing[item.worker_id] = summary
+
+        data = item.model_dump(exclude_unset=True, exclude={"worker_id"})
+        for key, value in data.items():
+            if value is not None:
+                setattr(summary, key, value)
+        if item.admin_locked is None:
+            summary.admin_locked = True
+        db.add(summary)
+        db.flush()
+        summary = payroll_engine.recompute_summary(db, summary)
+        results.append(summary)
+
+    if period.status == PayrollPeriodStatusEnum.open:
+        period.status = PayrollPeriodStatusEnum.calculated
+        db.add(period)
+        db.commit()
+
+    return [_summary_response(db, s, period) for s in results]
 
 
 @router.patch("/summaries/{summary_id}", response_model=PayrollWorkerSummaryResponse)
@@ -253,8 +366,12 @@ def update_summary(
     if period and period.status == PayrollPeriodStatusEnum.paid:
         raise HTTPException(status_code=400, detail="This period is already paid.")
     apply_update(summary, body)
+    if body.model_dump(exclude_unset=True):
+        summary.admin_locked = True if body.admin_locked is not False else summary.admin_locked
+        if body.admin_locked is None:
+            summary.admin_locked = True
     summary = payroll_engine.recompute_summary(db, summary)
-    return _summary_response(db, summary)
+    return _summary_response(db, summary, period)
 
 
 @router.get("/my-summaries", response_model=list[PayrollWorkerSummaryResponse])

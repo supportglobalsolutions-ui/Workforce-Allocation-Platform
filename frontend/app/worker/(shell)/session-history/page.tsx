@@ -19,6 +19,9 @@ interface WorkSession {
   rdp_resource_id: string | null;
   start_image_url: string | null;
   end_image_url: string | null;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
+  evidence_complete?: boolean | null;
 }
 
 interface RDPResource {
@@ -116,6 +119,20 @@ export default function SessionHistoryPage() {
     });
   }, [sessions, machines, search, statusFilter, typeFilter, dateRangeFilter]);
 
+  const totalMinutes = useMemo(
+    () => sessions.reduce((sum, s) => sum + (s.duration_minutes || 0), 0),
+    [sessions],
+  );
+  const incomplete = useMemo(
+    () =>
+      sessions.filter(
+        (s) =>
+          s.close_status &&
+          !(s.evidence_complete || (s.start_image_url && s.end_image_url && s.image_start_at && s.image_end_at)),
+      ),
+    [sessions],
+  );
+
   const handleFilterChange = (label: string, value: string) => {
     if (label === 'Status') setStatusFilter(value);
     if (label === 'Type') setTypeFilter(value);
@@ -160,17 +177,23 @@ export default function SessionHistoryPage() {
     status: s.close_status ?? 'pending',
     start_image_url: s.start_image_url,
     end_image_url: s.end_image_url,
+    image_start_at: s.image_start_at,
+    image_end_at: s.image_end_at,
+    evidence_complete: s.evidence_complete,
+    duration_minutes: s.duration_minutes,
   }));
 
   const selectedSession = selectedId
     ? rows.find((r) => r.id === selectedId) ?? null
     : null;
 
+  const selectedFull = selectedId ? sessions.find((s) => s.id === selectedId) : null;
+
   return (
     <div>
       <PageHeader
         title="Session History"
-        description="Complete log of your sessions across GS RDP, partner multilog, and third-party platforms."
+        description="Complete log of your sessions across GS RDP, partner multilog, and third-party platforms. Add start/end images and on-image times so hours are recorded correctly."
         actions={
           <button className="btn-secondary flex items-center gap-2" onClick={handleExportCsv}>
             <Download size={16} />
@@ -178,6 +201,29 @@ export default function SessionHistoryPage() {
           </button>
         }
       />
+
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
+        <div className="glass-panel p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Total hours logged</p>
+          <p className="text-2xl font-black text-theme-heading mt-1">
+            {(totalMinutes / 60).toFixed(2)}h
+          </p>
+          <p className="text-xs text-theme-muted mt-1">{sessions.length} session{sessions.length === 1 ? '' : 's'}</p>
+        </div>
+        <div className="glass-panel p-4">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Evidence needed</p>
+          <p className="text-2xl font-black text-theme-heading mt-1">{incomplete.length}</p>
+          <p className="text-xs text-theme-muted mt-1">Sessions missing images or on-image times</p>
+        </div>
+      </div>
+
+      {incomplete.length > 0 && (
+        <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 text-sm">
+          After RDP logout, add start &amp; end images and the times shown on those images for{' '}
+          {incomplete.length} session{incomplete.length === 1 ? '' : 's'}. Open a session with the eye icon to complete.
+        </div>
+      )}
+
       <FilterBar
         searchPlaceholder="Search sessions..."
         onSearch={setSearch}
@@ -226,9 +272,20 @@ export default function SessionHistoryPage() {
       )}
 
       <SessionDetailPanel
-        session={selectedSession}
+        session={selectedSession && selectedFull ? {
+          ...selectedSession,
+          image_start_at: selectedFull.image_start_at,
+          image_end_at: selectedFull.image_end_at,
+          evidence_complete: selectedFull.evidence_complete,
+          duration_minutes: selectedFull.duration_minutes,
+        } : selectedSession}
         onClose={() => setSelectedId(null)}
         onImageUploaded={handleImageUploaded}
+        onEvidenceSaved={(sessionId, patch) => {
+          setSessions((prev) =>
+            prev.map((s) => (s.id === sessionId ? { ...s, ...patch } : s)),
+          );
+        }}
       />
     </div>
   );

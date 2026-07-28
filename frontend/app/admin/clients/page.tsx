@@ -612,14 +612,14 @@ export default function ClientManagementPage() {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative">
+        <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant" />
           <input
             type="text"
             placeholder="Search name, email, owner…"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-56"
+            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-full sm:w-56"
           />
           {search && (
             <button type="button" onClick={() => setSearch('')}

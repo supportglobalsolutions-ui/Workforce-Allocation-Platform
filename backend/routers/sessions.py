@@ -1,4 +1,5 @@
-from datetime import datetime
+from datetime import datetime, timezone
+from decimal import Decimal
 from typing import Optional
 from uuid import UUID
 
@@ -7,17 +8,35 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import require_user
 from core.redis import get_redis
 from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
-from schemas.session import SessionCreate, SessionResponse, SessionUpdate
+from schemas.session import (
+    SessionCreate,
+    SessionEvidenceUpdate,
+    SessionResponse,
+    SessionUpdate,
+    WorkerHoursTotalsResponse,
+)
 from services.firebase_mirror import mirror_active_session_by_id, mirror_rdp_status_by_id
 from services.rdp_state import resume_active_from_heartbeat
+from services.session_evidence import (
+    apply_image_duration,
+    clear_evidence_reminders,
+    evidence_complete,
+    notify_evidence_incomplete,
+)
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
+
+
+def _session_response(session: WorkSession) -> SessionResponse:
+    resp = SessionResponse.model_validate(session)
+    resp.evidence_complete = evidence_complete(session)
+    return resp
 
 
 def _scoped_stmt(current_user: dict, db: Session):
@@ -48,7 +67,43 @@ def list_sessions(
         for s in sessions:
             s.start_image_url = None
             s.end_image_url = None
-    return sessions
+    return [_session_response(s) for s in sessions]
+
+
+@router.get("/my-hours", response_model=WorkerHoursTotalsResponse)
+def my_session_hours(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Per-session hours + total for the current worker."""
+    worker = get_worker_for_user(db, current_user)
+    sessions = db.exec(
+        select(WorkSession)
+        .where(WorkSession.worker_id == worker.id, WorkSession.end_time.is_not(None))
+        .order_by(WorkSession.start_time.desc())
+        .limit(200)
+    ).all()
+    total_minutes = sum(s.duration_minutes or 0 for s in sessions)
+    return WorkerHoursTotalsResponse(
+        total_minutes=total_minutes,
+        total_hours=(Decimal(total_minutes) / Decimal(60)).quantize(Decimal("0.01")),
+        sessions=[_session_response(s) for s in sessions],
+    )
+
+
+@router.get("/incomplete-evidence", response_model=list[SessionResponse])
+def incomplete_evidence_sessions(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    worker = get_worker_for_user(db, current_user)
+    sessions = db.exec(
+        select(WorkSession)
+        .where(WorkSession.worker_id == worker.id, WorkSession.end_time.is_not(None))
+        .order_by(WorkSession.start_time.desc())
+        .limit(100)
+    ).all()
+    return [_session_response(s) for s in sessions if not evidence_complete(s)]
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -61,7 +116,7 @@ def get_session(
     session = db.exec(stmt).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    return session
+    return _session_response(session)
 
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -89,7 +144,50 @@ def create_session(
     db.refresh(session)
     if session.end_time is None:
         background_tasks.add_task(mirror_active_session_by_id, session.id)
-    return session
+    return _session_response(session)
+
+
+@router.patch("/{session_id}/evidence", response_model=SessionResponse)
+def submit_session_evidence(
+    session_id: UUID,
+    body: SessionEvidenceUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Worker submits on-image start/end times; duration is computed from those times."""
+    if current_user.get("role") in {"admin", "super_admin"}:
+        session = db.exec(select(WorkSession).where(WorkSession.id == session_id)).first()
+    else:
+        worker = get_worker_for_user(db, current_user)
+        session = db.exec(
+            select(WorkSession).where(
+                WorkSession.id == session_id,
+                WorkSession.worker_id == worker.id,
+            )
+        ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    data = body.model_dump(exclude_unset=True)
+    for key, value in data.items():
+        setattr(session, key, value)
+
+    if session.image_start_at and session.image_end_at:
+        start = session.image_start_at
+        end = session.image_end_at
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        if end <= start:
+            raise HTTPException(status_code=400, detail="End time on image must be after start time.")
+
+    apply_image_duration(session)
+    clear_evidence_reminders(db, session)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return _session_response(session)
 
 
 @router.patch("/{session_id}", response_model=SessionResponse)
@@ -123,11 +221,17 @@ def update_session(
             )
 
     apply_update(session, body)
+    # Prefer image-based duration when both times exist.
+    apply_image_duration(session)
+    if evidence_complete(session):
+        clear_evidence_reminders(db, session)
+    elif session.end_time is not None:
+        notify_evidence_incomplete(db, session)
     db.add(session)
     db.commit()
     db.refresh(session)
     background_tasks.add_task(mirror_active_session_by_id, session.id)
-    return session
+    return _session_response(session)
 
 
 @router.post("/{session_id}/heartbeat", response_model=SessionResponse)
@@ -163,4 +267,4 @@ def heartbeat_session(
         if rdp_was_idle and session.rdp_resource_id:
             resume_active_from_heartbeat(db, session.rdp_resource_id)
             background_tasks.add_task(mirror_rdp_status_by_id, session.rdp_resource_id)
-    return session
+    return _session_response(session)

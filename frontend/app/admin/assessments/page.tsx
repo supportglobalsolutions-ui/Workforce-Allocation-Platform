@@ -358,7 +358,8 @@ function McqDetailModal({
               : rError ? <p className="text-danger text-sm">{rError}</p>
               : results.length === 0 ? <div className="text-center py-10 text-theme-muted text-sm">No results yet.</div>
               : (
-                <table className="w-full text-sm">
+                <div className="overflow-x-auto">
+                <table className="w-full text-sm min-w-[480px]">
                   <thead>
                     <tr className="border-b border-white/[0.06]">
                       <th className="text-left pb-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>
@@ -384,6 +385,7 @@ function McqDetailModal({
                     ))}
                   </tbody>
                 </table>
+                </div>
               )}
             </div>
           )}
@@ -595,7 +597,7 @@ function TaskFormModal({
           <button type="button" onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"><X size={15} /></button>
         </div>
         <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Entry Task" className="input-field" /></Field>
             <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Practical, QA" className="input-field" /></Field>
           </div>
@@ -634,7 +636,7 @@ function TaskFormModal({
             )}
           </div>
 
-          <div className="grid grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Passing Score (%)">
               <input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" />
             </Field>
@@ -686,7 +688,7 @@ function GradePanel({
   return (
     <form onSubmit={handleSubmit} className="mt-3 glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
       <p className="text-[10px] font-bold uppercase tracking-wider text-gold-accent">Grade Submission</p>
-      <div className="grid grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div>
           <label className="text-[10px] text-theme-muted mb-1 block">Score (%)</label>
           <input type="number" required min={0} max={100} value={score} onChange={(e) => setScore(e.target.value)} className="input-field" />
@@ -1050,7 +1052,7 @@ export default function AssessmentsPage() {
       <AdminSectionTabs tabs={QUALITY_TABS} />
 
       {/* Stats */}
-      <div className="grid grid-cols-3 gap-4 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
         {[
           { label: 'Total Assessments', value: totalAssessments, sub: `${activeCount} active` },
           { label: 'MCQ Exams',         value: mcqSets.length,   sub: `${mcqSets.reduce((a, s) => a + s.question_count, 0)} questions` },
@@ -1070,8 +1072,8 @@ export default function AssessmentsPage() {
         : mcqError ? <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm"><AlertCircle size={16} /> {mcqError}</div>
         : mcqSets.length === 0 ? <div className="glass-panel p-12 text-center text-theme-muted text-sm">No MCQ assessments yet.</div>
         : (
-          <div className="glass-panel overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="glass-panel overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Assessment</th>
@@ -1107,8 +1109,8 @@ export default function AssessmentsPage() {
         : taskError ? <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm"><AlertCircle size={16} /> {taskError}</div>
         : tasks.length === 0 ? <div className="glass-panel p-12 text-center text-theme-muted text-sm">No task assessments yet.</div>
         : (
-          <div className="glass-panel overflow-hidden">
-            <table className="w-full text-sm">
+          <div className="glass-panel overflow-x-auto">
+            <table className="w-full text-sm min-w-[560px]">
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Task</th>

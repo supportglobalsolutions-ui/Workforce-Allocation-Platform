@@ -11,7 +11,7 @@ export default function FinancialIntelligencePage() {
         title="Financial Intelligence"
         description="Partner revenue, worker revenue, payroll costs, and profit trend analysis."
       />
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
         <KpiCard label="Gross Revenue" value="—" icon={DollarSign} accent="gold" />
         <KpiCard label="Worker Payouts" value="—" icon={Users} />
         <KpiCard label="Payroll Costs" value="—" icon={PieChart} />

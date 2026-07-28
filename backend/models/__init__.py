@@ -7,7 +7,7 @@ from .enums import (  # noqa: F401
     AdminRoleEnum, AccountStatusEnum, WorkerTypeEnum, WorkerStatusEnum,
     EntityStatusEnum, RdpStatusEnum, ShiftStatusEnum, ReleaseReasonEnum,
     SessionTypeEnum, SessionCloseEnum, PayrollSessionEnum, RateTypeEnum,
-    PayrollPeriodStatusEnum, IndicatorInputEnum, TicketStatusEnum,
+    PaymentTierUnitEnum, PayrollPeriodStatusEnum, IndicatorInputEnum, TicketStatusEnum,
     TaskResultStatusEnum, ClientContractStatusEnum, ClientOwnerTypeEnum,
     WalletTxTypeEnum, TrainingProgressEnum,
 )
@@ -21,6 +21,7 @@ from .allocation   import Allocation                                            
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary, CountryCostPool  # noqa: F401
 from .session      import Session                                                             # noqa: F401
 from .rate_table   import RateTableEntry                                                      # noqa: F401
+from .payment_tier import PaymentTier                                                         # noqa: F401
 from .currency     import Country, FxRate                                                     # noqa: F401
 from .wallet       import Wallet, WalletTransaction                                           # noqa: F401
 from .email_log    import EmailLog                                                            # noqa: F401

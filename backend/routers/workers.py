@@ -10,8 +10,9 @@ from core.auth_errors import http_error_from_firebase
 from core.permissions import require_admin, require_user
 from core.security import get_current_user
 from models.admin_users import AdminUser
-from models.enums import WorkerTypeEnum
+from models.enums import RdpStatusEnum, WorkerTypeEnum
 from models.partner import PartnerEntity
+from models.rdp_machine import RDPResource
 from models.worker import Worker
 from schemas.worker import WorkerAdminUpdate, WorkerCreate, WorkerResponse, WorkerUpdate
 from .deps import apply_update, get_worker_for_user
@@ -19,14 +20,61 @@ from .deps import apply_update, get_worker_for_user
 router = APIRouter()
 
 
-def _with_partner_name(db: Session, worker: Worker, resp: WorkerResponse) -> WorkerResponse:
+def _enrich_worker(db: Session, worker: Worker) -> WorkerResponse:
+    resp = WorkerResponse.model_validate(worker)
+    updates: dict = {}
+    if worker.admin_user:
+        updates["email"] = worker.admin_user.email
+    elif worker.admin_user_id:
+        admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
+        if admin:
+            updates["email"] = admin.email
     if worker.partner_entity_id:
-        entity = db.exec(
-            select(PartnerEntity).where(PartnerEntity.id == worker.partner_entity_id)
-        ).first()
+        entity = worker.partner_entity
+        if entity is None:
+            entity = db.exec(
+                select(PartnerEntity).where(PartnerEntity.id == worker.partner_entity_id)
+            ).first()
         if entity:
-            return resp.model_copy(update={"partner_entity_name": entity.name})
+            updates["partner_entity_name"] = entity.name
+            updates["partner_entity_is_self"] = entity.is_self
+    rdp = db.exec(
+        select(RDPResource).where(RDPResource.assigned_worker_id == worker.id)
+    ).first()
+    if rdp:
+        updates["assigned_rdp_id"] = rdp.id
+        updates["assigned_rdp_nickname"] = rdp.nickname
+    if updates:
+        resp = resp.model_copy(update=updates)
     return resp
+
+
+def _assign_rdp(db: Session, worker_id: UUID, rdp_id: UUID | None) -> None:
+    """Set or clear the worker's assigned RDP machine."""
+    current = db.exec(
+        select(RDPResource).where(RDPResource.assigned_worker_id == worker_id)
+    ).all()
+    for resource in current:
+        if rdp_id is not None and resource.id == rdp_id:
+            continue
+        resource.assigned_worker_id = None
+        if resource.status == RdpStatusEnum.assigned:
+            resource.status = RdpStatusEnum.online_free
+        db.add(resource)
+
+    if rdp_id is None:
+        return
+
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP machine not found")
+    # Unassign from previous worker if any
+    if resource.assigned_worker_id and resource.assigned_worker_id != worker_id:
+        resource.assigned_worker_id = None
+    resource.assigned_worker_id = worker_id
+    if resource.status in {RdpStatusEnum.online_free, RdpStatusEnum.assigned}:
+        resource.status = RdpStatusEnum.assigned
+    db.add(resource)
 
 
 @router.get("/me", response_model=WorkerResponse)
@@ -35,7 +83,7 @@ def get_my_worker(
     current_user: dict = Depends(require_user),
 ):
     worker = get_worker_for_user(db, current_user)
-    return _with_partner_name(db, worker, WorkerResponse.model_validate(worker))
+    return _enrich_worker(db, worker)
 
 
 @router.patch("/me", response_model=WorkerResponse)
@@ -49,7 +97,7 @@ def update_my_worker(
     db.add(worker)
     db.commit()
     db.refresh(worker)
-    return worker
+    return _enrich_worker(db, worker)
 
 
 @router.get("", response_model=list[WorkerResponse])
@@ -62,18 +110,7 @@ def list_workers(
         .options(selectinload(Worker.admin_user), selectinload(Worker.partner_entity))
         .order_by(Worker.display_name)
     ).all()
-    result = []
-    for w in workers:
-        resp = WorkerResponse.model_validate(w)
-        updates: dict = {}
-        if w.admin_user:
-            updates["email"] = w.admin_user.email
-        if w.partner_entity:
-            updates["partner_entity_name"] = w.partner_entity.name
-        if updates:
-            resp = resp.model_copy(update=updates)
-        result.append(resp)
-    return result
+    return [_enrich_worker(db, w) for w in workers]
 
 
 @router.get("/{worker_id}", response_model=WorkerResponse)
@@ -91,7 +128,7 @@ def get_worker(
 
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
-    return worker
+    return _enrich_worker(db, worker)
 
 
 @router.post("", response_model=WorkerResponse, status_code=status.HTTP_201_CREATED)
@@ -104,7 +141,7 @@ def create_worker(
     db.add(worker)
     db.commit()
     db.refresh(worker)
-    return worker
+    return _enrich_worker(db, worker)
 
 
 @router.patch("/{worker_id}", response_model=WorkerResponse)
@@ -114,24 +151,31 @@ def update_worker(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Admin ops: pay tier, status, designation, work-ready — identity is worker-owned."""
+    """Admin: personal details, payment, designation, readiness, and RDP assignment."""
     worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
 
-    apply_update(worker, body)
+    data = body.model_dump(exclude_unset=True)
+    assigned_rdp_id = data.pop("assigned_rdp_id", ...)
+    for key, value in data.items():
+        setattr(worker, key, value)
+
     if worker.worker_type == WorkerTypeEnum.partner_worker and not worker.partner_entity_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="A partner worker must be linked to a partner company.",
+            detail="A partner worker must be linked to a partner company (or Self).",
         )
     if worker.worker_type == WorkerTypeEnum.gs_registered:
         worker.partner_entity_id = None
+
+    if assigned_rdp_id is not ...:
+        _assign_rdp(db, worker.id, assigned_rdp_id)
+
     db.add(worker)
     db.commit()
     db.refresh(worker)
-    return _with_partner_name(db, worker, WorkerResponse.model_validate(worker))
-
+    return _enrich_worker(db, worker)
 
 def _get_worker_firebase_uid(worker_id: UUID, db: Session, current_user: dict) -> tuple[Worker, str]:
     """Fetch worker + linked firebase_uid, enforce admin-cannot-modify-super_admin."""

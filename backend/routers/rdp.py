@@ -87,6 +87,10 @@ def _close_open_sessions_for_rdp(db: Session, rdp_id: UUID) -> list[UUID]:
             work_session.type_specific_fields = {}
         db.add(work_session)
         closed_ids.append(work_session.id)
+    # Remind workers to add start/end images + on-image times.
+    from services.session_evidence import notify_evidence_incomplete
+    for work_session in open_sessions:
+        notify_evidence_incomplete(db, work_session)
     return closed_ids
 
 

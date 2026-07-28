@@ -2,7 +2,7 @@ import uuid
 from datetime import date, datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, String, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -32,6 +32,10 @@ class Worker(SQLModel, table=True):
             "(worker_type != 'partner_worker') OR (partner_entity_id IS NOT NULL)",
             name="ck_workers_partner_entity_required",
         ),
+        CheckConstraint(
+            "(pay_frequency IS NULL) OR (pay_frequency IN ('per_month', 'per_task'))",
+            name="ck_workers_pay_frequency",
+        ),
     )
 
     id: uuid.UUID = Field(
@@ -51,6 +55,14 @@ class Worker(SQLModel, table=True):
     display_name: str = Field(sa_column=Column(String(255), nullable=False))
     country: str = Field(sa_column=Column(String(64), nullable=False))
     pay_tier: str = Field(sa_column=Column(String(64), nullable=False))
+    pay_amount: Optional[float] = Field(
+        default=None,
+        sa_column=Column(Numeric(12, 2), nullable=True),
+    )
+    pay_frequency: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(32), nullable=True),
+    )
     status: WorkerStatusEnum = Field(sa_column=Column(WorkerStatusType, nullable=False))
     start_date: date = Field(sa_column=Column(Date, nullable=False))
     # New workers must complete mandatory training and be cleared by an admin

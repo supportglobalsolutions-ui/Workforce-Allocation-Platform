@@ -87,6 +87,13 @@ class Session(SQLModel, table=True):
     admin_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     start_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     end_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Times as shown on the worker's start/end screenshots (evidence hours).
+    image_start_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    image_end_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
     type_specific_fields: Optional[dict[str, Any]] = Field(
         default=None,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'")),

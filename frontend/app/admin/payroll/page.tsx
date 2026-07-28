@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle, Calculator, CheckCircle, ChevronDown, ChevronRight, Clock,
-  DollarSign, Download, FileText, Pencil, Plus, RotateCcw, Send, Trash2,
+  DollarSign, Download, FileText, Pencil, Plus, RotateCcw, Send, Table2, Trash2,
   Users, Wallet, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
@@ -11,6 +11,7 @@ import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSecti
 import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
+import PeriodLedgerModal from '@/components/admin/PeriodLedgerModal';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 
@@ -310,7 +311,7 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
           <span className="text-[13px] text-white">Custom date range</span>
         </label>
 
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Start Date">
             <input
               type="date"
@@ -406,7 +407,7 @@ function EditSummaryModal({ summary, onClose, onSaved }: {
     <ModalShell title={`Edit — ${summary.worker_display_name}`}
       subtitle="Gross, deductions and net are recomputed server-side." onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Hours Logged">
             <input type="number" step="0.01" min="0" required value={form.hours_logged} onChange={set('hours_logged')} className="input-field" />
           </Field>
@@ -472,7 +473,7 @@ function NewRateModal({ workers, onClose, onCreated }: {
     <ModalShell title="New Hourly Rate" subtitle="Applies to a specific worker or an entire pay tier." onClose={onClose}>
       <form onSubmit={handleSubmit} className="space-y-4">
         <Field label="Target">
-          <div className="grid grid-cols-2 gap-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {([['worker', 'Specific Worker'], ['tier', 'Pay Tier']] as const).map(([key, lbl]) => (
               <button key={key} type="button" onClick={() => setTarget(key)}
                 className={`p-2.5 rounded-xl border text-xs font-semibold transition-all ${
@@ -502,7 +503,7 @@ function NewRateModal({ workers, onClose, onCreated }: {
             <input required value={payTier} onChange={(e) => setPayTier(e.target.value)} placeholder="e.g. tier_1" className="input-field" />
           </Field>
         )}
-        <div className="grid grid-cols-2 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Amount / hr">
             <input type="number" step="0.01" min="0" required value={amount} onChange={(e) => setAmount(e.target.value)} className="input-field" />
           </Field>
@@ -699,6 +700,7 @@ export default function PayrollWorkbenchPage() {
   const [summariesLoading, setSummariesLoading] = useState(false);
   const [summariesError, setSummariesError] = useState<string | null>(null);
   const [editSummary, setEditSummary] = useState<PayrollSummary | null>(null);
+  const [showLedger, setShowLedger] = useState(false);
 
   const [countries, setCountries] = useState<Country[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
@@ -848,8 +850,8 @@ export default function PayrollWorkbenchPage() {
   return (
     <div>
       <PageHeader
-        title="Payroll Workbench"
-        description="Run the payroll workflow end-to-end: calculate, adjust costs, approve, push to wallets, and mark paid."
+        title="Finance"
+        description="Period ledger (anytime), payment tiers, calculate seed, approve, wallets, and receipts — one finance bundle."
         actions={
           <button type="button" onClick={() => setShowNewPeriod(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-2">
             <Plus size={15} /> New Working Month
@@ -898,8 +900,15 @@ export default function PayrollWorkbenchPage() {
                     </p>
                   </div>
                   <div className="flex-1" />
+                  <button
+                    type="button"
+                    onClick={() => setShowLedger(true)}
+                    className="btn-primary text-xs py-2 px-3 inline-flex items-center gap-1.5"
+                  >
+                    <Table2 size={13} /> Open ledger
+                  </button>
                   {([
-                    { action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Calculate', icon: Calculator, enabled: canCalculate, primary: status === 'open' },
+                    { action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Seed from sessions', icon: Calculator, enabled: canCalculate, primary: false },
                     { action: 'approve' as const, label: 'Approve', icon: CheckCircle, enabled: canApprove, primary: status === 'calculated' },
                     { action: 'reopen' as const, label: 'Reopen', icon: RotateCcw, enabled: canReopen, primary: false },
                     { action: 'push-wallets' as const, label: 'Push to Wallets', icon: Wallet, enabled: canPush, primary: status === 'approved' && !selectedPeriod.wallet_pushed_at },
@@ -925,7 +934,7 @@ export default function PayrollWorkbenchPage() {
               )}
 
               {/* ── KPI cards ── */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
                 <KpiCard label="Workers" value={kpis.workers} icon={Users} />
                 <KpiCard label="Total Hours" value={kpis.totalHours.toLocaleString(undefined, { maximumFractionDigits: 1 })} icon={Clock} accent="blue" />
                 <KpiCard label={`Total Gross (${baseCur})`} value={fmt(kpis.totalGross)} icon={DollarSign} accent="gold" />
@@ -1083,6 +1092,18 @@ export default function PayrollWorkbenchPage() {
           workers={workers}
           onClose={() => setShowNewRate(false)}
           onCreated={() => { setShowNewRate(false); loadRates(); }}
+        />
+      )}
+      {showLedger && selectedPeriod && (
+        <PeriodLedgerModal
+          periodId={selectedPeriod.id}
+          periodLabel={selectedPeriod.label}
+          locked={summariesLocked}
+          onClose={() => setShowLedger(false)}
+          onSaved={() => {
+            if (selectedPeriodId) loadSummaries(selectedPeriodId);
+            if (selectedPeriodId) loadPeriods(selectedPeriodId);
+          }}
         />
       )}
     </div>

@@ -1,8 +1,10 @@
 'use client';
 
+import { useState } from 'react';
 import { X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageUpload from './SessionImageUpload';
+import { api } from '@/lib/api';
 
 interface SessionDetail {
   id: string;
@@ -13,20 +15,77 @@ interface SessionDetail {
   status: string;
   start_image_url: string | null;
   end_image_url: string | null;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
+  evidence_complete?: boolean | null;
+  duration_minutes?: number | null;
 }
 
 interface Props {
   session: SessionDetail | null;
   onClose: () => void;
   onImageUploaded: (sessionId: string, type: 'start' | 'end', url: string) => void;
+  onEvidenceSaved?: (sessionId: string, patch: Partial<SessionDetail>) => void;
   workerLabel?: string;
+  allowEvidenceEdit?: boolean;
 }
 
-export default function SessionDetailPanel({ session, onClose, onImageUploaded, workerLabel }: Props) {
+function toLocalInput(iso: string | null | undefined): string {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  const pad = (n: number) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export default function SessionDetailPanel({
+  session,
+  onClose,
+  onImageUploaded,
+  onEvidenceSaved,
+  workerLabel,
+  allowEvidenceEdit = true,
+}: Props) {
+  const [startAt, setStartAt] = useState(() => toLocalInput(session?.image_start_at));
+  const [endAt, setEndAt] = useState(() => toLocalInput(session?.image_end_at));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [durationLabel, setDurationLabel] = useState(session?.duration ?? '—');
+
   if (!session) return null;
 
+  const saveEvidence = async () => {
+    if (!allowEvidenceEdit) return;
+    setSaving(true);
+    setError(null);
+    try {
+      const body: Record<string, string> = {};
+      if (startAt) body.image_start_at = new Date(startAt).toISOString();
+      if (endAt) body.image_end_at = new Date(endAt).toISOString();
+      const updated = await api.patch<{
+        duration_minutes: number | null;
+        image_start_at: string | null;
+        image_end_at: string | null;
+        evidence_complete: boolean;
+      }>(`/sessions/${session.id}/evidence`, body);
+      const mins = updated.duration_minutes;
+      const label = mins != null ? `${Math.floor(mins / 60)}h ${mins % 60}m` : durationLabel;
+      setDurationLabel(label);
+      onEvidenceSaved?.(session.id, {
+        image_start_at: updated.image_start_at,
+        image_end_at: updated.image_end_at,
+        duration_minutes: updated.duration_minutes,
+        evidence_complete: updated.evidence_complete,
+        duration: label,
+      });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to save times');
+    } finally {
+      setSaving(false);
+    }
+  };
+
   return (
-    /* Backdrop — near-opaque so background is completely invisible */
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4"
       style={{
@@ -36,13 +95,9 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded, 
       }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      {/* White card */}
-      <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl">
-
-        {/* Emerald top bar */}
+      <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto">
         <div className="h-1 bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-400" />
 
-        {/* Header */}
         <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100">
           <div>
             <p className="text-[15px] font-bold text-gray-900">{session.machine}</p>
@@ -60,15 +115,14 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded, 
           </button>
         </div>
 
-        {/* Session meta */}
-        <div className="px-6 py-4 grid grid-cols-3 gap-4 border-b border-gray-100 bg-gray-50">
+        <div className="px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-gray-100 bg-gray-50">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Type</p>
             <p className="text-sm font-medium text-gray-800">{session.type}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Duration</p>
-            <p className="text-sm font-medium text-gray-800">{session.duration}</p>
+            <p className="text-sm font-medium text-gray-800">{durationLabel}</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Status</p>
@@ -76,8 +130,7 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded, 
           </div>
         </div>
 
-        {/* Images — side by side */}
-        <div className="px-6 py-5 grid grid-cols-2 gap-5">
+        <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-600 mb-2.5">
               Start image
@@ -89,6 +142,17 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded, 
               initialUrl={session.start_image_url}
               onUploaded={(url) => onImageUploaded(session.id, 'start', url)}
             />
+            {allowEvidenceEdit && (
+              <label className="block mt-3">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on start image</span>
+                <input
+                  type="datetime-local"
+                  value={startAt}
+                  onChange={(e) => setStartAt(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
+                />
+              </label>
+            )}
           </div>
           <div>
             <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-600 mb-2.5">
@@ -101,13 +165,38 @@ export default function SessionDetailPanel({ session, onClose, onImageUploaded, 
               initialUrl={session.end_image_url}
               onUploaded={(url) => onImageUploaded(session.id, 'end', url)}
             />
+            {allowEvidenceEdit && (
+              <label className="block mt-3">
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on end image</span>
+                <input
+                  type="datetime-local"
+                  value={endAt}
+                  onChange={(e) => setEndAt(e.target.value)}
+                  className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
+                />
+              </label>
+            )}
           </div>
         </div>
 
-        {/* Footer hint */}
+        {error && <p className="px-6 text-xs text-red-600 mb-2">{error}</p>}
+
+        {allowEvidenceEdit && (
+          <div className="px-6 pb-3">
+            <button
+              type="button"
+              disabled={saving || (!startAt && !endAt)}
+              onClick={saveEvidence}
+              className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5"
+            >
+              {saving ? 'Saving…' : 'Save on-image times & calculate duration'}
+            </button>
+          </div>
+        )}
+
         <div className="px-6 pb-5">
           <p className="text-center text-[11px] text-gray-300">
-            Hover any thumbnail · click Inspect for the full-screen magnifier
+            Enter the times shown on your screenshots — duration is calculated from those times.
           </p>
         </div>
       </div>

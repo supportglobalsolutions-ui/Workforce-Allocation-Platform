@@ -23,7 +23,7 @@ function sectionMatch(pathname: string | null, href: string): boolean {
       return false;
     }
     if (pathname === href || pathname.startsWith(href + '/')) return true;
-    return ['/admin/wallets', '/admin/currencies', '/admin/reports'].some(
+    return ['/admin/wallets', '/admin/currencies', '/admin/reports', '/admin/calendar'].some(
       (p) => pathname === p || pathname.startsWith(p + '/')
     );
   }
