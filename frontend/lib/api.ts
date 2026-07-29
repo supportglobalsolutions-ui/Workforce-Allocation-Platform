@@ -6,8 +6,14 @@
 import { auth } from '@/lib/firebase';
 
 const BASE = '/api';
+const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 
 async function getToken(forceRefresh = false): Promise<string | null> {
+  // In test mode the backend supplies the fixed development identity.
+  // Avoid contacting Firebase, so a suspended Firebase project cannot block
+  // PostgreSQL-backed admin pages.
+  if (DEV_AUTH_BYPASS) return null;
+
   await auth.authStateReady();
   return auth.currentUser?.getIdToken(forceRefresh) ?? null;
 }

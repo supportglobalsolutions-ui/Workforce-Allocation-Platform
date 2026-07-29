@@ -31,12 +31,23 @@ async def lifespan(app: FastAPI):
         len(app.routes),
         bool(currency_routes),
     )
-    init_firebase()
-    background_tasks = [
-        asyncio.create_task(run_leaderboard_sync_loop()),
-        asyncio.create_task(run_mirror_reconcile_loop()),
-        asyncio.create_task(run_rdp_lifecycle_loop()),
-    ]
+    firebase_enabled = not (
+        settings.DEV_AUTH_BYPASS and not settings.is_production
+    )
+    background_tasks = [asyncio.create_task(run_rdp_lifecycle_loop())]
+    if firebase_enabled:
+        init_firebase()
+        background_tasks.extend(
+            [
+                asyncio.create_task(run_leaderboard_sync_loop()),
+                asyncio.create_task(run_mirror_reconcile_loop()),
+            ]
+        )
+    else:
+        logger.warning(
+            "Development auth bypass enabled; Firebase initialization and "
+            "Firestore mirror jobs are disabled."
+        )
     yield
     for task in background_tasks:
         task.cancel()
