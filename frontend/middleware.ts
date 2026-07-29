@@ -39,6 +39,11 @@ export function middleware(req: NextRequest) {
   // Not a protected route — let it through
   if (!portal) return NextResponse.next();
 
+  const devAuthBypass =
+    process.env.NODE_ENV !== 'production' &&
+    process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
+  if (devAuthBypass) return NextResponse.next();
+
   const role = getRole(req);
 
   // No session — redirect to login

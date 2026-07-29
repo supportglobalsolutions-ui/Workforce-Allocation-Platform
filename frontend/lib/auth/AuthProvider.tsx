@@ -10,6 +10,19 @@ import { FirebaseError } from 'firebase/app';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 
+const DEV_AUTH_BYPASS =
+  process.env.NODE_ENV !== 'production' &&
+  process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
+
+const DEV_SESSION: AuthSession = {
+  uid: 'dev-test-user',
+  email: 'dev.test@local.dev',
+  displayName: 'Dev Test User',
+  authRole: 'super_admin',
+  primaryPortal: 'leadership',
+  allowedPortals: ['leadership', 'admin', 'worker'],
+};
+
 interface AuthContextValue {
   session: AuthSession | null;
   isLoading: boolean;
@@ -26,6 +39,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    if (DEV_AUTH_BYPASS) {
+      setSession(DEV_SESSION);
+      setAuthRoleCookie(DEV_SESSION.authRole);
+      setIsLoading(false);
+      return;
+    }
+
     const unsub = subscribeAuthState((s) => {
       setSession(s);
       setIsLoading(false);
@@ -39,6 +59,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const login = useCallback(async (email: string, password: string) => {
+    if (DEV_AUTH_BYPASS) {
+      setSession(DEV_SESSION);
+      setAuthRoleCookie(DEV_SESSION.authRole);
+      router.replace(ROLE_LANDING[DEV_SESSION.primaryPortal]);
+      return { ok: true as const };
+    }
+
     try {
       const s = await signIn(email, password);
       setSession(s);
@@ -73,6 +100,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const logout = useCallback(async () => {
+    if (DEV_AUTH_BYPASS) {
+      router.replace(ROLE_LANDING[DEV_SESSION.primaryPortal]);
+      return;
+    }
+
     try {
       const active = await getMyActiveRdp();
       if (active?.rdp_resource_id) {

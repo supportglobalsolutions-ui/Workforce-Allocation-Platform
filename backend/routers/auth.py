@@ -7,6 +7,7 @@ from pydantic import BaseModel, EmailStr
 from sqlmodel import Session, select
 
 from core.auth_errors import http_error_from_firebase
+from core.config import settings
 from core.database import get_db
 from core.firebase_admin import (
     SUPER_ADMIN_EMAIL,
@@ -179,9 +180,62 @@ def register_user(body: RegisterRequest):
     return user_to_dict(user)
 
 
+_ORG_ROLE_TO_AUTH_ROLE = {
+    AdminRoleEnum.ceo_leadership: "super_admin",
+    AdminRoleEnum.operations_lead: "admin",
+}
+
+
+def _list_postgres_users(db: Session) -> list[dict]:
+    """Project local account rows into the shape expected by the Accounts page."""
+    users: list[dict] = []
+    admin_rows = db.exec(select(AdminUser).order_by(AdminUser.display_name)).all()
+
+    for admin in admin_rows:
+        worker = db.exec(
+            select(Worker).where(Worker.admin_user_id == admin.id)
+        ).first()
+        role = _ORG_ROLE_TO_AUTH_ROLE.get(admin.role)
+        if role is None:
+            role = (
+                "partner"
+                if worker and worker.worker_type == WorkerTypeEnum.partner_worker
+                else "user"
+            )
+
+        disabled = admin.status == AccountStatusEnum.deactivated
+        created_at_ms = (
+            int(admin.created_at.timestamp() * 1000)
+            if admin.created_at
+            else 0
+        )
+        users.append({
+            "uid": admin.firebase_uid,
+            "email": admin.email,
+            "displayName": admin.display_name,
+            "role": role,
+            "status": "banned" if disabled else "approved",
+            "disabled": disabled,
+            "banned": disabled,
+            "createdAt": created_at_ms,
+            "partnerEntityId": (
+                str(worker.partner_entity_id)
+                if worker and worker.partner_entity_id
+                else None
+            ),
+        })
+
+    return users
+
+
 @router.get("/users")
-def list_users(current_user: dict = Depends(require_admin)):
-    """List all Firebase users. Requires admin+."""
+def list_users(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """List accounts. Uses PostgreSQL during the development auth bypass."""
+    if settings.DEV_AUTH_BYPASS and not settings.is_production:
+        return _list_postgres_users(db)
     return list_firebase_users()
 
 
