@@ -1,8 +1,11 @@
+from uuid import UUID
+
 from fastapi import APIRouter, Depends, Query
-from sqlmodel import Session, select
+from sqlmodel import Session, col, select
 
 from core.database import get_db
 from core.permissions import require_user
+from models.payroll import PayrollPeriod
 from models.quality import QualityCompositeScore
 from models.worker import Worker
 from schemas.quality import LeaderboardResponse
@@ -14,6 +17,7 @@ router = APIRouter()
 def get_leaderboard(
     country: str | None = None,
     period: str = Query("calendar", pattern="^(calendar|payroll)$"),
+    payroll_period_id: UUID | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     _: dict = Depends(require_user),
@@ -23,13 +27,38 @@ def get_leaderboard(
         select(QualityCompositeScore, Worker)
         .join(Worker, Worker.id == QualityCompositeScore.worker_id)
     )
-    # Rows tagged with a period_type belong to the dual-view engine; untagged
-    # legacy rows are only used when no tagged rows exist for that view.
-    tagged_exists = db.exec(
-        select(QualityCompositeScore.id).where(QualityCompositeScore.period_type == period).limit(1)
-    ).first()
-    if tagged_exists:
-        stmt = stmt.where(QualityCompositeScore.period_type == period)
+
+    if period == "payroll":
+        target_id = payroll_period_id
+        if target_id is None:
+            latest = db.exec(
+                select(PayrollPeriod).order_by(col(PayrollPeriod.start_date).desc())
+            ).first()
+            target_id = latest.id if latest else None
+        if target_id:
+            has_snapshot = db.exec(
+                select(QualityCompositeScore.id)
+                .where(QualityCompositeScore.payroll_period_id == target_id)
+                .limit(1)
+            ).first()
+            if has_snapshot:
+                stmt = stmt.where(QualityCompositeScore.payroll_period_id == target_id)
+            else:
+                stmt = stmt.where(
+                    QualityCompositeScore.period_type == "payroll",
+                    QualityCompositeScore.payroll_period_id.is_(None),
+                )
+        else:
+            stmt = stmt.where(QualityCompositeScore.period_type == "payroll")
+    else:
+        tagged_exists = db.exec(
+            select(QualityCompositeScore.id)
+            .where(QualityCompositeScore.period_type == period)
+            .limit(1)
+        ).first()
+        if tagged_exists:
+            stmt = stmt.where(QualityCompositeScore.period_type == period)
+
     if country:
         stmt = stmt.where(Worker.country == country)
 
@@ -54,6 +83,7 @@ def get_leaderboard(
             consistency_component=score.consistency_component,
             period_type=score.period_type,
             period_label=score.period_label,
+            payroll_period_id=score.payroll_period_id,
             global_rank=score.global_rank,
             country_rank=score.country_rank,
             session_streak_days=score.session_streak_days,

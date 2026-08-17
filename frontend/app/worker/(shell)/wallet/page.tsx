@@ -9,6 +9,7 @@ import {
   CheckCircle,
   ChevronDown,
   ChevronUp,
+  Download,
   Layers,
   Mail,
   Wallet as WalletIcon,
@@ -17,6 +18,7 @@ import {
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { downloadFile } from '@/lib/download';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -40,6 +42,7 @@ interface WalletTransaction {
 interface PayslipSummary {
   id: string;
   period_label: string;
+  period_status: string | null;
   hours_logged: number;
   rate_per_hour: number;
   base_pay: number;
@@ -133,6 +136,23 @@ function formatTier(tier: string) {
 
 function PayslipCard({ slip }: { slip: PayslipSummary }) {
   const [open, setOpen] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
+
+  const handleDownload = async () => {
+    setDownloading(true);
+    setDownloadError(null);
+    try {
+      await downloadFile(
+        `/payroll/my-summaries/${slip.id}/payslip.pdf`,
+        `payslip-${slip.period_label.replace(/\s+/g, '-')}.pdf`,
+      );
+    } catch {
+      setDownloadError('Could not download the PDF. Try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
 
   const hasFx = slip.fx_rate != null && slip.base_currency != null && slip.base_equivalent != null;
   const baseScale = hasFx && Number(slip.final_net) !== 0
@@ -172,7 +192,14 @@ function PayslipCard({ slip }: { slip: PayslipSummary }) {
         className="w-full flex items-center justify-between gap-3 px-5 py-4 text-left hover:bg-white/[0.02] transition-colors"
       >
         <div>
-          <p className="text-sm font-bold text-white">{slip.period_label}</p>
+          <p className="text-sm font-bold text-white flex items-center gap-2">
+            {slip.period_label}
+            {slip.period_status === 'calculated' && (
+              <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[9px] font-bold uppercase tracking-wider border bg-amber-500/20 text-amber-400 border-amber-500/30">
+                Not final
+              </span>
+            )}
+          </p>
           <p className="text-xs text-theme-muted mt-0.5">
             {fmt(slip.hours_logged)} h logged
             {hasFx ? ` · FX ${slip.fx_rate}` : ''}
@@ -204,6 +231,26 @@ function PayslipCard({ slip }: { slip: PayslipSummary }) {
               {divider && <div className="border-t border-white/[0.06]" />}
             </div>
           ))}
+
+          <div className="mt-4 pt-4 border-t border-white/[0.06] flex items-center justify-between gap-3">
+            <p className="text-[11px] text-theme-muted">
+              {slip.period_status === 'calculated'
+                ? 'Figures are still being finalised for this period.'
+                : 'Keep this payslip for your records.'}
+            </p>
+            <button
+              type="button"
+              onClick={handleDownload}
+              disabled={downloading}
+              className="btn-secondary text-xs py-2 px-3 flex items-center gap-2 shrink-0 disabled:opacity-60"
+            >
+              <Download size={13} />
+              {downloading ? 'Preparing…' : 'Download PDF'}
+            </button>
+          </div>
+          {downloadError && (
+            <p className="mt-2 text-[11px] text-danger text-right">{downloadError}</p>
+          )}
         </div>
       )}
     </div>
@@ -221,12 +268,14 @@ export default function WalletPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [tab, setTab] = useState<WalletTab>('transactions');
+  const [payslipPeriod, setPayslipPeriod] = useState<string>('all');
 
   useEffect(() => {
     Promise.all([
       api.get<Wallet>('/wallets/me'),
       api.get<WalletTransaction[]>('/wallets/me/transactions'),
-      api.get<PayslipSummary[]>('/payroll/my-summaries'),
+      // include_pending shows the in-progress month as soon as finance calculates it.
+      api.get<PayslipSummary[]>('/payroll/my-summaries?include_pending=true'),
       api.get<PayrollOverview>('/payroll/my-overview'),
       api.get<PaymentNotification[]>('/notifications/me?category=payment'),
     ])
@@ -274,6 +323,11 @@ export default function WalletPage() {
   const period = overview?.current_period ?? null;
   const statusMeta = period ? (PERIOD_STATUS[period.status] ?? { label: period.status, classes: 'bg-white/10 text-theme-muted border-white/10' }) : null;
   const summary = overview?.period_summary;
+
+  const periodLabels = Array.from(new Set(payslips.map((s) => s.period_label)));
+  const visiblePayslips = payslipPeriod === 'all'
+    ? payslips
+    : payslips.filter((s) => s.period_label === payslipPeriod);
 
   return (
     <div className="max-w-4xl mx-auto space-y-6 pb-10">
@@ -489,11 +543,40 @@ export default function WalletPage() {
       {tab === 'payslips' && (
         payslips.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-12 text-center">
-            <p className="text-sm text-theme-muted">No payslips yet — they appear here once a payroll period is approved and paid.</p>
+            <p className="text-sm text-theme-muted">No payslips yet — they appear here once finance calculates your work period.</p>
           </div>
         ) : (
           <div className="space-y-3">
-            {payslips.map((slip) => <PayslipCard key={slip.id} slip={slip} />)}
+            {/* A work period can hold more than one payslip, so filter by name. */}
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPayslipPeriod('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                  payslipPeriod === 'all'
+                    ? 'bg-emerald-accent/20 text-emerald-400 border-emerald-accent/30'
+                    : 'bg-white/[0.04] text-theme-muted border-white/10 hover:text-white'
+                }`}
+              >
+                All periods
+              </button>
+              {periodLabels.map((label) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => setPayslipPeriod(label)}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-semibold border transition-colors ${
+                    payslipPeriod === label
+                      ? 'bg-emerald-accent/20 text-emerald-400 border-emerald-accent/30'
+                      : 'bg-white/[0.04] text-theme-muted border-white/10 hover:text-white'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {visiblePayslips.map((slip) => <PayslipCard key={slip.id} slip={slip} />)}
           </div>
         )
       )}

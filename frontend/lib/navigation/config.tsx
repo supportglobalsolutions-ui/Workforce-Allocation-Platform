@@ -25,7 +25,6 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <CalendarDays size={18} />, label: 'My Schedule', href: '/worker/my-schedule', shortLabel: 'Schedule' },
     { icon: <GraduationCap size={18} />, label: 'Training', href: '/worker/training' },
     { icon: <BookOpen size={18} />, label: 'Assessments', href: '/worker/assessments' },
-    { icon: <Trophy size={18} />, label: 'Leaderboard', href: '/worker/leaderboard' },
     { icon: <Wallet size={18} />, label: 'Wallet & Payments', href: '/worker/wallet', shortLabel: 'Wallet' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/worker/notifications' },
     { icon: <UserCircle size={18} />, label: 'My Profile', href: '/worker/profile', shortLabel: 'Profile' },
@@ -60,7 +59,7 @@ export const PORTAL_TOP_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <LayoutDashboard size={16} />, label: 'Dashboard', href: '/worker/dashboard' },
     { icon: <Monitor size={16} />, label: 'RDP Board', href: '/worker/rdp-claim-board' },
     { icon: <Activity size={16} />, label: 'Session', href: '/worker/active-session' },
-    { icon: <Trophy size={16} />, label: 'Leaderboard', href: '/worker/leaderboard' },
+    { icon: <Wallet size={16} />, label: 'Wallet', href: '/worker/wallet' },
   ],
   admin: [
     { icon: <LayoutDashboard size={16} />, label: 'Command', href: '/admin/dashboard' },

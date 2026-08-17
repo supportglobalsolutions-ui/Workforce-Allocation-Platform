@@ -2,8 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Calculator, CheckCircle, ChevronDown, ChevronRight, Clock,
-  DollarSign, Download, FileText, Pencil, Plus, RotateCcw, Send, Table2, Trash2,
+  AlertCircle, Calculator, Check, CheckCircle, ChevronDown, ChevronRight, Clock,
+  DollarSign, Eye, Pencil, Plus, RotateCcw, Send, Table2, Trash2,
   Users, Wallet, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
@@ -12,6 +12,10 @@ import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import PeriodLedgerModal from '@/components/admin/PeriodLedgerModal';
+import ApplyToManyPanel from '@/components/admin/ApplyToManyPanel';
+import WorkerPayModal, { type PayRow } from '@/components/admin/WorkerPayModal';
+import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
+import PeriodFilter from '@/components/platform/PeriodFilter';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 
@@ -31,29 +35,6 @@ interface PayrollPeriod {
   wallet_pushed_at: string | null;
   paid_at: string | null;
   created_at: string;
-}
-
-interface PayrollSummary {
-  id: string;
-  worker_id: string;
-  worker_display_name: string;
-  worker_country: string;
-  worker_email: string | null;
-  worker_type: string;
-  hours_logged: string | number;
-  rate_per_hour: string | number;
-  base_pay: string | number;
-  bonus: string | number;
-  gross_earned: string | number;
-  transfer_cost: string | number;
-  external_cost: string | number;
-  total_deductions: string | number;
-  final_net: string | number;
-  local_currency: string;
-  fx_rate: string | number | null;
-  base_currency: string;
-  base_equivalent: string | number;
-  exception_flags: string[];
 }
 
 interface CostPool {
@@ -91,14 +72,6 @@ interface Country { name: string; currency_code: string; is_active: boolean; }
 
 const fmt = (x: string | number | null | undefined) =>
   Number(x ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-
-const TYPE_LABELS: Record<string, string> = {
-  gs_registered: 'GS Member',
-  partner_worker: 'Partner',
-  gs_rdp: 'GS RDP',
-  partner_multilog: 'Partner Multilog',
-  third_party_platform: 'Third Party',
-};
 
 const STATUS_CHIP: Record<PeriodStatus, string> = {
   open:       'bg-warning/15 text-warning border-warning/30',
@@ -219,13 +192,13 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
   const initial = boundsForMonth(currentMonthKey());
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [customDates, setCustomDates] = useState(false);
-  const [label, setLabel] = useState(initial.label);
-  const [labelTouched, setLabelTouched] = useState(false);
   const [startDate, setStartDate] = useState(initial.start);
   const [endDate, setEndDate] = useState(initial.end);
   const [currency, setCurrency] = useState<'USD' | 'GBP'>('USD');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const generatedLabel = labelFromMonthKey(monthKeyFromDate(startDate));
 
   function applyMonth(ym: string, keepCustomRange: boolean) {
     const b = boundsForMonth(ym);
@@ -234,7 +207,6 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
       setStartDate(b.start);
       setEndDate(b.end);
     }
-    if (!labelTouched) setLabel(b.label);
   }
 
   function handleMonthChange(ym: string) {
@@ -248,16 +220,12 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
       const b = boundsForMonth(monthKey);
       setStartDate(b.start);
       setEndDate(b.end);
-      if (!labelTouched) setLabel(b.label);
     }
   }
 
   function handleStartChange(iso: string) {
     setStartDate(iso);
-    const ym = monthKeyFromDate(iso);
-    setMonthKey(ym);
-    // Label follows the month the period starts in (e.g. 3 Apr–6 May → April 2026).
-    if (!labelTouched) setLabel(labelFromMonthKey(ym));
+    setMonthKey(monthKeyFromDate(iso));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -269,7 +237,6 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
     setSaving(true); setError(null);
     try {
       const created = await api.post<PayrollPeriod>('/payroll/periods', {
-        label: label.trim() || labelFromMonthKey(monthKey),
         start_date: startDate,
         end_date: endDate,
         currency,
@@ -297,7 +264,7 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
             className="input-field"
           />
           <p className="text-[10px] text-theme-muted mt-1.5 leading-snug">
-            Name defaults to this month (from the start date). You can edit the label below.
+            Named automatically from the start month (e.g. March 2026). Each name can only be used once.
           </p>
         </Field>
 
@@ -334,16 +301,9 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
           </Field>
         </div>
 
-        <Field label="Label">
-          <input
-            required
-            value={label}
-            onChange={(e) => { setLabel(e.target.value); setLabelTouched(true); }}
-            placeholder="e.g. April 2026"
-            className="input-field"
-          />
-          <p className="text-[10px] text-theme-muted mt-1.5 leading-snug">
-            Auto-fills from the start month (e.g. 3 Apr – 6 May → April 2026). Edit anytime.
+        <Field label="Period name">
+          <p className="text-sm font-semibold text-white px-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/10">
+            {generatedLabel}
           </p>
         </Field>
 
@@ -368,73 +328,6 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
   );
 }
 
-// ── Edit Summary Modal ─────────────────────────────────────────────────────────
-
-function EditSummaryModal({ summary, onClose, onSaved }: {
-  summary: PayrollSummary; onClose: () => void; onSaved: (updated: PayrollSummary) => void;
-}) {
-  const [form, setForm] = useState({
-    hours_logged: String(summary.hours_logged ?? ''),
-    rate_per_hour: String(summary.rate_per_hour ?? ''),
-    bonus: String(summary.bonus ?? ''),
-    transfer_cost: String(summary.transfer_cost ?? ''),
-    external_cost: String(summary.external_cost ?? ''),
-  });
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  const set = (key: keyof typeof form) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((f) => ({ ...f, [key]: e.target.value }));
-
-  async function handleSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    setSaving(true); setError(null);
-    try {
-      const updated = await api.patch<PayrollSummary>(`/payroll/summaries/${summary.id}`, {
-        hours_logged: Number(form.hours_logged),
-        rate_per_hour: Number(form.rate_per_hour),
-        bonus: Number(form.bonus),
-        transfer_cost: Number(form.transfer_cost),
-        external_cost: Number(form.external_cost),
-      });
-      onSaved(updated);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to update payslip row.');
-    } finally { setSaving(false); }
-  }
-
-  return (
-    <ModalShell title={`Edit — ${summary.worker_display_name}`}
-      subtitle="Gross, deductions and net are recomputed server-side." onClose={onClose}>
-      <form onSubmit={handleSubmit} className="space-y-4">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <Field label="Hours Logged">
-            <input type="number" step="0.01" min="0" required value={form.hours_logged} onChange={set('hours_logged')} className="input-field" />
-          </Field>
-          <Field label={`Rate / hr (${summary.local_currency})`}>
-            <input type="number" step="0.01" min="0" required value={form.rate_per_hour} onChange={set('rate_per_hour')} className="input-field" />
-          </Field>
-          <Field label={`Bonus (${summary.local_currency})`}>
-            <input type="number" step="0.01" required value={form.bonus} onChange={set('bonus')} className="input-field" />
-          </Field>
-          <Field label={`Transfer Cost (${summary.local_currency})`}>
-            <input type="number" step="0.01" min="0" required value={form.transfer_cost} onChange={set('transfer_cost')} className="input-field" />
-          </Field>
-          <Field label={`External Cost (${summary.local_currency})`}>
-            <input type="number" step="0.01" min="0" required value={form.external_cost} onChange={set('external_cost')} className="input-field" />
-          </Field>
-        </div>
-        {error && <Banner kind="error">{error}</Banner>}
-        <div className="flex gap-3 justify-end pt-1">
-          <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-          <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-            {saving ? <SpinningDots size="sm" /> : <Pencil size={13} />} Save Changes
-          </button>
-        </div>
-      </form>
-    </ModalShell>
-  );
-}
 
 // ── New Rate Modal ─────────────────────────────────────────────────────────────
 
@@ -696,11 +589,14 @@ export default function PayrollWorkbenchPage() {
   const [periodsError, setPeriodsError] = useState<string | null>(null);
   const [showNewPeriod, setShowNewPeriod] = useState(false);
 
-  const [summaries, setSummaries] = useState<PayrollSummary[]>([]);
+  const [ledger, setLedger] = useState<PayRow[]>([]);
   const [summariesLoading, setSummariesLoading] = useState(false);
   const [summariesError, setSummariesError] = useState<string | null>(null);
-  const [editSummary, setEditSummary] = useState<PayrollSummary | null>(null);
+  const [detailRow, setDetailRow] = useState<PayRow | null>(null);
   const [showLedger, setShowLedger] = useState(false);
+  const [audience, setAudience] = useState<'all' | 'gs' | 'partners'>('all');
+  const [search, setSearch] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
 
   const [countries, setCountries] = useState<Country[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
@@ -730,12 +626,14 @@ export default function PayrollWorkbenchPage() {
     } finally { setPeriodsLoading(false); }
   }, []);
 
+  // The ledger lists every active worker, so people with no approved sessions
+  // yet still show up and can be paid.
   const loadSummaries = useCallback(async (periodId: string) => {
     setSummariesLoading(true); setSummariesError(null);
     try {
-      setSummaries(await api.get<PayrollSummary[]>(`/payroll/periods/${periodId}/summaries`));
+      setLedger(await api.get<PayRow[]>(`/payroll/periods/${periodId}/ledger`));
     } catch (e: unknown) {
-      setSummariesError(e instanceof Error ? e.message : 'Failed to load payslip summaries.');
+      setSummariesError(e instanceof Error ? e.message : 'Failed to load payslip rows.');
     } finally { setSummariesLoading(false); }
   }, []);
 
@@ -756,8 +654,9 @@ export default function PayrollWorkbenchPage() {
 
   useEffect(() => {
     if (selectedPeriodId) loadSummaries(selectedPeriodId);
-    else setSummaries([]);
+    else setLedger([]);
     setActionMessage(null);
+    setSelectedIds(new Set());
   }, [selectedPeriodId, loadSummaries]);
 
   useEffect(() => { if (tab === 'rates' && rates.length === 0) loadRates(); }, [tab, rates.length, loadRates]);
@@ -797,29 +696,66 @@ export default function PayrollWorkbenchPage() {
     } finally { setActionBusy(null); }
   }
 
-  async function handlePayslipDownload(s: PayrollSummary) {
-    setDownloadingId(s.id);
+  async function handlePayslipDownload(summaryId: string, workerName: string) {
+    setDownloadingId(summaryId);
     try {
-      await downloadFile(`/payroll/summaries/${s.id}/payslip.pdf`, `payslip-${s.worker_display_name.replace(/\s+/g, '-').toLowerCase()}.pdf`);
+      await downloadFile(`/payroll/summaries/${summaryId}/payslip.pdf`, `payslip-${workerName.replace(/\s+/g, '-').toLowerCase()}.pdf`);
     } catch (e: unknown) {
       setActionMessage({ kind: 'error', text: e instanceof Error ? e.message : 'Payslip download failed.' });
     } finally { setDownloadingId(null); }
   }
 
-  // ── Derived KPIs ──
+  // ── Derived KPIs (payslip rows only) ──
 
   const kpis = useMemo(() => {
-    const totalHours = summaries.reduce((s, r) => s + Number(r.hours_logged ?? 0), 0);
+    const paid = ledger.map((r) => r.summary).filter((s): s is NonNullable<PayRow['summary']> => s !== null);
+    const totalHours = paid.reduce((sum, r) => sum + Number(r.hours_logged ?? 0), 0);
     // base_equivalent is final_net converted to the period's reporting currency;
     // derive gross in reporting currency using each row's net→base ratio.
-    const totalNet = summaries.reduce((s, r) => s + Number(r.base_equivalent ?? 0), 0);
-    const totalGross = summaries.reduce((s, r) => {
+    const totalNet = paid.reduce((sum, r) => sum + Number(r.base_equivalent ?? 0), 0);
+    const totalGross = paid.reduce((sum, r) => {
       const net = Number(r.final_net ?? 0);
       const ratio = net !== 0 ? Number(r.base_equivalent ?? 0) / net : 0;
-      return s + Number(r.gross_earned ?? 0) * ratio;
+      return sum + Number(r.gross_earned ?? 0) * ratio;
     }, 0);
-    return { workers: summaries.length, totalHours, totalGross, totalNet };
-  }, [summaries]);
+    return { workers: paid.length, totalHours, totalGross, totalNet };
+  }, [ledger]);
+
+  // ── Audience filter + search ──
+
+  const visibleRows = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return ledger.filter((r) => {
+      if (audience === 'partners' && r.worker_type !== 'partner_worker') return false;
+      if (audience === 'gs' && r.worker_type === 'partner_worker') return false;
+      if (!q) return true;
+      return (
+        r.worker_display_name.toLowerCase().includes(q) ||
+        r.worker_country.toLowerCase().includes(q) ||
+        (r.worker_pay_tier || '').toLowerCase().includes(q)
+      );
+    });
+  }, [ledger, audience, search]);
+
+  const allVisibleSelected = visibleRows.length > 0 && visibleRows.every((r) => selectedIds.has(r.worker_id));
+
+  function toggleRow(workerId: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(workerId)) next.delete(workerId);
+      else next.add(workerId);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visibleRows.forEach((r) => next.delete(r.worker_id));
+      else visibleRows.forEach((r) => next.add(r.worker_id));
+      return next;
+    });
+  }
 
   const status = selectedPeriod?.status;
   const canCalculate = status === 'open' || status === 'calculated';
@@ -830,8 +766,6 @@ export default function PayrollWorkbenchPage() {
   const summariesLocked = status === 'approved' || status === 'paid';
 
   const baseCur = selectedPeriod?.currency ?? 'USD';
-
-  const summaryRows = summaries.map((s) => ({ ...s, _s: s })) as unknown as Record<string, unknown>[];
 
   const rateRows = rates.map((r) => {
     const worker = r.worker_id ? workers.find((w) => w.id === r.worker_id) : null;
@@ -874,19 +808,13 @@ export default function PayrollWorkbenchPage() {
         </div>
       ) : (
         <>
-          <div className="flex flex-wrap items-center gap-2 mb-5">
-            {periods.map((p) => (
-              <button key={p.id} type="button" onClick={() => setSelectedPeriodId(p.id)}
-                className={`flex items-center gap-2 px-3.5 py-2 rounded-xl border text-xs font-semibold transition-all ${
-                  p.id === selectedPeriodId
-                    ? 'border-emerald-accent/40 bg-emerald-accent/10 text-emerald-accent'
-                    : 'border-white/10 text-theme-muted hover:text-theme-heading hover:border-emerald-accent/20'
-                }`}>
-                {p.label}
-                <PeriodStatusChip status={p.status} />
-              </button>
-            ))}
-          </div>
+          <PeriodFilter
+            periods={periods}
+            value={selectedPeriodId ?? ''}
+            onChange={setSelectedPeriodId}
+            variant="chips"
+            label="Working month"
+          />
 
           {selectedPeriod && (
             <>
@@ -894,7 +822,12 @@ export default function PayrollWorkbenchPage() {
               <div className="glass-panel p-4 mb-5">
                 <div className="flex flex-wrap items-center gap-3">
                   <div className="mr-2">
-                    <p className="text-xs font-bold text-theme-heading">{selectedPeriod.label}</p>
+                    <PeriodNameEditor
+                      period={selectedPeriod}
+                      trailing={<PeriodStatusChip status={selectedPeriod.status} />}
+                      onRenamed={(label) => setPeriods((prev) =>
+                        prev.map((p) => (p.id === selectedPeriod.id ? { ...p, label } : p)))}
+                    />
                     <p className="text-[11px] text-theme-muted">
                       {new Date(selectedPeriod.start_date).toLocaleDateString()} – {new Date(selectedPeriod.end_date).toLocaleDateString()} · reporting in {selectedPeriod.currency}
                     </p>
@@ -956,71 +889,138 @@ export default function PayrollWorkbenchPage() {
               {/* ── Summaries tab ── */}
               {tab === 'summaries' && (
                 <>
+                  {!summariesLocked && (
+                    <ApplyToManyPanel
+                      periodId={selectedPeriod.id}
+                      periodLabel={selectedPeriod.label}
+                      periodCurrency={selectedPeriod.currency}
+                      rows={visibleRows}
+                      selectedIds={selectedIds}
+                      onApplied={(count) => {
+                        setActionMessage({ kind: 'success', text: `Applied to ${count} worker${count === 1 ? '' : 's'}.` });
+                        loadSummaries(selectedPeriod.id);
+                        loadPeriods(selectedPeriod.id);
+                      }}
+                      onError={(text) => setActionMessage({ kind: 'error', text })}
+                    />
+                  )}
+
                   <CostPoolsPanel periodId={selectedPeriod.id} countries={countries} disabled={summariesLocked} />
+
+                  {/* ── Audience filter + search ── */}
+                  <div className="flex flex-wrap items-center gap-3 mb-4">
+                    <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1">
+                      {([['all', 'All'], ['gs', 'GS only'], ['partners', 'Partners only']] as const).map(([key, label]) => (
+                        <button key={key} type="button" onClick={() => setAudience(key)}
+                          className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-colors ${
+                            audience === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
+                          }`}>
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <input value={search} onChange={(e) => setSearch(e.target.value)}
+                      placeholder="Search workers…" className="input-field !py-1.5 text-sm w-full max-w-xs" />
+                    <div className="flex-1" />
+                    <p className="text-[11px] text-theme-muted">
+                      {visibleRows.length} worker{visibleRows.length === 1 ? '' : 's'}
+                      {selectedIds.size > 0 && ` · ${selectedIds.size} selected`}
+                    </p>
+                  </div>
 
                   {summariesLoading ? (
                     <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
                   ) : summariesError ? (
                     <Banner kind="error">{summariesError}</Banner>
                   ) : (
-                    <DataTable
-                      columns={[
-                        {
-                          key: 'worker_display_name', header: 'Worker',
-                          render: (r) => (
-                            <div>
-                              <p className="font-medium text-theme-heading">{r.worker_display_name as string}</p>
-                              {(r.worker_email as string | null) && <p className="text-[11px] text-theme-muted">{r.worker_email as string}</p>}
-                            </div>
-                          ),
-                        },
-                        { key: 'worker_country', header: 'Country' },
-                        { key: 'worker_type', header: 'Type', render: (r) => TYPE_LABELS[r.worker_type as string] ?? (r.worker_type as string) },
-                        { key: 'hours_logged', header: 'Hours', render: (r) => Number(r.hours_logged ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 }) },
-                        { key: 'rate_per_hour', header: 'Rate/hr', render: (r) => fmt(r.rate_per_hour as string) },
-                        { key: 'base_pay', header: 'Base Pay', render: (r) => fmt(r.base_pay as string) },
-                        { key: 'bonus', header: 'Bonus', render: (r) => fmt(r.bonus as string) },
-                        { key: 'gross_earned', header: 'Gross', render: (r) => fmt(r.gross_earned as string) },
-                        { key: 'transfer_cost', header: 'Transfer', render: (r) => fmt(r.transfer_cost as string) },
-                        { key: 'external_cost', header: 'External', render: (r) => fmt(r.external_cost as string) },
-                        { key: 'total_deductions', header: 'Deductions', render: (r) => fmt(r.total_deductions as string) },
-                        {
-                          key: 'final_net', header: 'Final Net',
-                          render: (r) => (
-                            <span className={`font-bold ${Number(r.final_net) < 0 ? 'text-danger' : 'text-emerald-accent'}`}>
-                              {fmt(r.final_net as string)}
-                            </span>
-                          ),
-                        },
-                        { key: 'local_currency', header: 'Local' },
-                        { key: 'base_equivalent', header: `${baseCur} Equiv.`, render: (r) => <span className="text-gold-accent">{fmt(r.base_equivalent as string)}</span> },
-                        { key: 'exception_flags', header: 'Flags', render: (r) => <FlagChips flags={r.exception_flags as string[]} /> },
-                        {
-                          key: '_actions', header: '',
-                          render: (r) => {
-                            const s = (r as { _s: PayrollSummary })._s;
-                            return (
-                              <div className="flex items-center gap-1.5">
-                                <button type="button" onClick={() => setEditSummary(s)} disabled={summariesLocked}
-                                  title={summariesLocked ? 'Reopen the period to edit' : 'Edit payslip row'}
-                                  className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading transition-colors disabled:opacity-30"
-                                  style={{ background: 'var(--surface-container)', border: '1px solid var(--glass-border)' }}>
-                                  <Pencil size={13} />
-                                </button>
-                                <button type="button" onClick={() => handlePayslipDownload(s)} disabled={downloadingId === s.id}
-                                  title="Download payslip PDF"
-                                  className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading transition-colors"
-                                  style={{ background: 'var(--surface-container)', border: '1px solid var(--glass-border)' }}>
-                                  {downloadingId === s.id ? <SpinningDots size="sm" /> : <FileText size={13} />}
-                                </button>
-                              </div>
-                            );
-                          },
-                        },
-                      ]}
-                      data={summaryRows}
-                      emptyMessage={status === 'open' ? 'No payslip rows yet — run Calculate to generate them.' : 'No payslip rows for this period.'}
-                    />
+                    <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+                      <div className="overflow-x-auto">
+                        <table className="w-full text-sm">
+                          <thead>
+                            <tr className="border-b border-white/5 bg-white/[0.02]">
+                              <th className="px-3 py-3 w-9">
+                                <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible}
+                                  aria-label="Select all visible workers" className="accent-emerald-400" />
+                              </th>
+                              {['Worker', 'Hours', 'Rate/hr', 'Base Pay', 'Bonus', 'Gross', 'Deductions', 'Final Net', 'Currency', 'Flags', ''].map((h, i) => (
+                                <th key={h || `col-${i}`}
+                                  className={`px-3 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted whitespace-nowrap ${
+                                    i === 0 || i >= 9 ? 'text-left' : 'text-right'
+                                  }`}>
+                                  {h}
+                                </th>
+                              ))}
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {visibleRows.length === 0 && (
+                              <tr>
+                                <td colSpan={12} className="px-4 py-10 text-center text-theme-muted text-sm">
+                                  No workers match this filter.
+                                </td>
+                              </tr>
+                            )}
+                            {visibleRows.map((r) => {
+                              const s = r.summary;
+                              const cur = s?.local_currency ?? '—';
+                              return (
+                                <tr key={r.worker_id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                                  <td className="px-3 py-2.5">
+                                    <input type="checkbox" checked={selectedIds.has(r.worker_id)}
+                                      onChange={() => toggleRow(r.worker_id)}
+                                      aria-label={`Select ${r.worker_display_name}`} className="accent-emerald-400" />
+                                  </td>
+                                  <td className="px-3 py-2.5">
+                                    <p className="font-medium text-theme-heading">{r.worker_display_name}</p>
+                                    <p className="text-[11px] text-theme-muted">
+                                      {r.worker_country} · {r.worker_type === 'partner_worker' ? 'Partner' : 'GS'}
+                                      {r.worker_pay_tier ? ` · ${r.worker_pay_tier}` : ''}
+                                    </p>
+                                  </td>
+                                  {s ? (
+                                    <>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">
+                                        {Number(s.hours_logged ?? 0).toFixed(2)}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.rate_per_hour)}</td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.base_pay)}</td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.bonus)}</td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.gross_earned)}</td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{fmt(s.total_deductions)}</td>
+                                      <td className={`px-3 py-2.5 text-right tabular-nums font-bold ${
+                                        Number(s.final_net) < 0 ? 'text-danger' : 'text-emerald-accent'
+                                      }`}>
+                                        {fmt(s.final_net)}
+                                      </td>
+                                      <td className="px-3 py-2.5 text-left font-mono text-[11px] text-theme-muted">{cur}</td>
+                                      <td className="px-3 py-2.5"><FlagChips flags={s.exception_flags ?? []} /></td>
+                                    </>
+                                  ) : (
+                                    <td colSpan={9} className="px-3 py-2.5 text-[11px] text-theme-muted">
+                                      No payslip row yet — {Number(r.suggested_hours ?? 0).toFixed(2)} h of evidence.
+                                      {' '}Open the eye to pay this worker.
+                                    </td>
+                                  )}
+                                  <td className="px-3 py-2.5 text-right">
+                                    <button type="button" onClick={() => setDetailRow(r)}
+                                      title={summariesLocked ? 'View payslip detail' : 'View and edit payslip detail'}
+                                      className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading transition-colors"
+                                      style={{ background: 'var(--surface-container)', border: '1px solid var(--glass-border)' }}>
+                                      <Eye size={13} />
+                                    </button>
+                                  </td>
+                                </tr>
+                              );
+                            })}
+                          </tbody>
+                        </table>
+                      </div>
+                      {status === 'open' && ledger.every((r) => !r.summary) && (
+                        <p className="px-4 py-3 text-[11px] text-theme-muted border-t border-white/[0.06]">
+                          Nothing calculated yet. Run <strong>Seed from sessions</strong>, or pay someone directly through the eye.
+                        </p>
+                      )}
+                    </div>
                   )}
                 </>
               )}
@@ -1077,14 +1077,22 @@ export default function PayrollWorkbenchPage() {
           onCreated={(p) => { setShowNewPeriod(false); loadPeriods(p.id); }}
         />
       )}
-      {editSummary && (
-        <EditSummaryModal
-          summary={editSummary}
-          onClose={() => setEditSummary(null)}
-          onSaved={(updated) => {
-            setSummaries((prev) => prev.map((s) => (s.id === updated.id ? updated : s)));
-            setEditSummary(null);
+      {detailRow && selectedPeriod && (
+        <WorkerPayModal
+          row={detailRow}
+          periodId={selectedPeriod.id}
+          periodLabel={selectedPeriod.label}
+          periodCurrency={selectedPeriod.currency}
+          defaultCurrency={
+            countries.find((c) => c.name === detailRow.worker_country)?.currency_code ?? selectedPeriod.currency
+          }
+          locked={summariesLocked}
+          onClose={() => setDetailRow(null)}
+          onSaved={() => {
+            loadSummaries(selectedPeriod.id);
+            loadPeriods(selectedPeriod.id);
           }}
+          onDownloadPayslip={(summaryId) => handlePayslipDownload(summaryId, detailRow.worker_display_name)}
         />
       )}
       {showNewRate && (

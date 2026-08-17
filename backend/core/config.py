@@ -48,6 +48,19 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "GlobalSolutions <noreply@gsdeck.com>"
 
+    # Public URL of the frontend, used to build links in outgoing email
+    # (e.g. the payslip "View in your wallet" button).
+    APP_BASE_URL: str = "http://localhost:3000"
+
+    # ── Bulk email dispatcher ─────────────────────────────────
+    # The queue is drained by a background loop so a 1000-recipient send never
+    # blocks the HTTP request. Resend allows ~10 requests/second.
+    EMAIL_DISPATCH_INTERVAL_SECONDS: int = 5
+    EMAIL_DISPATCH_CLAIM_SIZE: int = 100       # items claimed per tick (one batch call)
+    EMAIL_DISPATCH_MAX_ATTEMPTS: int = 3
+    EMAIL_DISPATCH_STUCK_MINUTES: int = 10     # reclaim items stuck in `claimed` this long
+    EMAIL_DISPATCH_ENABLED: bool = True
+
     # ── FX rates ──────────────────────────────────────────────
     # Free endpoint returning {"rates": {"KES": 129.3, ...}} for a base currency.
     FX_API_URL: str = "https://open.er-api.com/v6/latest"

@@ -21,7 +21,6 @@ interface WorkSession {
 interface QualityScore {
   composite_score: number;
   global_rank: number | null;
-  session_streak_days: number | null;
 }
 
 interface Me {

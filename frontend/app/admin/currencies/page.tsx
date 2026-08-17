@@ -1,7 +1,7 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
-import { AlertCircle, ChevronDown, ChevronUp, Globe, Plus, RefreshCw } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { AlertCircle, Check, ChevronDown, ChevronUp, Coins, Globe, Pencil, Plus, RefreshCw, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -27,10 +27,30 @@ interface FxRate {
   created_at: string;
 }
 
+interface Currency {
+  id: string;
+  code: string;
+  name: string;
+  symbol: string | null;
+  is_active: boolean;
+  usd_rate: number | null;
+  usd_rate_source: 'manual' | 'api' | 'identity' | 'derived' | null;
+  gbp_rate: number | null;
+  created_at: string;
+}
+
 type BaseCurrency = 'USD' | 'GBP';
 
 const fmtRate = (x: number) =>
   Number(x).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+/** Small currencies like GBP sit below 1, so keep enough precision to be readable. */
+const fmtExchange = (x: number | null) => {
+  if (x === null || x === undefined) return '—';
+  const n = Number(x);
+  const digits = n !== 0 && Math.abs(n) < 10 ? 4 : 2;
+  return n.toLocaleString(undefined, { minimumFractionDigits: digits, maximumFractionDigits: digits });
+};
 
 function SourceChip({ source }: { source: 'manual' | 'api' }) {
   return (
@@ -41,6 +61,213 @@ function SourceChip({ source }: { source: 'manual' | 'api' }) {
     }`}>
       {source}
     </span>
+  );
+}
+
+// ── Currency catalog panel ─────────────────────────────────────────────────────
+
+function RateSourceChip({ source }: { source: Currency['usd_rate_source'] }) {
+  if (!source || source === 'identity') return null;
+  const styles: Record<string, string> = {
+    manual:  'bg-gold-accent/20 text-gold-accent border-gold-accent/30',
+    api:     'bg-white/10 text-theme-muted border-white/10',
+    derived: 'bg-blue-500/15 text-blue-400 border-blue-500/30',
+  };
+  return (
+    <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider border ${styles[source]}`}>
+      {source}
+    </span>
+  );
+}
+
+function CurrenciesPanel({ onChanged }: { onChanged: () => void }) {
+  const [currencies, setCurrencies] = useState<Currency[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({ code: '', name: '', usd_rate: '' });
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editRate, setEditRate] = useState('');
+  const [rowBusy, setRowBusy] = useState<string | null>(null);
+
+  const load = useCallback(() => {
+    api.get<Currency[]>('/currencies/list')
+      .then(setCurrencies)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load currencies'));
+  }, []);
+
+  useEffect(load, [load]);
+
+  async function handleAdd(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true);
+    setFormError(null);
+    try {
+      await api.post<Currency>('/currencies/list', {
+        code: form.code.trim().toUpperCase(),
+        name: form.name.trim(),
+        ...(form.usd_rate !== '' ? { usd_rate: Number(form.usd_rate) } : {}),
+      });
+      setForm({ code: '', name: '', usd_rate: '' });
+      setShowAdd(false);
+      load();
+      onChanged();
+    } catch (e: unknown) {
+      setFormError(e instanceof Error ? e.message : 'Failed to add currency.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveRate(c: Currency) {
+    setRowBusy(c.id);
+    setError(null);
+    try {
+      await api.patch<Currency>(`/currencies/list/${c.id}`, { usd_rate: Number(editRate) });
+      setEditingId(null);
+      load();
+      onChanged();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to save rate.');
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
+  async function toggleActive(c: Currency) {
+    setRowBusy(c.id);
+    try {
+      await api.patch<Currency>(`/currencies/list/${c.id}`, { is_active: !c.is_active });
+      load();
+      onChanged();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Failed to update currency.');
+    } finally {
+      setRowBusy(null);
+    }
+  }
+
+  return (
+    <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3 border-b border-white/[0.06]">
+        <div>
+          <h2 className="text-xs font-bold uppercase tracking-wider text-theme-heading flex items-center gap-2">
+            <Coins size={13} className="text-gold-accent" /> Currencies
+          </h2>
+          <p className="text-[11px] text-theme-muted mt-0.5">
+            Every rate is <strong>1 USD = x</strong>. GBP is one of these rows, so the GBP column is worked out from it automatically.
+          </p>
+        </div>
+        <button type="button" onClick={() => setShowAdd((v) => !v)} className="btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5">
+          <Plus size={12} /> Add Currency
+        </button>
+      </div>
+
+      {showAdd && (
+        <form onSubmit={handleAdd} className="px-4 py-3 border-b border-white/[0.06] flex flex-wrap items-end gap-3 bg-white/[0.02]">
+          <div className="w-24">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Code</label>
+            <input required minLength={3} maxLength={3} value={form.code}
+              onChange={(e) => setForm((f) => ({ ...f, code: e.target.value.toUpperCase() }))}
+              placeholder="UGX" className="input-field uppercase" />
+          </div>
+          <div className="flex-1 min-w-[10rem]">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Name</label>
+            <input required value={form.name}
+              onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
+              placeholder="Ugandan Shilling" className="input-field" />
+          </div>
+          <div className="w-40">
+            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Rate (1 USD =)</label>
+            <input type="number" step="any" min={0} value={form.usd_rate}
+              onChange={(e) => setForm((f) => ({ ...f, usd_rate: e.target.value }))}
+              placeholder="3750" className="input-field" />
+          </div>
+          <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 disabled:opacity-60">
+            {saving ? 'Adding…' : 'Add'}
+          </button>
+          {formError && <p className="w-full text-xs text-danger">{formError}</p>}
+        </form>
+      )}
+
+      {error && <p className="text-danger text-sm px-4 py-3 flex items-center gap-2"><AlertCircle size={14} /> {error}</p>}
+
+      {currencies === null ? (
+        <div className="flex justify-center py-10"><SpinningDots size="md" className="text-emerald-accent" /></div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-white/5 bg-white/[0.02]">
+                {['Code', 'Name', '1 USD =', '1 GBP =', 'Active'].map((h) => (
+                  <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted whitespace-nowrap">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {currencies.length === 0 && (
+                <tr><td colSpan={5} className="px-4 py-8 text-center text-theme-muted">No currencies yet.</td></tr>
+              )}
+              {currencies.map((c) => {
+                const isUsd = c.code === 'USD';
+                const editing = editingId === c.id;
+                return (
+                  <tr key={c.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                    <td className="px-4 py-2.5 font-mono text-xs font-bold text-theme-heading">{c.code}</td>
+                    <td className="px-4 py-2.5 text-theme-heading">{c.name}</td>
+                    <td className="px-4 py-2.5 whitespace-nowrap">
+                      {isUsd ? (
+                        <span className="text-theme-muted">1.00 (base)</span>
+                      ) : editing ? (
+                        <span className="inline-flex items-center gap-1.5">
+                          <input type="number" step="any" min={0} autoFocus value={editRate}
+                            onChange={(e) => setEditRate(e.target.value)}
+                            className="input-field !py-1 !px-2 w-28 text-sm" />
+                          <button type="button" disabled={rowBusy === c.id || editRate === ''} onClick={() => saveRate(c)}
+                            title="Save rate"
+                            className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-emerald-accent hover:bg-emerald-accent/10 disabled:opacity-40">
+                            {rowBusy === c.id ? <SpinningDots size="sm" /> : <Check size={13} />}
+                          </button>
+                          <button type="button" onClick={() => setEditingId(null)} title="Cancel"
+                            className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading">
+                            <X size={13} />
+                          </button>
+                        </span>
+                      ) : (
+                        <span className="inline-flex items-center gap-2">
+                          <span className="font-bold tabular-nums text-theme-heading">{fmtExchange(c.usd_rate)}</span>
+                          <RateSourceChip source={c.usd_rate_source} />
+                          <button type="button"
+                            onClick={() => { setEditingId(c.id); setEditRate(c.usd_rate != null ? String(c.usd_rate) : ''); }}
+                            title="Edit rate"
+                            className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/5">
+                            <Pencil size={12} />
+                          </button>
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-2.5 tabular-nums text-theme-muted whitespace-nowrap">{fmtExchange(c.gbp_rate)}</td>
+                    <td className="px-4 py-2.5">
+                      <button type="button" disabled={rowBusy === c.id} onClick={() => toggleActive(c)}
+                        title="Click to toggle"
+                        className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border transition-colors disabled:opacity-50 ${
+                          c.is_active
+                            ? 'bg-emerald-accent/20 text-emerald-accent border-emerald-accent/30 hover:bg-emerald-accent/30'
+                            : 'bg-white/10 text-theme-muted border-white/10 hover:bg-white/20'
+                        }`}>
+                        {c.is_active ? 'Active' : 'Inactive'}
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -405,6 +632,7 @@ function FxRatesPanel({ countries }: { countries: Country[] }) {
 
 export default function CurrenciesPage() {
   const [countries, setCountries] = useState<Country[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     api.get<Country[]>('/currencies/countries').then(setCountries).catch(() => {});
@@ -414,12 +642,13 @@ export default function CurrenciesPage() {
     <div>
       <PageHeader
         title="Currencies & FX Rates"
-        description="Base currencies are USD and GBP; local payouts convert using these rates. Manual entries override API rates, and rates are frozen per payslip on pay day."
+        description="USD is the base currency and GBP is quoted against it. Every payout currency converts from USD or GBP, never the other way. Manual entries override API rates, and rates are frozen per payslip on pay day."
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />
       <div className="space-y-6">
+        <CurrenciesPanel onChanged={() => setReloadKey((k) => k + 1)} />
         <CountriesPanel />
-        <FxRatesPanel countries={countries} />
+        <FxRatesPanel key={reloadKey} countries={countries} />
       </div>
     </div>
   );

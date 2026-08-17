@@ -22,9 +22,10 @@ from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary, 
 from .session      import Session                                                             # noqa: F401
 from .rate_table   import RateTableEntry                                                      # noqa: F401
 from .payment_tier import PaymentTier                                                         # noqa: F401
-from .currency     import Country, FxRate                                                     # noqa: F401
+from .currency     import Country, Currency, FxRate                                           # noqa: F401
 from .wallet       import Wallet, WalletTransaction                                           # noqa: F401
 from .email_log    import EmailLog                                                            # noqa: F401
+from .email_job    import EmailJob, EmailJobItem                                              # noqa: F401
 from .quality      import QualityIndicator, QualityIndicatorRating, QualityCompositeScore     # noqa: F401
 from .mcq               import McqAssessmentSet, McqQuestion, McqResult, McqResultAnswer      # noqa: F401
 from .task_assessment   import TaskAssessment, TaskAssessmentResult                           # noqa: F401

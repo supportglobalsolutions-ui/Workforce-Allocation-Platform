@@ -216,11 +216,17 @@ def get_default_indicator(
 
 @router.post("/recalculate")
 def recalculate_scores(
+    payroll_period_id: UUID | None = None,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Recompute both leaderboard views (calendar month + payroll period)."""
-    return quality_engine.recalculate_all(db)
+    """Recompute leaderboard snapshots. Omit payroll_period_id to refresh calendar + latest period."""
+    try:
+        if payroll_period_id:
+            return quality_engine.recalculate(db, "payroll", payroll_period_id=payroll_period_id)
+        return quality_engine.recalculate_all(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
 
 
 @router.patch("/ratings/{rating_id}", response_model=QualityIndicatorRatingResponse)

@@ -6,6 +6,7 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -31,6 +32,7 @@ from schemas.payroll import (
 )
 from services import payroll_engine
 from services.fx import currency_for_country
+from services.period_labels import period_label_from_date
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
 from services.session_evidence import evidence_hours_for_worker
 from .deps import apply_update, get_admin_user, get_worker_for_user
@@ -64,9 +66,25 @@ def create_payroll_period(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    period = PayrollPeriod(**body.model_dump())
+    label = period_label_from_date(body.start_date)
+    existing = db.exec(select(PayrollPeriod).where(PayrollPeriod.label == label)).first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A period named {label} already exists.",
+        )
+    data = body.model_dump()
+    data["label"] = label
+    period = PayrollPeriod(**data)
     db.add(period)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A period named {label} already exists.",
+        )
     db.refresh(period)
     return period
 
@@ -82,9 +100,30 @@ def update_payroll_period(
     if not period:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Payroll period not found")
 
+    if body.label is not None:
+        label = body.label.strip()
+        if not label:
+            raise HTTPException(status_code=400, detail="Period name cannot be empty.")
+        clash = db.exec(
+            select(PayrollPeriod).where(PayrollPeriod.label == label, PayrollPeriod.id != period_id)
+        ).first()
+        if clash:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"A period named {label} already exists.",
+            )
+        body.label = label
+
     apply_update(period, body)
     db.add(period)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"A period named {body.label} already exists.",
+        )
     db.refresh(period)
     return period
 
@@ -237,6 +276,30 @@ def _summary_response(db: Session, summary: PayrollWorkerSummary, period: Payrol
     return resp
 
 
+def _apply_currency_switch(
+    summary: PayrollWorkerSummary,
+    period: PayrollPeriod,
+    new_currency: str | None,
+    explicit_fx: Decimal | None,
+    db: Session,
+) -> None:
+    """
+    Move a payslip row onto a different payout currency.
+
+    recompute_summary keeps a locked row's stored fx_rate, and every admin edit
+    locks the row, so the old currency's rate has to be replaced here or the row
+    would keep converting at it.
+    """
+    if not new_currency:
+        return
+    code = new_currency.strip().upper()
+    if not code or code == summary.local_currency:
+        return
+    summary.local_currency = code
+    if explicit_fx is None:
+        summary.fx_rate = payroll_engine._fx_to_local(db, period, code)
+
+
 @router.get("/periods/{period_id}/summaries", response_model=list[PayrollWorkerSummaryResponse])
 def list_period_summaries(
     period_id: UUID,
@@ -332,10 +395,11 @@ def bulk_upsert_summaries(
             )
             existing[item.worker_id] = summary
 
-        data = item.model_dump(exclude_unset=True, exclude={"worker_id"})
+        data = item.model_dump(exclude_unset=True, exclude={"worker_id", "local_currency"})
         for key, value in data.items():
             if value is not None:
                 setattr(summary, key, value)
+        _apply_currency_switch(summary, period, item.local_currency, item.fx_rate, db)
         if item.admin_locked is None:
             summary.admin_locked = True
         db.add(summary)
@@ -365,7 +429,10 @@ def update_summary(
     period = db.get(PayrollPeriod, summary.payroll_period_id)
     if period and period.status == PayrollPeriodStatusEnum.paid:
         raise HTTPException(status_code=400, detail="This period is already paid.")
-    apply_update(summary, body)
+    for field, value in body.model_dump(exclude_unset=True, exclude={"local_currency"}).items():
+        setattr(summary, field, value)
+    if period:
+        _apply_currency_switch(summary, period, body.local_currency, body.fx_rate, db)
     if body.model_dump(exclude_unset=True):
         summary.admin_locked = True if body.admin_locked is not False else summary.admin_locked
         if body.admin_locked is None:
@@ -376,17 +443,26 @@ def update_summary(
 
 @router.get("/my-summaries", response_model=list[PayrollWorkerSummaryResponse])
 def my_payroll_history(
+    include_pending: bool = False,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    """Worker payslip history (approved/paid periods only) for the wallet page."""
+    """
+    Worker payslip history for the wallet page, newest period first.
+
+    Approved and paid periods are always included. `include_pending` also returns
+    calculated periods, so a worker can preview the month before it is approved.
+    """
     worker = get_worker_for_user(db, current_user)
+    statuses = [PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid]
+    if include_pending:
+        statuses.append(PayrollPeriodStatusEnum.calculated)
     rows = db.exec(
         select(PayrollWorkerSummary, PayrollPeriod)
         .join(PayrollPeriod, PayrollPeriod.id == PayrollWorkerSummary.payroll_period_id)
         .where(
             PayrollWorkerSummary.worker_id == worker.id,
-            PayrollPeriod.status.in_([PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid]),
+            PayrollPeriod.status.in_(statuses),
         )
         .order_by(PayrollPeriod.start_date.desc())
     ).all()
@@ -394,6 +470,7 @@ def my_payroll_history(
     for summary, period in rows:
         resp = PayrollWorkerSummaryResponse.model_validate(summary)
         resp.period_label = period.label
+        resp.period_status = period.status.value
         result.append(resp)
     return result
 
@@ -519,6 +596,40 @@ def download_payslip_pdf(
     if not summary:
         raise HTTPException(status_code=404, detail="Payroll summary not found")
     period = db.get(PayrollPeriod, summary.payroll_period_id)
+    filename, pdf = _pdf_for_summary(db, summary, period)
+    return Response(
+        content=pdf,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
+
+
+@router.get("/my-summaries/{summary_id}/payslip.pdf")
+def download_my_payslip_pdf(
+    summary_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """
+    Worker download of their own payslip. Separate from the admin route so the
+    ownership check cannot be bypassed by guessing a summary id.
+    """
+    worker = get_worker_for_user(db, current_user)
+    summary = db.get(PayrollWorkerSummary, summary_id)
+    if not summary or summary.worker_id != worker.id:
+        raise HTTPException(status_code=404, detail="Payslip not found")
+
+    period = db.get(PayrollPeriod, summary.payroll_period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    # Mirrors /my-summaries: an open period has no payslip to publish yet.
+    if period.status not in (
+        PayrollPeriodStatusEnum.calculated,
+        PayrollPeriodStatusEnum.approved,
+        PayrollPeriodStatusEnum.paid,
+    ):
+        raise HTTPException(status_code=404, detail="Payslip is not available yet")
+
     filename, pdf = _pdf_for_summary(db, summary, period)
     return Response(
         content=pdf,

@@ -1,5 +1,14 @@
-import base64
+"""
+Bulk email surface: payslips and broadcasts.
+
+Sends are queued, not performed inline. The endpoint validates the audience,
+writes an email_jobs row plus one email_job_items row per recipient, and returns
+202 with a job id. services/email_dispatch.py drains the queue in the background,
+which is what lets a 1000-recipient run finish without timing out the request or
+losing progress on a restart.
+"""
 import logging
+from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
@@ -10,12 +19,14 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import require_admin
 from models.admin_users import AdminUser
+from models.email_job import EmailJob, EmailJobItem
 from models.email_log import EmailLog
 from models.enums import WorkerStatusEnum, WorkerTypeEnum
+from models.notification import Notification
 from models.payroll import PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
-from services.email_resend import is_valid_email_address, render_broadcast_html, render_payslip_html, send_email
-from services.payslip_pdf import build_payslip_pdf, payslip_rows
+from routers.deps import get_admin_user
+from services.email_resend import blocked_recipient_reason, is_valid_email_address
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -26,6 +37,8 @@ class SendPayslipsRequest(BaseModel):
     worker_ids: Optional[list[UUID]] = None  # None = every worker in the period
     attach_pdf: bool = False
     override_email: Optional[str] = None     # send every payslip to this address instead (testing)
+    force_resend: bool = False               # re-send to workers already emailed for this period
+    notify_in_app: bool = True               # also raise a wallet notification
 
 
 class BroadcastRequest(BaseModel):
@@ -45,13 +58,43 @@ def _worker_email(db: Session, worker: Worker) -> Optional[str]:
     return admin_user.email if admin_user else None
 
 
-@router.post("/payslips/send")
+def _job_response(db: Session, job: EmailJob) -> dict:
+    items = db.exec(select(EmailJobItem).where(EmailJobItem.job_id == job.id)).all()
+    tally: dict[str, int] = {}
+    for item in items:
+        tally[item.status] = tally.get(item.status, 0) + 1
+    errors = [
+        f"{i.to_email}: {i.error}"
+        for i in items
+        if i.status == "failed" and i.error
+    ][:5]
+    return {
+        "job_id": str(job.id),
+        "kind": job.kind,
+        "status": job.status,
+        "subject": job.subject,
+        "attach_pdf": job.attach_pdf,
+        "payroll_period_id": str(job.payroll_period_id) if job.payroll_period_id else None,
+        "total": job.total,
+        "sent": tally.get("sent", 0),
+        "failed": tally.get("failed", 0),
+        "skipped": tally.get("skipped", 0),
+        "pending": tally.get("pending", 0) + tally.get("claimed", 0),
+        "error": job.error,
+        "errors": errors,
+        "created_at": job.created_at.isoformat() if job.created_at else None,
+        "started_at": job.started_at.isoformat() if job.started_at else None,
+        "finished_at": job.finished_at.isoformat() if job.finished_at else None,
+    }
+
+
+@router.post("/payslips/send", status_code=status.HTTP_202_ACCEPTED)
 def send_payslips(
     body: SendPayslipsRequest,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
-    """Email HTML payslips (optional PDF attachment) to workers for a period."""
+    """Queue payslip emails for a period and return the job to poll."""
     period = db.get(PayrollPeriod, body.payroll_period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
@@ -66,70 +109,109 @@ def send_payslips(
         raise HTTPException(status_code=400, detail="No payslip summaries — calculate the period first.")
 
     override = (body.override_email or "").strip()
-    if override and "@" not in override:
-        raise HTTPException(status_code=400, detail="Override email is not a valid address.")
+    if override:
+        blocked = blocked_recipient_reason(override)
+        if blocked:
+            raise HTTPException(status_code=400, detail=blocked)
 
-    sent = failed = skipped = 0
-    errors: list[str] = []
+    # Workers already emailed for this period are left alone unless asked again,
+    # so re-running the send after fixing a few rows does not spam everyone.
+    already_sent: set[UUID] = set()
+    if not body.force_resend:
+        prior = db.exec(
+            select(EmailLog.worker_id).where(
+                EmailLog.payroll_period_id == period.id,
+                EmailLog.template == "payslip",
+                EmailLog.status == "sent",
+            )
+        ).all()
+        already_sent = {w for w in prior if w}
+
+    admin = get_admin_user(db, current_user)
+    job = EmailJob(
+        kind="payslip",
+        subject=f"Your GlobalSolutions payslip — {period.label}",
+        attach_pdf=body.attach_pdf,
+        payroll_period_id=period.id,
+        created_by=admin.id,
+    )
+    db.add(job)
+    db.flush()
+
+    queued = 0
+    skipped_no_email = 0
+    skipped_already = 0
+    seen_workers: set[UUID] = set()
+
     for summary in summaries:
         worker = db.get(Worker, summary.worker_id)
-        if not worker:
-            skipped += 1
+        if not worker or worker.id in seen_workers:
             continue
+        seen_workers.add(worker.id)
+
+        if worker.id in already_sent:
+            skipped_already += 1
+            continue
+
         email = override or _worker_email(db, worker)
-        if not email:
-            skipped += 1
+        if not email or not is_valid_email_address(email):
+            skipped_no_email += 1
             continue
 
-        rows = payslip_rows(summary)
-        html = render_payslip_html(
-            worker_name=worker.display_name,
-            period_label=period.label,
-            local_currency=summary.local_currency,
-            base_currency=summary.base_currency or period.currency,
-            rows=rows,
-        )
-        attachments = None
-        if body.attach_pdf:
-            pdf = build_payslip_pdf(
-                worker_name=worker.display_name,
-                period_label=period.label,
-                local_currency=summary.local_currency,
-                base_currency=summary.base_currency or period.currency,
-                rows=rows,
-            )
-            attachments = [{
-                "filename": f"payslip-{period.label.replace(' ', '-')}-{worker.display_name.replace(' ', '-')}.pdf",
-                "content": base64.b64encode(pdf).decode(),
-            }]
-
-        log = send_email(
-            db,
-            to_email=email,
-            subject=f"Your GlobalSolutions payslip — {period.label}",
-            html=html,
-            template="payslip",
-            attachments=attachments,
-            payroll_period_id=period.id,
+        db.add(EmailJobItem(
+            job_id=job.id,
             worker_id=worker.id,
-        )
-        if log.status == "sent":
-            sent += 1
-        else:
-            failed += 1
-            if log.error and len(errors) < 5:
-                errors.append(f"{email}: {log.error}")
+            payroll_worker_summary_id=summary.id,
+            to_email=email,
+        ))
+        queued += 1
 
-    return {"sent": sent, "failed": failed, "skipped": skipped, "errors": errors}
+        if body.notify_in_app:
+            db.add(Notification(
+                sender_admin_id=admin.id,
+                title=f"Payslip ready — {period.label}",
+                message=(
+                    f"Your payslip for {period.label} is available. "
+                    f"Net pay due: {summary.local_currency} {summary.final_net:,.2f}."
+                    if summary.final_net is not None
+                    else f"Your payslip for {period.label} is available in your wallet."
+                ),
+                category="payment",
+                target_type="specific",
+                target_worker_id=worker.id,
+            ))
+
+    if queued == 0:
+        db.rollback()
+        detail = "No payslips to send."
+        if skipped_already:
+            detail += f" {skipped_already} worker(s) were already emailed — use force_resend to send again."
+        if skipped_no_email:
+            detail += f" {skipped_no_email} worker(s) have no valid email address."
+        raise HTTPException(status_code=400, detail=detail)
+
+    job.total = queued
+    job.skipped = skipped_no_email + skipped_already
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    payload = _job_response(db, job)
+    payload.update({
+        "queued": queued,
+        "skipped_no_email": skipped_no_email,
+        "skipped_already_sent": skipped_already,
+    })
+    return payload
 
 
-@router.post("/broadcast")
+@router.post("/broadcast", status_code=status.HTTP_202_ACCEPTED)
 def broadcast(
     body: BroadcastRequest,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
-    """Send a styled announcement email to workers filtered by country/type/status."""
+    """Queue an announcement email to workers filtered by country/type/status."""
     if not body.title.strip() or not body.message.strip():
         raise HTTPException(status_code=400, detail="Title and message are required.")
 
@@ -151,70 +233,171 @@ def broadcast(
             stmt = stmt.where(Worker.status == WorkerStatusEnum.active)
         workers = list(db.exec(stmt).all())
 
-    html = render_broadcast_html(body.title, body.message)
+    admin = get_admin_user(db, current_user)
+    job = EmailJob(
+        kind="broadcast",
+        subject=body.title.strip(),
+        body=body.message,
+        created_by=admin.id,
+    )
+    db.add(job)
+    db.flush()
 
-    sent = failed = skipped = 0
-    errors: list[str] = []
-    sent_to: set[str] = set()
+    queued = 0
+    skipped = 0
+    seen: set[str] = set()
 
-    try:
-        for worker in workers:
-            email = _worker_email(db, worker)
-            if not email:
-                skipped += 1
-                continue
-            key = email.strip().lower()
-            if key in sent_to:
-                continue
-            sent_to.add(key)
-            log = send_email(
-                db,
-                to_email=email,
-                subject=body.title,
-                html=html,
-                template="broadcast",
-                worker_id=worker.id,
-            )
-            if log.status == "sent":
-                sent += 1
-            else:
-                failed += 1
-                if log.error and len(errors) < 5:
-                    errors.append(f"{email}: {log.error}")
+    for worker in workers:
+        email = _worker_email(db, worker)
+        if not email or not is_valid_email_address(email):
+            skipped += 1
+            continue
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        db.add(EmailJobItem(job_id=job.id, worker_id=worker.id, to_email=email))
+        queued += 1
 
-        for email in extra:
-            key = email.lower()
-            if key in sent_to:
-                continue
-            sent_to.add(key)
-            log = send_email(
-                db,
-                to_email=email,
-                subject=body.title,
-                html=html,
-                template="broadcast",
-            )
-            if log.status == "sent":
-                sent += 1
-            else:
-                failed += 1
-                if log.error and len(errors) < 5:
-                    errors.append(f"{email}: {log.error}")
-    except Exception as exc:
-        logger.exception("Broadcast failed after partial send")
-        raise HTTPException(
-            status_code=500,
-            detail=f"Broadcast interrupted after {sent} sent / {failed} failed: {exc}",
-        ) from exc
+    for email in extra:
+        key = email.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        # worker_id stays null so the job/worker unique constraint allows several
+        # typed addresses on one job.
+        db.add(EmailJobItem(job_id=job.id, to_email=email))
+        queued += 1
 
-    return {
-        # Unique addresses we attempted (after skip-no-email + dedupe), not raw pool size.
-        "recipients": len(sent_to),
-        "sent": sent,
-        "failed": failed,
-        "skipped": skipped,
-        "errors": errors,
-    }
+    if queued == 0:
+        db.rollback()
+        raise HTTPException(status_code=400, detail="No recipients with a valid email address.")
+
+    job.total = queued
+    job.skipped = skipped
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    payload = _job_response(db, job)
+    payload.update({"queued": queued, "skipped_no_email": skipped, "recipients": queued})
+    return payload
+
+
+@router.get("/jobs")
+def list_email_jobs(
+    kind: Optional[str] = None,
+    payroll_period_id: Optional[UUID] = None,
+    limit: int = 20,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    stmt = select(EmailJob)
+    if kind:
+        stmt = stmt.where(EmailJob.kind == kind)
+    if payroll_period_id:
+        stmt = stmt.where(EmailJob.payroll_period_id == payroll_period_id)
+    jobs = db.exec(stmt.order_by(EmailJob.created_at.desc()).limit(min(limit, 100))).all()
+    return [_job_response(db, j) for j in jobs]
+
+
+@router.get("/jobs/{job_id}")
+def get_email_job(
+    job_id: UUID,
+    include_items: bool = False,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    job = db.get(EmailJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Email job not found")
+    payload = _job_response(db, job)
+    if include_items:
+        items = db.exec(
+            select(EmailJobItem).where(EmailJobItem.job_id == job.id).order_by(EmailJobItem.created_at)
+        ).all()
+        payload["items"] = [
+            {
+                "id": str(i.id),
+                "worker_id": str(i.worker_id) if i.worker_id else None,
+                "to_email": i.to_email,
+                "status": i.status,
+                "attempts": i.attempts,
+                "error": i.error,
+                "sent_at": i.sent_at.isoformat() if i.sent_at else None,
+            }
+            for i in items
+        ]
+    return payload
+
+
+@router.post("/jobs/{job_id}/retry")
+def retry_email_job(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Re-queue the failed items of a job; already-sent recipients are untouched."""
+    job = db.get(EmailJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Email job not found")
+
+    failed = db.exec(
+        select(EmailJobItem).where(EmailJobItem.job_id == job.id, EmailJobItem.status == "failed")
+    ).all()
+    if not failed:
+        raise HTTPException(status_code=400, detail="This job has no failed recipients to retry.")
+
+    for item in failed:
+        item.status = "pending"
+        item.attempts = 0
+        item.error = None
+        item.claimed_at = None
+        db.add(item)
+
+    job.status = "queued"
+    job.finished_at = None
+    job.error = None
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    payload = _job_response(db, job)
+    payload["requeued"] = len(failed)
+    return payload
+
+
+@router.post("/jobs/{job_id}/cancel")
+def cancel_email_job(
+    job_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Stop a job. Recipients already sent stay sent; the rest are marked skipped."""
+    job = db.get(EmailJob, job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Email job not found")
+    if job.status == "completed":
+        raise HTTPException(status_code=400, detail="This job has already finished.")
+
+    outstanding = db.exec(
+        select(EmailJobItem).where(
+            EmailJobItem.job_id == job.id,
+            EmailJobItem.status.in_(["pending", "claimed"]),
+        )
+    ).all()
+    for item in outstanding:
+        item.status = "skipped"
+        item.error = "Cancelled by admin"
+        db.add(item)
+
+    job.status = "cancelled"
+    job.finished_at = datetime.now(timezone.utc)
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    payload = _job_response(db, job)
+    payload["cancelled"] = len(outstanding)
+    return payload
 
 
 @router.get("/log")

@@ -26,6 +26,28 @@ class Country(SQLModel, table=True):
     )
 
 
+class Currency(SQLModel, table=True):
+    """
+    Admin-managed payout currency catalog. Every rate is quoted against USD
+    (1 USD = rate units of this currency), including GBP.
+    """
+
+    __tablename__ = "currencies"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    code: str = Field(sa_column=Column(String(3), unique=True, nullable=False))
+    name: str = Field(sa_column=Column(String(64), nullable=False))
+    symbol: Optional[str] = Field(default=None, sa_column=Column(String(8), nullable=True))
+    is_active: bool = Field(default=True, sa_column=Column(Boolean, nullable=False, server_default="true"))
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+
+
 class FxRate(SQLModel, table=True):
     """
     Exchange rate snapshot: 1 unit of base_currency (USD or GBP) = rate units of

@@ -27,6 +27,8 @@ interface RateWorkerModalProps {
   /** When set, worker select is locked to this worker (Workers page shortcut). */
   lockedWorkerId?: string;
   initialWorkerId?: string;
+  /** Prefill the working-month dropdown (Quality page period filter). */
+  initialPeriodId?: string;
   onClose: () => void;
   onSaved: () => void;
 }
@@ -35,6 +37,7 @@ export default function RateWorkerModal({
   workers,
   lockedWorkerId,
   initialWorkerId,
+  initialPeriodId,
   onClose,
   onSaved,
 }: RateWorkerModalProps) {
@@ -56,8 +59,11 @@ export default function RateWorkerModal({
         if (cancelled) return;
         setPeriods(list);
         if (list.length > 0) {
-          setPeriodId(list[0].id);
-          setPeriodLabel(list[0].label);
+          const preferred = initialPeriodId && list.some((p) => p.id === initialPeriodId)
+            ? list.find((p) => p.id === initialPeriodId)!
+            : list[0];
+          setPeriodId(preferred.id);
+          setPeriodLabel(preferred.label);
         }
       } catch {
         if (!cancelled) setError('Could not load payroll periods.');
@@ -66,7 +72,7 @@ export default function RateWorkerModal({
       }
     })();
     return () => { cancelled = true; };
-  }, []);
+  }, [initialPeriodId]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -129,8 +135,8 @@ export default function RateWorkerModal({
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
           <p className="text-xs text-theme-muted leading-relaxed">
-            Score contributes <span className="text-white/80 font-semibold">30%</span> of the composite
-            leaderboard (averaged over the trailing 5 working months).
+            Score contributes <span className="text-white/80 font-semibold">20%</span> of the composite
+            leaderboard (averaged across all working months).
           </p>
 
           {periods.length > 1 && (

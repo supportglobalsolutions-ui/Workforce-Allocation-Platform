@@ -94,6 +94,7 @@ class QualityCompositeScoreBase(SQLModel):
     consistency_component: Optional[Decimal] = None
     period_type:          Optional[str] = None
     period_label:         Optional[str] = None
+    payroll_period_id:    Optional[UUID] = None
     country_rank:         Optional[int] = None
     global_rank:          Optional[int] = None
     session_streak_days:  Optional[int] = None
@@ -124,6 +125,7 @@ class LeaderboardResponse(SQLModel):
     consistency_component: Optional[Decimal] = None
     period_type:          Optional[str] = None
     period_label:         Optional[str] = None
+    payroll_period_id:    Optional[UUID] = None
     global_rank:          Optional[int] = None
     country_rank:         Optional[int] = None
     session_streak_days:  Optional[int] = None

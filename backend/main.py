@@ -14,6 +14,7 @@ from routers import (
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
     task_assessments, training, uptime_kuma, wallets, workers,
 )
+from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
 from services.leaderboard_sync import run_leaderboard_sync_loop
 from services.mirror_reconcile import run_mirror_reconcile_loop
@@ -35,6 +36,8 @@ async def lifespan(app: FastAPI):
         settings.DEV_AUTH_BYPASS and not settings.is_production
     )
     background_tasks = [asyncio.create_task(run_rdp_lifecycle_loop())]
+    if settings.EMAIL_DISPATCH_ENABLED:
+        background_tasks.append(asyncio.create_task(run_email_dispatch_loop()))
     if firebase_enabled:
         init_firebase()
         background_tasks.extend(

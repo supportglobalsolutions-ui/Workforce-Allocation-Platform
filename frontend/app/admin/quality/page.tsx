@@ -1,281 +1,255 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, CheckCircle, RefreshCw, Star } from 'lucide-react';
+import { AlertCircle, Bell, CheckCircle, Eye, RefreshCw } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
-import LeaderboardTable, { LeaderboardEntry } from '@/components/platform/LeaderboardTable';
-import RateWorkerModal from '@/components/quality/RateWorkerModal';
+import { LeaderboardEntry } from '@/components/platform/LeaderboardTable';
+import PeriodFilter, { PeriodFilterOption } from '@/components/platform/PeriodFilter';
+import PendingRatingsModal from '@/components/quality/PendingRatingsModal';
+import WorkerQualityModal from '@/components/quality/WorkerQualityModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface WorkerOption {
+interface Worker {
   id: string;
   display_name: string;
   country: string;
   worker_type: string;
 }
 
-interface QualityRating {
+interface Rating {
   id: string;
   worker_id: string;
   score: number;
   reason_note: string | null;
-  payroll_period_id: string | null;
-  created_at: string;
 }
 
 interface PendingRatings {
   payroll_period_id: string;
   period_label: string;
-  pending: { worker_id: string; display_name: string; country: string; worker_type: string }[];
+  pending: PendingWorker[];
   rated_count: number;
   total_workers: number;
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────────
+interface PendingWorker {
+  worker_id: string;
+  display_name: string;
+  country: string;
+}
+
+function pts(raw: number | null | undefined, weight: number): string {
+  if (raw == null) return '—';
+  return (Number(raw) * weight).toFixed(1);
+}
+
+const thClass =
+  'px-3 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted whitespace-nowrap';
+const tdClass = 'px-3 py-3 text-sm tabular-nums whitespace-nowrap';
 
 export default function AdminQualityPage() {
+  const [periods, setPeriods] = useState<PeriodFilterOption[]>([]);
+  const [periodId, setPeriodId] = useState('');
+  const [workers, setWorkers] = useState<Worker[]>([]);
   const [entries, setEntries] = useState<LeaderboardEntry[]>([]);
-  const [workers, setWorkers] = useState<WorkerOption[]>([]);
-  const [ratings, setRatings] = useState<QualityRating[]>([]);
+  const [ratings, setRatings] = useState<Rating[]>([]);
   const [pending, setPending] = useState<PendingRatings | null>(null);
+  const [selectedWorkerId, setSelectedWorkerId] = useState<string | null>(null);
+  const [pendingOpen, setPendingOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
   const [recalculating, setRecalculating] = useState(false);
-  const [recalcMessage, setRecalcMessage] = useState<string | null>(null);
-  const [showRateModal, setShowRateModal] = useState(false);
-  const [rateWorkerId, setRateWorkerId] = useState('');
+  const [message, setMessage] = useState<string | null>(null);
 
-  const loadLeaderboard = useCallback(async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    const suffix = periodId ? `?payroll_period_id=${periodId}` : '';
+    const leaderboardQuery = new URLSearchParams({ period: 'payroll', limit: '100' });
+    if (periodId) leaderboardQuery.set('payroll_period_id', periodId);
     try {
-      // Leaderboard is always scoped to the working month (payroll period).
-      setEntries(await api.get<LeaderboardEntry[]>('/leaderboard?period=payroll&limit=100'));
+      const [board, periodRatings, periodPending] = await Promise.all([
+        api.get<LeaderboardEntry[]>(`/leaderboard?${leaderboardQuery.toString()}`),
+        api.get<Rating[]>(`/quality/ratings${suffix}`),
+        api.get<PendingRatings>(`/quality/pending-ratings${suffix}`),
+      ]);
+      setEntries(board);
+      setRatings(periodRatings);
+      setPending(periodPending);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load leaderboard');
+      setError(e instanceof Error ? e.message : 'Failed to load quality data.');
     } finally {
       setLoading(false);
     }
-  }, []);
-
-  const loadRatings = useCallback(async () => {
-    try {
-      setRatings(await api.get<QualityRating[]>('/quality/ratings'));
-    } catch {
-      // Recent-ratings panel is secondary; leave empty on failure.
-    }
-  }, []);
-
-  const loadPending = useCallback(async () => {
-    try {
-      setPending(await api.get<PendingRatings>('/quality/pending-ratings'));
-    } catch {
-      setPending(null);
-    }
-  }, []);
-
-  useEffect(() => { loadLeaderboard(); }, [loadLeaderboard]);
+  }, [periodId]);
 
   useEffect(() => {
-    api.get<WorkerOption[]>('/workers').then(setWorkers).catch(() => {});
-    loadRatings();
-    loadPending();
-  }, [loadRatings, loadPending]);
+    api.get<PeriodFilterOption[]>('/payroll/periods').then(setPeriods).catch(() => {});
+    api.get<Worker[]>('/workers').then(setWorkers).catch(() => {});
+  }, []);
+  useEffect(() => { load(); }, [load]);
 
-  const workerNames = useMemo(() => {
-    const map = new Map<string, string>();
-    workers.forEach((w) => map.set(w.id, w.display_name));
-    return map;
-  }, [workers]);
+  const selectedPeriod = periods.find((period) => period.id === periodId);
+  const activePeriodId = periodId || pending?.payroll_period_id || '';
+  const activePeriodLabel = selectedPeriod?.label ?? pending?.period_label ?? entries[0]?.period_label ?? 'Latest working month';
+  const entriesByWorker = useMemo(() => new Map(entries.map((entry) => [entry.worker_id, entry])), [entries]);
+  const ratingsByWorker = useMemo(() => new Map(ratings.map((rating) => [rating.worker_id, rating])), [ratings]);
+  const selectedWorker = workers.find((worker) => worker.id === selectedWorkerId);
 
-  const recentRatings = useMemo(
-    () => [...ratings].sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime()).slice(0, 25),
-    [ratings],
-  );
-
-  async function handleRecalculate() {
+  async function recalculate() {
     setRecalculating(true);
-    setRecalcMessage(null);
+    setMessage(null);
     try {
-      await api.post('/quality/recalculate', {});
-      setRecalcMessage('Leaderboard recalculated.');
-      await loadLeaderboard();
+      await api.post(periodId ? `/quality/recalculate?payroll_period_id=${periodId}` : '/quality/recalculate', {});
+      setMessage(`Quality scores recalculated for ${activePeriodLabel}.`);
+      await load();
     } catch (e) {
-      setRecalcMessage(e instanceof Error ? e.message : 'Recalculation failed');
+      setMessage(e instanceof Error ? e.message : 'Recalculation failed.');
     } finally {
       setRecalculating(false);
     }
   }
 
-  function openRate(workerId = '') {
-    setRateWorkerId(workerId);
-    setShowRateModal(true);
-  }
-
-  function handleRated() {
-    loadRatings();
-    loadPending();
-  }
-
-  // Prefer the working-month label from pending ratings; fall back to leaderboard rows.
-  const workingMonthLabel = pending?.period_label ?? entries[0]?.period_label ?? null;
-
   return (
     <div>
       <PageHeader
-        title="Quality & Leaderboard"
-        description="Composite quality scores and admin ratings by working month."
+        title="Quality"
+        description="Review performance and complete ratings for each working month."
         actions={
           <>
-            <button
-              type="button"
-              onClick={handleRecalculate}
-              disabled={recalculating}
-              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4 disabled:opacity-60"
-            >
-              {recalculating ? <SpinningDots size="sm" className="text-emerald-accent" /> : <RefreshCw size={14} />}
-              Recalculate
+            <button type="button" onClick={recalculate} disabled={recalculating} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4 disabled:opacity-60">
+              {recalculating ? <SpinningDots size="sm" /> : <RefreshCw size={14} />} Recalculate
             </button>
-            <button
-              type="button"
-              onClick={() => openRate()}
-              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
-            >
-              <Star size={14} /> Rate Worker
+            <button type="button" onClick={() => setPendingOpen(true)} className="btn-primary flex items-center gap-2 text-sm py-2 px-4">
+              <Bell size={14} /> Pending
+              {pending && pending.pending.length > 0 && (
+                <span className="inline-flex min-w-5 h-5 px-1.5 items-center justify-center rounded-full bg-gold-accent text-brand-on-primary text-[10px] font-black">
+                  {pending.pending.length}
+                </span>
+              )}
             </button>
           </>
         }
       />
       <AdminSectionTabs tabs={QUALITY_TABS} />
 
-      {recalcMessage && (
-        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-4">
-          <CheckCircle size={14} /> {recalcMessage}
+      <PeriodFilter periods={periods} value={periodId} onChange={setPeriodId} allowAll allLabel="All periods" label="Working month" />
+
+      {message && (
+        <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs">
+          <CheckCircle size={14} /> {message}
         </div>
       )}
 
-      {workingMonthLabel && (
-        <p className="text-xs text-theme-muted mb-4">
-          Working month{' '}
-          <span className="font-semibold text-emerald-accent">{workingMonthLabel}</span>
-        </p>
-      )}
-
-      {/* Pending ratings for current working month */}
-      {pending && pending.pending.length > 0 && (
-        <section aria-label="Pending ratings" className="mb-6">
-          <div className="flex items-center justify-between gap-3 mb-3">
-            <div>
-              <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent">
-                Pending Ratings
-              </h2>
-              <p className="text-[11px] text-theme-muted mt-0.5">
-                {pending.rated_count} of {pending.total_workers} active workers rated for {pending.period_label}
-              </p>
-            </div>
+      <section className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+          <div>
+            <h2 className="text-sm font-bold text-theme-heading">Workers</h2>
+            <p className="text-xs text-theme-muted mt-0.5">
+              {activePeriodLabel} · scores on the list · eye opens admin rating edit
+            </p>
           </div>
-          <div className="glass-panel rounded-2xl border border-gold-accent/20 overflow-hidden">
-            <ul className="divide-y divide-white/[0.05] max-h-56 overflow-y-auto">
-              {pending.pending.map((w) => (
-                <li key={w.worker_id} className="flex items-center justify-between gap-3 px-4 py-2.5 hover:bg-white/[0.02]">
-                  <div className="min-w-0">
-                    <p className="text-sm font-medium text-white truncate">{w.display_name}</p>
-                    <p className="text-[11px] text-theme-muted truncate">{w.country || '—'}</p>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => openRate(w.worker_id)}
-                    className="shrink-0 btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5"
-                  >
-                    <Star size={11} /> Rate
-                  </button>
-                </li>
-              ))}
-            </ul>
-          </div>
-        </section>
-      )}
-
-      {pending && pending.pending.length === 0 && pending.total_workers > 0 && (
-        <div className="flex items-center gap-2 p-3 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs mb-6">
-          <CheckCircle size={14} />
-          All {pending.total_workers} active workers rated for {pending.period_label}.
+          {pending && (
+            <span className="text-xs text-theme-muted">{pending.rated_count}/{pending.total_workers} rated</span>
+          )}
         </div>
-      )}
 
-      {loading ? (
-        <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
-      ) : error ? (
-        <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm">
-          <AlertCircle size={16} /> {error}
-        </div>
-      ) : entries.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-12 text-center">
-          <p className="text-sm text-theme-muted">No scores yet — use Recalculate to compute the leaderboard.</p>
-        </div>
-      ) : (
-        <LeaderboardTable entries={entries} />
-      )}
-
-      <p className="text-xs text-theme-muted mt-3">
-        Composite score: 30% assessments · 30% admin ratings (1–5) · 25% reliability · 15% consistency
-      </p>
-
-      {/* Recent ratings */}
-      <section aria-label="Recent ratings" className="mt-8">
-        <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted mb-3">Recent Ratings</h2>
-        {recentRatings.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-10 text-center">
-            <p className="text-sm text-theme-muted">No ratings recorded yet.</p>
-          </div>
+        {loading ? (
+          <div className="flex justify-center py-16"><SpinningDots size="lg" /></div>
+        ) : error ? (
+          <div className="flex items-center gap-2 p-5 text-danger text-sm"><AlertCircle size={16} /> {error}</div>
+        ) : workers.length === 0 ? (
+          <p className="p-5 text-sm text-theme-muted">No workers available.</p>
         ) : (
-          <div className="glass-panel rounded-2xl border border-white/5 overflow-x-auto">
-            <table className="w-full text-sm min-w-[560px]">
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[860px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-white/[0.06] bg-white/[0.02]">
-                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Worker</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Score</th>
-                  <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Comment</th>
-                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Date</th>
+                  <th className={`${thClass} text-left pl-5 pr-4`}>Worker</th>
+                  <th className={`${thClass} text-right`}>Total</th>
+                  <th className={`${thClass} text-right`}>Assessment /40</th>
+                  <th className={`${thClass} text-right`}>Rating /20</th>
+                  <th className={`${thClass} text-right`}>Reliability /25</th>
+                  <th className={`${thClass} text-right`}>Consistency /15</th>
+                  <th className={`${thClass} text-right`}>Admin 1–5</th>
+                  <th className={`${thClass} text-center pr-5 w-14`} />
                 </tr>
               </thead>
               <tbody>
-                {recentRatings.map((r) => (
-                  <tr key={r.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
-                    <td className="px-4 py-3 text-white font-medium">
-                      {workerNames.get(r.worker_id) ?? `${r.worker_id.slice(0, 8)}…`}
-                    </td>
-                    <td className="px-4 py-3">
-                      <span className="inline-flex items-center gap-1 text-gold-accent font-bold tabular-nums">
-                        <Star size={12} fill="currentColor" /> {Number(r.score)} / 5
-                      </span>
-                    </td>
-                    <td className="px-4 py-3 text-xs text-theme-muted">{r.reason_note ?? '—'}</td>
-                    <td className="px-4 py-3 text-right text-xs text-theme-muted">
-                      {new Date(r.created_at).toLocaleDateString()}
-                    </td>
-                  </tr>
-                ))}
+                {workers.map((worker) => {
+                  const entry = entriesByWorker.get(worker.id);
+                  const rating = ratingsByWorker.get(worker.id);
+                  return (
+                    <tr key={worker.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02]">
+                      <td className="pl-5 pr-4 py-3">
+                        <p className="text-sm font-medium text-theme-heading truncate max-w-[16rem]">{worker.display_name}</p>
+                        <p className="text-xs text-theme-muted truncate">{worker.country || 'Unassigned'}</p>
+                      </td>
+                      <td className={`${tdClass} text-right font-semibold text-emerald-accent`}>
+                        {entry ? Number(entry.composite_score).toFixed(1) : '—'}
+                      </td>
+                      <td className={`${tdClass} text-right text-theme-heading`}>
+                        {pts(entry?.assessment_component, 0.4)}
+                      </td>
+                      <td className={`${tdClass} text-right text-theme-heading`}>
+                        {pts(entry?.rating_component, 0.2)}
+                      </td>
+                      <td className={`${tdClass} text-right text-theme-heading`}>
+                        {pts(entry?.reliability_component, 0.25)}
+                      </td>
+                      <td className={`${tdClass} text-right text-theme-heading`}>
+                        {pts(entry?.consistency_component, 0.15)}
+                      </td>
+                      <td className={`${tdClass} text-right font-bold ${rating ? 'text-gold-accent' : 'text-theme-muted'}`}>
+                        {rating ? `${Number(rating.score)}/5` : '—'}
+                      </td>
+                      <td className="pr-5 py-3 text-center">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedWorkerId(worker.id)}
+                          aria-label={`Edit rating for ${worker.display_name}`}
+                          className="w-9 h-9 inline-flex items-center justify-center rounded-xl border border-white/10 text-theme-muted hover:text-emerald-accent hover:border-emerald-accent/40"
+                        >
+                          <Eye size={16} />
+                        </button>
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </section>
 
-      {showRateModal && (
-        <RateWorkerModal
-          key={rateWorkerId || 'new'}
-          workers={workers}
-          lockedWorkerId={rateWorkerId || undefined}
-          initialWorkerId={rateWorkerId || undefined}
-          onClose={() => setShowRateModal(false)}
-          onSaved={handleRated}
+      <p className="text-xs text-theme-muted mt-3">
+        Composite = assessment/40 + rating/20 + reliability/25 + consistency/15. Eye edits admin rating only.
+      </p>
+
+      {pendingOpen && pending && (
+        <PendingRatingsModal
+          periodLabel={pending.period_label}
+          pending={pending.pending}
+          ratedCount={pending.rated_count}
+          totalWorkers={pending.total_workers}
+          onClose={() => setPendingOpen(false)}
+          onSelectWorker={(workerId) => {
+            setPendingOpen(false);
+            setSelectedWorkerId(workerId);
+          }}
+        />
+      )}
+
+      {selectedWorker && activePeriodId && (
+        <WorkerQualityModal
+          worker={selectedWorker}
+          rating={ratingsByWorker.get(selectedWorker.id)}
+          periodId={activePeriodId}
+          periodLabel={activePeriodLabel}
+          onClose={() => setSelectedWorkerId(null)}
+          onSaved={load}
         />
       )}
     </div>

@@ -112,16 +112,6 @@ export const PAGES: PageEntry[] = [
     roles: ['Worker', 'Partner Worker'],
   },
   {
-    id: 'leaderboard',
-    title: 'Leaderboard',
-    href: '/worker/leaderboard',
-    portal: 'worker',
-    purpose: 'Global and country rankings powered by composite quality scores.',
-    features: ['Global & country filters', 'Rank animation', 'Quality score', 'Consistency bonus', 'Session streak'],
-    status: 'live',
-    roles: ['Worker', 'Partner Worker'],
-  },
-  {
     id: 'admin-dashboard',
     title: 'Admin Dashboard',
     href: '/admin/dashboard',

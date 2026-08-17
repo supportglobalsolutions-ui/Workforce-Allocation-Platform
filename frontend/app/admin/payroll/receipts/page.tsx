@@ -7,7 +7,9 @@ import {
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
+import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
+import EmailJobProgress, { RecentEmailJobs } from '@/components/admin/EmailJobProgress';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 
@@ -68,25 +70,6 @@ function Banner({ kind, children, onDismiss }: { kind: 'success' | 'error'; chil
   );
 }
 
-function PeriodSelect({ periods, value, onChange }: {
-  periods: PayrollPeriod[]; value: string; onChange: (id: string) => void;
-}) {
-  return (
-    <div className="relative w-full max-w-sm">
-      <select value={value} onChange={(e) => onChange(e.target.value)} className="input-field appearance-none pr-8">
-        {periods.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.label} ({new Date(p.start_date).toLocaleDateString()} – {new Date(p.end_date).toLocaleDateString()})
-          </option>
-        ))}
-      </select>
-      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-    </div>
-  );
-}
-
-// ── Payslips tab ───────────────────────────────────────────────────────────────
-
 function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
   const [periodId, setPeriodId] = useState(periods[0]?.id ?? '');
   const [summaries, setSummaries] = useState<PayrollSummary[]>([]);
@@ -97,11 +80,14 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
   const [error, setError] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [result, setResult] = useState<{ sent: number; failed: number; skipped: number; errors?: string[] } | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [queuedNote, setQueuedNote] = useState<string | null>(null);
+  const [jobsKey, setJobsKey] = useState(0);
+  const [forceResend, setForceResend] = useState(false);
 
   useEffect(() => {
     if (!periodId) return;
-    setLoading(true); setError(null); setResult(null);
+    setLoading(true); setError(null); setJobId(null); setQueuedNote(null);
     api.get<PayrollSummary[]>(`/payroll/periods/${periodId}/summaries`)
       .then((rows) => {
         setSummaries(rows);
@@ -134,18 +120,31 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
 
   async function handleSend() {
     if (selected.size === 0) return;
-    setSending(true); setError(null); setResult(null);
+    setSending(true); setError(null); setQueuedNote(null);
     try {
       const override = overrideEmail.trim();
-      const res = await api.post<{ sent: number; failed: number; skipped: number; errors?: string[] }>('/communications/payslips/send', {
+      // The request only queues the job; progress arrives from polling below.
+      const res = await api.post<{
+        job_id: string; queued: number; skipped_no_email: number; skipped_already_sent: number;
+      }>('/communications/payslips/send', {
         payroll_period_id: periodId,
         ...(allSelected ? {} : { worker_ids: Array.from(selected) }),
         attach_pdf: attachPdf,
+        force_resend: forceResend,
         ...(override && override.includes('@') ? { override_email: override } : {}),
       });
-      setResult(res);
+      setJobId(res.job_id);
+      setJobsKey((k) => k + 1);
+      const notes: string[] = [`${res.queued} payslip${res.queued === 1 ? '' : 's'} queued.`];
+      if (res.skipped_already_sent > 0) {
+        notes.push(`${res.skipped_already_sent} already emailed for this period (tick “Re-send” to include them).`);
+      }
+      if (res.skipped_no_email > 0) {
+        notes.push(`${res.skipped_no_email} skipped with no valid email address.`);
+      }
+      setQueuedNote(notes.join(' '));
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to send payslips.');
+      setError(e instanceof Error ? e.message : 'Failed to queue payslips.');
     } finally { setSending(false); }
   }
 
@@ -157,20 +156,39 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
     <div>
       <div className="flex flex-wrap items-end gap-4 mb-5">
         <div className="flex-1 min-w-[16rem]">
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Payroll Period</label>
-          <PeriodSelect periods={periods} value={periodId} onChange={setPeriodId} />
+          <PeriodFilter
+            periods={periods}
+            value={periodId}
+            onChange={setPeriodId}
+            variant="select"
+            label="Working month"
+          />
         </div>
         <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none pb-2.5">
           <input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)}
             className="accent-emerald-400 w-3.5 h-3.5" />
           <span className="flex items-center gap-1"><FileText size={12} /> Attach PDF payslip</span>
         </label>
+        <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none pb-2.5">
+          <input type="checkbox" checked={forceResend} onChange={(e) => setForceResend(e.target.checked)}
+            className="accent-emerald-400 w-3.5 h-3.5" />
+          <span className="flex items-center gap-1"><RefreshCw size={12} /> Re-send to already emailed</span>
+        </label>
         <button type="button" onClick={handleSend} disabled={sending || selected.size === 0}
           className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-50">
           {sending ? <SpinningDots size="sm" /> : <Send size={14} />}
-          Send to {selected.size} worker{selected.size !== 1 ? 's' : ''}
+          Queue for {selected.size} worker{selected.size !== 1 ? 's' : ''}
         </button>
       </div>
+
+      {attachPdf && (
+        <p className="text-[11px] text-gold-accent mb-4 flex items-start gap-1.5">
+          <AlertCircle size={12} className="shrink-0 mt-0.5" />
+          PDF attachments send one email per worker instead of 100 per call, so large runs take
+          noticeably longer. Leave it off unless the attachment is required — workers can always
+          download the PDF from their wallet.
+        </p>
+      )}
 
       <div className="mb-4 max-w-md">
         <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">

@@ -1,26 +1,27 @@
 """
 Composite quality scoring engine (confirmed weights):
 
-  30% assessment scores   — MCQ + graded task assessment average
-  30% admin ratings       — 1-5 manual ratings averaged over the trailing
-                            5 payroll periods, normalized to 0-100
+  40% assessment scores   — MCQ + graded task assessment average
+  20% admin ratings       — 1-5 manual ratings averaged over all
+                            payroll periods, normalized to 0-100
   25% reliability         — completed vs abandoned sessions in the window
   15% consistency         — low variance of weekly hours in the window
 
-Weights re-normalize across the components a worker actually has data for, so
-new workers are ranked on what is known instead of being zeroed out.
+Each component contributes only its assigned slice of the 100-point score.
+Missing data contributes zero; weights are never re-normalized.
 
 Two leaderboard views are maintained: "calendar" (current calendar month) and
-"payroll" (latest payroll period). One shared board — partners and GS workers
-rank together.
+"payroll" (one snapshot per payroll period). One shared board — partners and
+GS workers rank together.
 """
 import logging
 import statistics
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
+from uuid import UUID
 
-from sqlmodel import Session, delete, select
+from sqlmodel import Session, col, delete, select
 
 from models.enums import IndicatorInputEnum, SessionCloseEnum
 from models.mcq import McqResult
@@ -29,12 +30,13 @@ from models.quality import QualityCompositeScore, QualityIndicator, QualityIndic
 from models.session import Session as WorkSession
 from models.task_assessment import TaskAssessmentResult
 from models.worker import Worker
+from services.period_labels import period_label_from_date
 
 logger = logging.getLogger(__name__)
 
 WEIGHTS = {
-    "assessment": Decimal("0.30"),
-    "rating": Decimal("0.30"),
+    "assessment": Decimal("0.40"),
+    "rating": Decimal("0.20"),
     "reliability": Decimal("0.25"),
     "consistency": Decimal("0.15"),
 }
@@ -66,21 +68,26 @@ def ensure_default_indicator(db: Session) -> QualityIndicator:
     return indicator
 
 
-def _window_for(db: Session, period_type: str) -> tuple[date, date, str]:
+def _latest_payroll_period(db: Session) -> Optional[PayrollPeriod]:
+    return db.exec(select(PayrollPeriod).order_by(col(PayrollPeriod.start_date).desc())).first()
+
+
+def _window_for(
+    db: Session,
+    period_type: str,
+    payroll_period: Optional[PayrollPeriod] = None,
+) -> tuple[date, date, str]:
     today = date.today()
     if period_type == "payroll":
-        period = db.exec(
-            select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())
-        ).first()
+        period = payroll_period or _latest_payroll_period(db)
         if period:
             return period.start_date, period.end_date, period.label
-    # Calendar month fallback / default.
     start = today.replace(day=1)
     if start.month == 12:
         end = start.replace(year=start.year + 1, month=1) - timedelta(days=1)
     else:
         end = start.replace(month=start.month + 1) - timedelta(days=1)
-    return start, end, start.strftime("%B %Y")
+    return start, end, period_label_from_date(start)
 
 
 def _assessment_component(db: Session, worker_id) -> Optional[Decimal]:
@@ -100,54 +107,20 @@ def _assessment_component(db: Session, worker_id) -> Optional[Decimal]:
 
 
 def _rating_component(db: Session, worker_id, indicators: dict) -> Optional[Decimal]:
-    """Average manual ratings over the trailing 5 payroll periods, normalized to 0-100.
+    """Average of every period's 1-5 rating, normalized to 0-100.
 
-    Prefers ratings linked to a payroll_period_id. Legacy ratings (no period) still
-    count if created within the same calendar window as those periods.
+    Prefers ratings linked to a payroll_period_id. Legacy ratings (no period)
+    still count, keyed by their own id so they do not collide with periods.
     """
-    periods = db.exec(
-        select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc()).limit(5)
+    ratings = db.exec(
+        select(QualityIndicatorRating).where(QualityIndicatorRating.worker_id == worker_id)
     ).all()
-    period_ids = [p.id for p in periods]
 
-    ratings: list[QualityIndicatorRating] = []
-    if period_ids:
-        ratings.extend(
-            db.exec(
-                select(QualityIndicatorRating).where(
-                    QualityIndicatorRating.worker_id == worker_id,
-                    QualityIndicatorRating.payroll_period_id.in_(period_ids),
-                )
-            ).all()
-        )
-
-    # Include legacy (unscoped) ratings from the same trailing window.
-    if periods:
-        window_start = datetime.combine(periods[-1].start_date, time.min, tzinfo=timezone.utc)
-        legacy = db.exec(
-            select(QualityIndicatorRating).where(
-                QualityIndicatorRating.worker_id == worker_id,
-                QualityIndicatorRating.payroll_period_id.is_(None),
-                QualityIndicatorRating.created_at >= window_start,
-            )
-        ).all()
-        ratings.extend(legacy)
-    else:
-        cutoff = datetime.now(timezone.utc) - timedelta(days=155)
-        ratings.extend(
-            db.exec(
-                select(QualityIndicatorRating).where(
-                    QualityIndicatorRating.worker_id == worker_id,
-                    QualityIndicatorRating.created_at >= cutoff,
-                )
-            ).all()
-        )
-
-    # One score per period (or per legacy rating id) — prefer period-linked.
     by_key: dict = {}
     for r in ratings:
         key = r.payroll_period_id or r.id
-        by_key[key] = r
+        if r.payroll_period_id is not None or key not in by_key:
+            by_key[key] = r
 
     normalized: list[Decimal] = []
     for r in by_key.values():
@@ -198,9 +171,40 @@ def _streak_days(sessions: list[WorkSession]) -> int:
     return streak
 
 
-def recalculate(db: Session, period_type: str = "calendar") -> dict:
-    """Recompute composite scores + ranks for one leaderboard view."""
-    start, end, label = _window_for(db, period_type)
+def _composite_score(components: dict[str, Optional[Decimal]]) -> Decimal:
+    """Quality intelligence layer: convert each raw 0–100 signal to its score slice.
+
+    Assessment:  raw average × 40% = maximum 40 points
+    Rating:      normalized 1–5 average × 20% = maximum 20 points
+    Reliability: completed-session share × 25% = maximum 25 points
+    Consistency: weekly-hours stability × 15% = maximum 15 points
+
+    A missing signal gives no points for its slice, preventing partial data from
+    inflating a worker's score. For example, a 5/5 admin-only rating is 20.00.
+    """
+    points = [
+        (value if value is not None else Decimal("0")) * WEIGHTS[key]
+        for key, value in components.items()
+    ]
+    return _q(sum(points, Decimal("0")))
+
+
+def recalculate(
+    db: Session,
+    period_type: str = "calendar",
+    payroll_period_id: Optional[UUID] = None,
+) -> dict:
+    """Recompute composite scores + ranks for one leaderboard view or named period."""
+    payroll_period: Optional[PayrollPeriod] = None
+    if period_type == "payroll":
+        if payroll_period_id:
+            payroll_period = db.get(PayrollPeriod, payroll_period_id)
+            if not payroll_period:
+                raise ValueError("Payroll period not found")
+        else:
+            payroll_period = _latest_payroll_period(db)
+
+    start, end, label = _window_for(db, period_type, payroll_period)
     indicators = {i.id: i for i in db.exec(select(QualityIndicator)).all()}
     workers = db.exec(select(Worker)).all()
 
@@ -223,12 +227,10 @@ def recalculate(db: Session, period_type: str = "calendar") -> dict:
             "reliability": _reliability_component(sessions),
             "consistency": _consistency_component(sessions, start, end),
         }
-        available = {k: v for k, v in components.items() if v is not None}
-        if not available:
+        if all(value is None for value in components.values()):
             continue
 
-        total_weight = sum(WEIGHTS[k] for k in available)
-        composite = _q(sum(v * WEIGHTS[k] for k, v in available.items()) / total_weight)
+        composite = _composite_score(components)
         results.append({
             "worker": worker,
             "components": components,
@@ -238,8 +240,22 @@ def recalculate(db: Session, period_type: str = "calendar") -> dict:
 
     results.sort(key=lambda r: r["composite"], reverse=True)
 
-    # Replace this view's previous rows.
-    db.exec(delete(QualityCompositeScore).where(QualityCompositeScore.period_type == period_type))
+    if period_type == "payroll" and payroll_period:
+        db.exec(
+            delete(QualityCompositeScore).where(
+                QualityCompositeScore.payroll_period_id == payroll_period.id
+            )
+        )
+        latest = _latest_payroll_period(db)
+        if latest and latest.id == payroll_period.id:
+            db.exec(
+                delete(QualityCompositeScore).where(
+                    QualityCompositeScore.period_type == "payroll",
+                    QualityCompositeScore.payroll_period_id.is_(None),
+                )
+            )
+    else:
+        db.exec(delete(QualityCompositeScore).where(QualityCompositeScore.period_type == period_type))
 
     country_counters: dict[str, int] = {}
     for global_rank, row in enumerate(results, start=1):
@@ -257,16 +273,27 @@ def recalculate(db: Session, period_type: str = "calendar") -> dict:
             consistency_component=c["consistency"],
             period_type=period_type,
             period_label=label,
+            payroll_period_id=payroll_period.id if payroll_period else None,
             country_rank=country_counters[worker.country],
             global_rank=global_rank,
             session_streak_days=row["streak"],
         ))
     db.commit()
-    return {"period_type": period_type, "period_label": label, "workers_ranked": len(results)}
+    return {
+        "period_type": period_type,
+        "period_label": label,
+        "payroll_period_id": str(payroll_period.id) if payroll_period else None,
+        "workers_ranked": len(results),
+    }
 
 
 def recalculate_all(db: Session) -> dict:
+    latest = _latest_payroll_period(db)
     return {
         "calendar": recalculate(db, "calendar"),
-        "payroll": recalculate(db, "payroll"),
+        "payroll": recalculate(
+            db,
+            "payroll",
+            payroll_period_id=latest.id if latest else None,
+        ),
     }

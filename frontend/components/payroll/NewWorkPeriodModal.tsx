@@ -64,13 +64,13 @@ export default function NewWorkPeriodModal({
   const initial = boundsForMonth(currentMonthKey());
   const [monthKey, setMonthKey] = useState(currentMonthKey());
   const [customDates, setCustomDates] = useState(false);
-  const [label, setLabel] = useState(initial.label);
-  const [labelTouched, setLabelTouched] = useState(false);
   const [startDate, setStartDate] = useState(initial.start);
   const [endDate, setEndDate] = useState(initial.end);
   const [currency, setCurrency] = useState<'USD' | 'GBP'>('USD');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const generatedLabel = labelFromMonthKey(monthKeyFromDate(startDate));
 
   function applyMonth(ym: string, keepCustomRange: boolean) {
     const b = boundsForMonth(ym);
@@ -79,7 +79,6 @@ export default function NewWorkPeriodModal({
       setStartDate(b.start);
       setEndDate(b.end);
     }
-    if (!labelTouched) setLabel(b.label);
   }
 
   function handleMonthChange(ym: string) {
@@ -92,15 +91,12 @@ export default function NewWorkPeriodModal({
       const b = boundsForMonth(monthKey);
       setStartDate(b.start);
       setEndDate(b.end);
-      if (!labelTouched) setLabel(b.label);
     }
   }
 
   function handleStartChange(iso: string) {
     setStartDate(iso);
-    const ym = monthKeyFromDate(iso);
-    setMonthKey(ym);
-    if (!labelTouched) setLabel(labelFromMonthKey(ym));
+    setMonthKey(monthKeyFromDate(iso));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -113,7 +109,6 @@ export default function NewWorkPeriodModal({
     setError(null);
     try {
       const created = await api.post<WorkPeriodCreated>('/payroll/periods', {
-        label: label.trim() || labelFromMonthKey(monthKey),
         start_date: startDate,
         end_date: endDate,
         currency,
@@ -159,7 +154,7 @@ export default function NewWorkPeriodModal({
               className="input-field"
             />
             <p className="text-[10px] text-theme-muted mt-1.5 leading-snug">
-              Name defaults to this month (from the start date). You can edit the label below.
+              Named automatically from the start month (e.g. March 2026). Each name can only be used once.
             </p>
           </Field>
 
@@ -196,14 +191,10 @@ export default function NewWorkPeriodModal({
             </Field>
           </div>
 
-          <Field label="Label">
-            <input
-              required
-              value={label}
-              onChange={(e) => { setLabel(e.target.value); setLabelTouched(true); }}
-              placeholder="e.g. May 2026"
-              className="input-field"
-            />
+          <Field label="Period name">
+            <p className="text-sm font-semibold text-white px-3 py-2.5 rounded-xl bg-white/[0.04] border border-white/10">
+              {generatedLabel}
+            </p>
           </Field>
 
           <Field label="Reporting currency">

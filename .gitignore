@@ -24,6 +24,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 diag_*.txt
+backend/server.stdout.log
+backend/server.stderr.log
 
 # Local env files — never commit secrets
 .env

@@ -17,11 +17,18 @@ class PayrollPeriodBase(SQLModel):
     status:     PayrollPeriodStatusEnum = PayrollPeriodStatusEnum.open
 
 
-class PayrollPeriodCreate(PayrollPeriodBase):
-    pass
+class PayrollPeriodCreate(SQLModel):
+    """Label is generated from start_date (e.g. March 2026) and any supplied value is ignored."""
+    label: Optional[str] = None
+    start_date: date
+    end_date: date
+    currency: str
+    status: PayrollPeriodStatusEnum = PayrollPeriodStatusEnum.open
 
 
 class PayrollPeriodUpdate(SQLModel):
+    """Label is auto-generated on create; admins may rename it afterwards."""
+    label:               Optional[str]                    = None
     status:              Optional[PayrollPeriodStatusEnum] = None
     approved_by:         Optional[UUID]                   = None
     export_generated_at: Optional[datetime]               = None
@@ -110,6 +117,7 @@ class PayrollWorkerSummaryResponse(SQLModel):
     worker_type:         Optional[str] = None
     worker_pay_tier:     Optional[str] = None
     period_label:        Optional[str] = None
+    period_status:       Optional[str] = None
     suggested_hours:     Optional[Decimal] = None
     evidence_incomplete: Optional[bool] = None
 
@@ -121,24 +129,26 @@ class PayrollWorkerSummaryResponse(SQLModel):
 
 class PayrollWorkerSummaryUpdate(SQLModel):
     """Admin cost-evaluation adjustments; nets are recomputed server-side."""
-    bonus:         Optional[Decimal] = None
-    transfer_cost: Optional[Decimal] = None
-    external_cost: Optional[Decimal] = None
-    rate_per_hour: Optional[Decimal] = None
-    hours_logged:  Optional[Decimal] = None
-    fx_rate:       Optional[Decimal] = None
-    admin_locked:  Optional[bool] = None
+    bonus:          Optional[Decimal] = None
+    transfer_cost:  Optional[Decimal] = None
+    external_cost:  Optional[Decimal] = None
+    rate_per_hour:  Optional[Decimal] = None
+    hours_logged:   Optional[Decimal] = None
+    local_currency: Optional[str] = None
+    fx_rate:        Optional[Decimal] = None
+    admin_locked:   Optional[bool] = None
 
 
 class PayrollSummaryBulkItem(SQLModel):
-    worker_id:     UUID
-    hours_logged:  Optional[Decimal] = None
-    rate_per_hour: Optional[Decimal] = None
-    bonus:         Optional[Decimal] = None
-    transfer_cost: Optional[Decimal] = None
-    external_cost: Optional[Decimal] = None
-    fx_rate:       Optional[Decimal] = None
-    admin_locked:  Optional[bool] = True
+    worker_id:      UUID
+    hours_logged:   Optional[Decimal] = None
+    rate_per_hour:  Optional[Decimal] = None
+    bonus:          Optional[Decimal] = None
+    transfer_cost:  Optional[Decimal] = None
+    external_cost:  Optional[Decimal] = None
+    local_currency: Optional[str] = None
+    fx_rate:        Optional[Decimal] = None
+    admin_locked:   Optional[bool] = True
 
 
 class PayrollSummaryBulkRequest(SQLModel):

@@ -17,6 +17,13 @@ const ROLE_LANDING: Record<Role, string> = {
   super_admin: '/leadership/ceo-command',
 };
 
+// A portal prefix on its own is not a page — canonicalize it to the section's first screen
+const PORTAL_LANDING: Record<string, string> = {
+  '/worker':     '/worker/dashboard',
+  '/admin':      '/admin/dashboard',
+  '/leadership': '/leadership/ceo-command',
+};
+
 function getRole(req: NextRequest): Role | null {
   const cookie = req.cookies.get('gs-role')?.value;
   if (cookie === 'user' || cookie === 'partner' || cookie === 'admin' || cookie === 'super_admin') {
@@ -38,6 +45,15 @@ export function middleware(req: NextRequest) {
 
   // Not a protected route — let it through
   if (!portal) return NextResponse.next();
+
+  // Bare portal root: rewrite to the section landing page before any auth work,
+  // otherwise it resolves to nothing and renders a 404.
+  const stripped = pathname.replace(/\/$/, '');
+  if (stripped === portal) {
+    const url = req.nextUrl.clone();
+    url.pathname = PORTAL_LANDING[portal];
+    return NextResponse.redirect(url);
+  }
 
   const devAuthBypass =
     process.env.NODE_ENV !== 'production' &&

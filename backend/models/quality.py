@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Numeric, SmallInteger, String, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, Numeric, SmallInteger, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -76,6 +76,15 @@ class QualityIndicatorRating(SQLModel, table=True):
 
 class QualityCompositeScore(SQLModel, table=True):
     __tablename__ = "quality_composite_scores"
+    __table_args__ = (
+        Index(
+            "uq_quality_score_worker_payroll_period",
+            "worker_id",
+            "payroll_period_id",
+            unique=True,
+            postgresql_where=text("payroll_period_id IS NOT NULL"),
+        ),
+    )
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
@@ -87,7 +96,7 @@ class QualityCompositeScore(SQLModel, table=True):
     mcq_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     subjective_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     composite_score: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
-    # Confirmed 30/30/25/15 composite inputs (0-100 each).
+    # Confirmed 40/20/25/15 composite inputs (0-100 each).
     assessment_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
     rating_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
     reliability_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
@@ -95,6 +104,12 @@ class QualityCompositeScore(SQLModel, table=True):
     # "calendar" (calendar month) or "payroll" (payroll period) leaderboard view.
     period_type: Optional[str] = Field(default=None, sa_column=Column(String(16), nullable=True))
     period_label: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
+    payroll_period_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True, index=True
+        ),
+    )
     country_rank: Optional[int] = Field(default=None, sa_column=Column(SmallInteger, nullable=True))
     global_rank: Optional[int] = Field(default=None, sa_column=Column(SmallInteger, nullable=True))
     session_streak_days: Optional[int] = Field(

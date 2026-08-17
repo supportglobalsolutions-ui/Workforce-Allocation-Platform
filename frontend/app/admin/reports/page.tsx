@@ -2,10 +2,11 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Archive, ChevronDown, Download, FileBarChart, FileText, PieChart,
+  AlertCircle, Archive, Download, FileBarChart, FileText, PieChart,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
+import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
@@ -169,20 +170,13 @@ export default function ReportsPage() {
         </div>
       ) : (
         <>
-          {/* ── Period selector ── */}
-          <div className="mb-6">
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Payroll Period</label>
-            <div className="relative w-full max-w-sm">
-              <select value={periodId} onChange={(e) => setPeriodId(e.target.value)} className="input-field appearance-none pr-8">
-                {periods.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.label} ({new Date(p.start_date).toLocaleDateString()} – {new Date(p.end_date).toLocaleDateString()}) — {p.status}
-                  </option>
-                ))}
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-            </div>
-          </div>
+          <PeriodFilter
+            periods={periods}
+            value={periodId}
+            onChange={setPeriodId}
+            variant="select"
+            label="Working month"
+          />
 
           {downloadError && <Banner>{downloadError}</Banner>}
           {reportsError && <Banner>{reportsError}</Banner>}

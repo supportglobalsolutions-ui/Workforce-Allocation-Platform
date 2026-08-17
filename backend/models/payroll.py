@@ -17,6 +17,7 @@ if TYPE_CHECKING:
 
 class PayrollPeriod(SQLModel, table=True):
     __tablename__ = "payroll_periods"
+    __table_args__ = (UniqueConstraint("label", name="uq_payroll_periods_label"),)
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,

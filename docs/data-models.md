@@ -807,7 +807,7 @@ Bounded windows for payroll export and approval.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | PK | Period ID |
-| `label` | `VARCHAR(64)` | NOT NULL | e.g. `2026-05` |
+| `label` | `VARCHAR(64)` | NOT NULL, UNIQUE (`uq_payroll_periods_label`) | Automatic `March 2026` from `start_date`. Admins can rename it later via `PATCH /payroll/periods/{id}`; the name stays globally unique and a clash returns 409 |
 | `start_date` | `DATE` | NOT NULL | Period start (inclusive) |
 | `end_date` | `DATE` | NOT NULL | Period end (inclusive) |
 | `currency` | `CHAR(3)` | NOT NULL | Base currency for export |
@@ -840,6 +840,87 @@ Per-worker, per-session payroll calculation output.
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Calculated at |
 
 **Auto exception flags:** missing required fields, force-released without reason, hours deviation from shift, percentages ≠ 100%.
+
+---
+
+### 12b. `payroll_worker_summaries`
+
+One payslip row per worker per period — the table behind the Finance list, the payslip PDF, and the worker wallet. Amounts are in the worker's **payout (local) currency**; `fx_rate` is the snapshot that converts back to the period's reporting currency.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Payslip row ID |
+| `payroll_period_id` | `UUID` | FK, NOT NULL, indexed | Parent period |
+| `worker_id` | `UUID` | FK, NOT NULL, indexed | Paid worker |
+| `hours_logged` | `NUMERIC(8,2)` | NOT NULL, default 0 | Approved hours |
+| `rate_per_hour` | `NUMERIC(12,2)` | NOT NULL, default 0 | Contract rate (local) |
+| `base_pay` | `NUMERIC(14,2)` | NOT NULL, default 0 | Hours × rate |
+| `bonus` | `NUMERIC(14,2)` | NOT NULL, default 0 | Manual admin amount; never calculated |
+| `gross_earned` | `NUMERIC(14,2)` | NOT NULL, default 0 | Base + bonus |
+| `transfer_cost` | `NUMERIC(14,2)` | NOT NULL, default 0 | Allocated remittance cost |
+| `external_cost` | `NUMERIC(14,2)` | NOT NULL, default 0 | Allocated external cost |
+| `total_deductions` | `NUMERIC(14,2)` | NOT NULL, default 0 | Transfer + external |
+| `final_net` | `NUMERIC(14,2)` | NOT NULL, default 0 | Gross − deductions |
+| `local_currency` | `CHAR(3)` | NOT NULL, default `USD` | Payout currency. Defaults to the worker's country currency, editable per row and in bulk |
+| `fx_rate` | `NUMERIC(18,6)` | NULL | `1 base_currency = fx_rate local`. Null means no rate was available (`no_fx_rate` flag) |
+| `base_currency` | `CHAR(3)` | NULL | Period reporting currency at calculation time |
+| `base_equivalent` | `NUMERIC(14,2)` | NULL | `final_net / fx_rate` |
+| `admin_locked` | `BOOLEAN` | NOT NULL, default false | Set by any admin edit. Recalculation keeps locked hours/rate/costs/FX |
+| `exception_flags` | `JSONB` | default `'[]'` | `no_rate`, `no_fx_rate`, `negative_net`, … |
+
+**Unique:** (`payroll_period_id`, `worker_id`) — `uq_payroll_summary_period_worker`.
+
+Write surface:
+
+| Endpoint | Body | Notes |
+| :--- | :--- | :--- |
+| `POST /payroll/periods/{id}/summaries/bulk` | `rows[]` of `worker_id` + any of `hours_logged`, `rate_per_hour`, `bonus`, `transfer_cost`, `external_cost`, `local_currency`, `fx_rate`, `admin_locked` | Upserts many workers in one call. Omitted or null fields are left untouched, so partial pushes are safe |
+| `PATCH /payroll/summaries/{summary_id}` | Same field set | Single row |
+
+Both refuse a `paid` period. When `local_currency` changes and no explicit `fx_rate` accompanies it, the server re-resolves the rate via `fx.get_rate(period.currency, local_currency)` and overwrites the stored one — necessary because `recompute_summary` would otherwise keep the locked row's rate from the previous currency.
+
+---
+
+### 12c. Currency and FX tables
+
+#### `currencies`
+
+The payout currency catalog. First-class and independent of `countries`, so a currency can exist before any worker is paid in it. Every rate is quoted **against USD**, GBP included.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Currency ID |
+| `code` | `CHAR(3)` | NOT NULL, UNIQUE (`uq_currencies_code`) | ISO code, e.g. `UGX` |
+| `name` | `VARCHAR(64)` | NOT NULL | Display name, e.g. `Ugandan Shilling` |
+| `symbol` | `VARCHAR(8)` | NULL | Optional display symbol |
+| `is_active` | `BOOLEAN` | NOT NULL, default true | Inactive codes drop out of dropdowns and API refreshes |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | Added at |
+
+Seeded from the codes already present in `countries` and `fx_rates`, plus USD and GBP. `GET/POST/PATCH /currencies/list` manage it; the list response adds each currency's effective `usd_rate`, that rate's source, and the derived `gbp_rate`.
+
+#### `countries`
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Country ID |
+| `name` | `VARCHAR(64)` | NOT NULL, UNIQUE | Country name as stored on `workers.country` |
+| `currency_code` | `CHAR(3)` | NOT NULL | **Default** payout currency for workers in this country |
+| `is_active` | `BOOLEAN` | NOT NULL, default true | |
+
+#### `fx_rates`
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Rate ID |
+| `base_currency` | `CHAR(3)` | NOT NULL | `USD` or `GBP` |
+| `quote_currency` | `CHAR(3)` | NOT NULL | Target currency |
+| `rate` | `NUMERIC(18,6)` | NOT NULL | `1 base = rate quote` |
+| `source` | `VARCHAR(16)` | NOT NULL | `manual` or `api`; manual always wins |
+| `as_of_date` | `DATE` | NOT NULL | Rate date; the latest applicable row is used |
+
+**Unique:** (`base_currency`, `quote_currency`, `as_of_date`, `source`) — `uq_fx_rates_day`.
+
+Resolution order in `fx.resolve_rate`: identity → manual row → API row → **for GBP only**, the cross rate `(1 USD = quote) / (1 USD = GBP)`. Conversion is one-way: a reporting currency (USD/GBP) into a payout currency, never the reverse.
 
 ---
 
@@ -891,6 +972,13 @@ Generic indicator definitions — extensible without schema changes.
 | `mcq_component` | `NUMERIC(5,2)` | 50% weighted MCQ score |
 | `subjective_component` | `NUMERIC(5,2)` | 50% weighted subjective score |
 | `composite_score` | `NUMERIC(5,2)` | Final score |
+| `assessment_component` | `NUMERIC(5,2)` | 40% assessment average |
+| `rating_component` | `NUMERIC(5,2)` | 20% all-period admin rating average |
+| `reliability_component` | `NUMERIC(5,2)` | 25% session completion share |
+| `consistency_component` | `NUMERIC(5,2)` | 15% weekly-hours stability |
+| `period_type` | `VARCHAR(16)` | `calendar` or `payroll` |
+| `period_label` | `VARCHAR(64)` | Display name, e.g. `March 2026` |
+| `payroll_period_id` | `UUID` | FK, NULL — set on payroll snapshots |
 | `country_rank` | `INTEGER` | Rank within country |
 | `global_rank` | `INTEGER` | Organisation-wide rank |
 | `session_streak_days` | `INTEGER` | Consecutive days with completed session |

@@ -10,6 +10,7 @@ import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSecti
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import NewWorkPeriodModal, { WorkPeriodCreated } from '@/components/payroll/NewWorkPeriodModal';
+import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
 import { api } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -155,7 +156,7 @@ export default function WorkingPeriodCalendarPage() {
       setPeriods(sorted);
 
       const today = dateToYmd(new Date());
-      const preferred = preferId && sorted.find((p) => p.id === preferId);
+      const preferred = preferId ? sorted.find((p) => p.id === preferId) : undefined;
       const current = preferred
         ?? sorted.find((p) => coversToday(p, today))
         ?? sorted[sorted.length - 1]
@@ -266,12 +267,17 @@ export default function WorkingPeriodCalendarPage() {
                 Work period
               </p>
               <div className="flex items-center justify-center gap-2 flex-wrap">
-                <h2 className="text-xl sm:text-2xl font-black text-theme-heading tracking-tight">
-                  {selected.label}
-                </h2>
-                <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${STATUS_STYLE[selected.status]}`}>
-                  {selected.status}
-                </span>
+                <PeriodNameEditor
+                  period={selected}
+                  size="lg"
+                  trailing={
+                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${STATUS_STYLE[selected.status]}`}>
+                      {selected.status}
+                    </span>
+                  }
+                  onRenamed={(label) => setPeriods((prev) =>
+                    prev.map((p) => (p.id === selected.id ? { ...p, label } : p)))}
+                />
               </div>
               <p className="text-sm text-theme-muted mt-1">
                 {fmtLongRange(selected.start_date, selected.end_date)}

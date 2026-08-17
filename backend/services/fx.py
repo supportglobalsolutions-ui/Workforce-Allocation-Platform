@@ -11,7 +11,7 @@ import httpx
 from sqlmodel import Session, select
 
 from core.config import settings
-from models.currency import Country, FxRate
+from models.currency import Country, Currency, FxRate
 
 logger = logging.getLogger(__name__)
 
@@ -23,10 +23,8 @@ def currency_for_country(db: Session, country_name: str) -> str:
     return country.currency_code if country else "USD"
 
 
-def get_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:
-    """Latest rate: 1 base = X quote. Manual entries take precedence over API."""
-    if base_currency == quote_currency:
-        return Decimal("1")
+def _stored_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[Optional[Decimal], Optional[str]]:
+    """Latest stored rate for the pair, manual before API."""
     for source in ("manual", "api"):
         row = db.exec(
             select(FxRate)
@@ -38,16 +36,49 @@ def get_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[D
             .order_by(FxRate.as_of_date.desc())
         ).first()
         if row:
-            return row.rate
-    return None
+            return row.rate, source
+    return None, None
+
+
+def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[Optional[Decimal], Optional[str]]:
+    """
+    1 base = X quote, with the source that produced it.
+
+    Only USD rates have to be maintained: a GBP conversion with no stored row is
+    derived as (1 USD = quote) / (1 USD = GBP), so editing the single USD→GBP
+    number keeps every GBP payout in step.
+    """
+    base_currency = base_currency.upper()
+    quote_currency = quote_currency.upper()
+    if base_currency == quote_currency:
+        return Decimal("1"), "identity"
+
+    rate, source = _stored_rate(db, base_currency, quote_currency)
+    if rate is not None:
+        return rate, source
+
+    if base_currency == "GBP":
+        usd_to_quote, _ = _stored_rate(db, "USD", quote_currency)
+        usd_to_gbp, _ = _stored_rate(db, "USD", "GBP")
+        if usd_to_quote is not None and usd_to_gbp and usd_to_gbp > 0:
+            return usd_to_quote / usd_to_gbp, "derived"
+
+    return None, None
+
+
+def get_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:
+    """Latest rate: 1 base = X quote. Manual entries take precedence over API."""
+    return resolve_rate(db, base_currency, quote_currency)[0]
 
 
 def fetch_api_rates(db: Session) -> dict[str, int]:
     """
     Pull today's rates from the FX API for both base currencies, covering every
-    currency referenced by the countries table. Manual entries are untouched.
+    currency in the catalog or referenced by the countries table. Manual entries
+    are untouched.
     """
     quote_codes = {c.currency_code for c in db.exec(select(Country)).all()}
+    quote_codes.update(c.code for c in db.exec(select(Currency).where(Currency.is_active)).all())
     quote_codes.update(BASE_CURRENCIES)
     today = date.today()
     stored = {"USD": 0, "GBP": 0}
