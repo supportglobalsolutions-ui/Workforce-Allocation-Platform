@@ -32,7 +32,7 @@ function sectionMatch(pathname: string | null, href: string): boolean {
 
   // Hubs: highlight parent for sibling tab routes still nested under one item
   const hubs: Record<string, string[]> = {
-    '/admin/live-sessions': ['/admin/live-sessions', '/admin/sessions'],
+    '/admin/sessions': ['/admin/sessions', '/admin/live-sessions'],
     '/admin/quality': ['/admin/quality', '/admin/assessments', '/admin/training'],
     '/admin/settings': ['/admin/settings', '/admin/audit-logs'],
   };

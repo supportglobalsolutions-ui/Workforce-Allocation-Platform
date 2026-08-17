@@ -6,12 +6,14 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Response, status
+from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
 from models.admin_users import AdminUser
+from models.audit_log import AuditLog
 from models.enums import PayrollPeriodStatusEnum, WorkerStatusEnum
 from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
@@ -31,6 +33,8 @@ from schemas.payroll import (
     WorkerPayrollOverviewResponse,
 )
 from services import payroll_engine
+from services.admin_otp import PURPOSE_DELETE_PERIOD, issue_otp, verify_otp
+from services.email_resend import render_otp_html, render_otp_text
 from services.fx import currency_for_country
 from services.period_labels import period_label_from_date
 from services.payslip_pdf import build_payslip_pdf, payslip_rows
@@ -126,6 +130,84 @@ def update_payroll_period(
         )
     db.refresh(period)
     return period
+
+
+class DeletePeriodConfirm(BaseModel):
+    challenge_id: UUID
+    code: str
+
+
+@router.post("/periods/{period_id}/delete/request-otp")
+def request_period_delete_otp(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Email a 3-minute code to the ops alert inbox. Nothing is deleted yet."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    admin = get_admin_user(db, current_user)
+    html = render_otp_html(
+        title="Confirm work period deletion",
+        intro=(
+            f"An administrator asked to permanently delete the work period "
+            f"<strong>{period.label}</strong>. Enter this code in the platform to continue."
+        ),
+        warning="This cannot be undone. Payslips, cost pools and period quality scores will be removed.",
+    )
+    text = render_otp_text(
+        title="Confirm work period deletion",
+        intro=f"An administrator asked to permanently delete the work period {period.label}.",
+        warning="This cannot be undone.",
+    )
+    payload = issue_otp(
+        db,
+        purpose=PURPOSE_DELETE_PERIOD,
+        target_id=period.id,
+        subject=f"Confirmation code — delete {period.label}",
+        html=html,
+        text=text,
+        admin=admin,
+    )
+    payload["period_label"] = period.label
+    return payload
+
+
+@router.post("/periods/{period_id}/delete/confirm")
+def confirm_period_delete(
+    period_id: UUID,
+    body: DeletePeriodConfirm,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Consume a valid code and purge the work period."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+
+    verify_otp(
+        db,
+        challenge_id=body.challenge_id,
+        purpose=PURPOSE_DELETE_PERIOD,
+        target_id=period.id,
+        code=body.code,
+    )
+
+    admin = get_admin_user(db, current_user)
+    label = period.label
+    snapshot = payroll_engine.purge_payroll_period(db, period)
+    db.add(AuditLog(
+        actor_id=admin.id,
+        action="payroll_period.deleted",
+        target_type="payroll_period",
+        target_id=period_id,
+        previous_value=snapshot,
+        new_value=None,
+        reason_note="Deleted after email confirmation code",
+    ))
+    db.commit()
+    return {"deleted": True, "id": str(period_id), "label": label}
 
 
 @router.get("/line-items", response_model=list[PayrollLineItemResponse])
@@ -270,9 +352,12 @@ def _summary_response(db: Session, summary: PayrollWorkerSummary, period: Payrol
     if period:
         start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
         end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
-        hours, incomplete = evidence_hours_for_worker(db, summary.worker_id, start, end)
+        hours, incomplete, session_count = evidence_hours_for_worker(
+            db, summary.worker_id, start, end, period_id=period.id,
+        )
         resp.suggested_hours = hours
         resp.evidence_incomplete = incomplete
+        resp.session_count = session_count
     return resp
 
 
@@ -341,7 +426,9 @@ def period_ledger_sheet(
 
     rows: list[LedgerSheetRow] = []
     for w in workers:
-        hours, incomplete = evidence_hours_for_worker(db, w.id, start, end)
+        hours, incomplete, session_count = evidence_hours_for_worker(
+            db, w.id, start, end, period_id=period.id,
+        )
         summary = summaries.get(w.id)
         rows.append(
             LedgerSheetRow(
@@ -353,6 +440,7 @@ def period_ledger_sheet(
                 partner_entity_id=w.partner_entity_id,
                 suggested_hours=hours,
                 evidence_incomplete=incomplete,
+                session_count=session_count,
                 summary=_summary_response(db, summary, period) if summary else None,
             )
         )
@@ -395,10 +483,16 @@ def bulk_upsert_summaries(
             )
             existing[item.worker_id] = summary
 
-        data = item.model_dump(exclude_unset=True, exclude={"worker_id", "local_currency"})
+        data = item.model_dump(exclude_unset=True, exclude={"worker_id", "local_currency", "hours_logged"})
         for key, value in data.items():
             if value is not None:
                 setattr(summary, key, value)
+        start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
+        end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+        session_hours, _, _ = evidence_hours_for_worker(
+            db, item.worker_id, start, end, period_id=period.id,
+        )
+        summary.hours_logged = item.hours_logged if item.hours_logged is not None else session_hours
         _apply_currency_switch(summary, period, item.local_currency, item.fx_rate, db)
         if item.admin_locked is None:
             summary.admin_locked = True
@@ -433,6 +527,13 @@ def update_summary(
         setattr(summary, field, value)
     if period:
         _apply_currency_switch(summary, period, body.local_currency, body.fx_rate, db)
+        if body.hours_logged is None:
+            start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
+            end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+            hours, _, _ = evidence_hours_for_worker(
+                db, summary.worker_id, start, end, period_id=period.id,
+            )
+            summary.hours_logged = hours
     if body.model_dump(exclude_unset=True):
         summary.admin_locked = True if body.admin_locked is not False else summary.admin_locked
         if body.admin_locked is None:

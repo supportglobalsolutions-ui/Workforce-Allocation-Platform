@@ -33,3 +33,5 @@ from .training     import TrainingModule, TrainingLesson, TrainingProgress      
 from .audit_log         import AuditLog                                                       # noqa: F401
 from .post_mvp     import SessionTicket, KnowledgeBaseArticle                                 # noqa: F401
 from .notification import Notification                                                         # noqa: F401
+from .platform_settings import PlatformSettings, PLATFORM_SETTINGS_ID, DEFAULT_ALERT_EMAIL    # noqa: F401
+from .admin_otp         import AdminOtpChallenge                                              # noqa: F401

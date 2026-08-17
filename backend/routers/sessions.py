@@ -28,6 +28,7 @@ from services.session_evidence import (
     evidence_complete,
     notify_evidence_incomplete,
 )
+from services.payroll_engine import on_session_hours_changed
 from .deps import apply_update, get_worker_for_user
 
 router = APIRouter()
@@ -185,6 +186,8 @@ def submit_session_evidence(
     apply_image_duration(session)
     clear_evidence_reminders(db, session)
     db.add(session)
+    db.flush()
+    on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
     return _session_response(session)
@@ -228,6 +231,8 @@ def update_session(
     elif session.end_time is not None:
         notify_evidence_incomplete(db, session)
     db.add(session)
+    db.flush()
+    on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
     background_tasks.add_task(mirror_active_session_by_id, session.id)

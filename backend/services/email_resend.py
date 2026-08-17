@@ -93,6 +93,7 @@ def send_email_detailed(
     attachments: Optional[list[dict[str, Any]]] = None,
     payroll_period_id: Optional[UUID] = None,
     worker_id: Optional[UUID] = None,
+    email_job_id: Optional[UUID] = None,
     idempotency_key: Optional[str] = None,
 ) -> tuple[EmailLog, Optional[str]]:
     """
@@ -135,12 +136,16 @@ def send_email_detailed(
 
     log = EmailLog(
         to_email=to_email,
+        from_email=settings.RESEND_FROM_EMAIL,
         subject=subject,
         template=template,
         status=status,
         error=error,
+        resend_id=resend_id,
+        last_event="sent" if status == "sent" else None,
         payroll_period_id=payroll_period_id,
         worker_id=worker_id,
+        email_job_id=email_job_id,
     )
     db.add(log)
     db.commit()
@@ -208,6 +213,7 @@ def send_email_batch(
     template: str,
     payroll_period_id: Optional[UUID] = None,
     worker_ids: Optional[dict[str, UUID]] = None,
+    email_job_id: Optional[UUID] = None,
 ) -> list[BatchResult]:
     """
     Send up to BATCH_MAX messages in a single Resend call and log each outcome.
@@ -287,12 +293,16 @@ def send_email_batch(
     for res in results:
         db.add(EmailLog(
             to_email=res.to_email,
+            from_email=settings.RESEND_FROM_EMAIL,
             subject=next((m.subject for m in messages if m.ref == res.ref), template),
             template=template,
             status=res.status,
             error=res.error,
+            resend_id=res.resend_id,
+            last_event="sent" if res.status == "sent" else None,
             payroll_period_id=payroll_period_id,
             worker_id=worker_ids.get(res.ref),
+            email_job_id=email_job_id,
         ))
     db.commit()
 
@@ -301,32 +311,94 @@ def send_email_batch(
 
 
 # ── HTML templates ─────────────────────────────────────────────────────────────
+# Hex values match frontend/lib/theme/tokens.ts (dark). Email clients ignore
+# CSS variables, so these are inlined. Tables, not divs, for Outlook.
 
-_BASE_STYLE = """
-  font-family: 'Segoe UI', Arial, sans-serif; color: #1a2233; max-width: 640px;
-  margin: 0 auto; border: 1px solid #e3e8f0; border-radius: 12px; overflow: hidden;
-"""
+_BG = "#021D17"
+_HEADER = "#032F25"
+_CARD = "#0A241E"
+_SURFACE = "#142f28"
+_SECONDARY = "#0A4D3A"
+_EMERALD = "#3FC7A0"
+_GOLD = "#D4AF37"
+_TEXT = "#cbe9df"
+_HEADING = "#ffffff"
+_MUTED = "#bbcac2"
+
+
+def _email_shell(*, eyebrow: str, heading: str, body: str, footer: str) -> str:
+    """Shared GlobalSolutions chrome: gold rule, forest header, emerald accents.
+
+    Hex values are inlined (email clients ignore CSS variables). `bgcolor` is
+    set alongside CSS so Outlook still shows the dark green canvas.
+    """
+    return f"""<!DOCTYPE html>
+<html lang="en" xmlns="http://www.w3.org/1999/xhtml">
+<head>
+  <meta charset="utf-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <meta name="color-scheme" content="dark"/>
+  <meta name="supported-color-schemes" content="dark"/>
+  <title>{heading}</title>
+</head>
+<body bgcolor="{_BG}" style="margin:0; padding:0; background-color:{_BG};">
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+         bgcolor="{_BG}" style="background-color:{_BG}; padding:28px 12px;">
+    <tr>
+      <td align="center">
+        <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"
+               bgcolor="{_CARD}"
+               style="max-width:640px; width:100%; background-color:{_CARD};
+                      border:1px solid {_SECONDARY}; border-radius:14px; overflow:hidden;">
+          <tr>
+            <td bgcolor="{_GOLD}" height="4"
+                style="height:4px; background-color:{_GOLD}; font-size:0; line-height:0;">&nbsp;</td>
+          </tr>
+          <tr>
+            <td bgcolor="{_HEADER}" style="background-color:{_HEADER}; padding:22px 28px;">
+              <p style="margin:0; font-family:'Segoe UI', Arial, sans-serif;
+                         font-size:11px; font-weight:700; letter-spacing:0.18em;
+                         text-transform:uppercase; color:{_GOLD};">{eyebrow}</p>
+              <p style="margin:6px 0 0; font-family:'Segoe UI', Arial, sans-serif;
+                         font-size:20px; font-weight:700; color:{_HEADING};">{heading}</p>
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="{_CARD}" style="background-color:{_CARD}; padding:28px;
+                       font-family:'Segoe UI', Arial, sans-serif;
+                       font-size:14px; line-height:1.6; color:{_TEXT};">
+              {body}
+            </td>
+          </tr>
+          <tr>
+            <td bgcolor="{_HEADER}" style="background-color:{_HEADER}; padding:14px 28px;
+                       font-family:'Segoe UI', Arial, sans-serif; font-size:11px; color:{_MUTED};">
+              {footer}
+            </td>
+          </tr>
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>"""
 
 
 def render_broadcast_html(title: str, message: str) -> str:
     paragraphs = "".join(
-        f'<p style="margin:0 0 12px; font-size:14px; line-height:1.6;">{line}</p>'
+        f'<p style="margin:0 0 12px; font-size:14px; line-height:1.6; color:{_TEXT};">{line}</p>'
         for line in message.split("\n") if line.strip()
     )
-    return f"""
-    <div style="{_BASE_STYLE}">
-      <div style="background:#0e2a47; padding:20px 28px;">
-        <p style="color:#ffffff; font-size:18px; font-weight:700; margin:0;">GlobalSolutions</p>
-      </div>
-      <div style="padding:28px;">
-        <h2 style="font-size:17px; margin:0 0 16px;">{title}</h2>
-        {paragraphs}
-      </div>
-      <div style="background:#f4f7fb; padding:14px 28px; font-size:11px; color:#7a8699;">
-        GlobalSolutions Workforce Platform — this message was sent by your administrator.
-      </div>
-    </div>
+    body = f"""
+      <h2 style="margin:0 0 16px; font-size:18px; font-weight:700; color:{_HEADING};">{title}</h2>
+      {paragraphs}
     """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Operations",
+        heading="Announcement",
+        body=body,
+        footer="GlobalSolutions Workforce Platform — sent by your administrator.",
+    )
 
 
 def wallet_url() -> str:
@@ -348,65 +420,82 @@ def render_payslip_html(
         is_final = item.startswith("Final")
         if is_final:
             net_local = local
-        bg = "#e8f5e9" if is_final else ("#ffffff" if i % 2 == 0 else "#f7f9fc")
+        bg = _SECONDARY if is_final else (_CARD if i % 2 == 0 else _SURFACE)
         weight = "700" if is_final else "400"
+        amount_color = _GOLD if is_final else _HEADING
         body_rows += f"""
-        <tr style="background:{bg};">
-          <td style="padding:9px 12px; border:1px solid #dce3ec; font-weight:700;">{item}</td>
-          <td style="padding:9px 12px; border:1px solid #dce3ec; text-align:right; font-weight:{weight};">{local}</td>
-          <td style="padding:9px 12px; border:1px solid #dce3ec; text-align:right; font-weight:{weight};">{base}</td>
-          <td style="padding:9px 12px; border:1px solid #dce3ec; font-size:12px; color:#4a5568;">{meaning}</td>
+        <tr bgcolor="{bg}" style="background-color:{bg};">
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; font-weight:700; color:{_HEADING};">{item}</td>
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; text-align:right; font-weight:{weight}; color:{amount_color};">{local}</td>
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; text-align:right; font-weight:{weight}; color:{amount_color};">{base}</td>
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; font-size:12px; color:{_MUTED};">{meaning}</td>
         </tr>"""
 
     hero = ""
     if net_local:
         hero = f"""
-        <div style="background:#e8f5e9; border:1px solid #c8e6c9; border-radius:10px; padding:18px 20px; margin-bottom:20px; text-align:center;">
-          <p style="margin:0; font-size:12px; color:#4a5568; text-transform:uppercase; letter-spacing:.06em;">Net pay due</p>
-          <p style="margin:6px 0 0; font-size:28px; font-weight:700; color:#1b5e20;">{local_currency} {net_local}</p>
-          <p style="margin:6px 0 0; font-size:12px; color:#4a5568;">{period_label}</p>
-        </div>"""
-
-    return f"""
-    <div style="{_BASE_STYLE}">
-      <div style="background:#0e2a47; padding:20px 28px;">
-        <p style="color:#ffffff; font-size:18px; font-weight:700; margin:0;">GlobalSolutions — Payslip</p>
-      </div>
-      <div style="padding:28px;">
-        <p style="margin:0 0 18px; font-size:14px;">Hi {worker_name}, your payslip for <strong>{period_label}</strong> is ready.</p>
-        {hero}
-        <table style="width:100%; margin-bottom:18px; font-size:14px;">
-          <tr><td style="padding:4px 0; color:#7a8699;">Selected Month</td><td style="font-weight:700;">{period_label}</td></tr>
-          <tr><td style="padding:4px 0; color:#7a8699;">Employee</td><td style="font-weight:700;">{worker_name}</td></tr>
-        </table>
-        <table style="width:100%; border-collapse:collapse; font-size:13px;">
-          <tr style="background:#153e6b; color:#ffffff;">
-            <th colspan="4" style="padding:10px 12px; border:1px solid #153e6b; text-align:center;">Earnings and deductions</th>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+               bgcolor="{_HEADER}"
+               style="margin:0 0 20px; background-color:{_HEADER}; border:1px solid {_GOLD}; border-radius:10px;">
+          <tr>
+            <td style="padding:18px 20px; text-align:center;">
+              <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:0.12em;
+                         text-transform:uppercase; color:{_GOLD};">Net pay due</p>
+              <p style="margin:8px 0 0; font-size:28px; font-weight:700; color:{_EMERALD};">
+                {local_currency} {net_local}
+              </p>
+              <p style="margin:6px 0 0; font-size:12px; color:{_MUTED};">{period_label}</p>
+            </td>
           </tr>
-          <tr style="background:#e9f0f8;">
-            <th style="padding:8px 12px; border:1px solid #dce3ec; text-align:left;">Item</th>
-            <th style="padding:8px 12px; border:1px solid #dce3ec; text-align:right;">{local_currency}</th>
-            <th style="padding:8px 12px; border:1px solid #dce3ec; text-align:right;">{base_currency} Equivalent</th>
-            <th style="padding:8px 12px; border:1px solid #dce3ec; text-align:left;">Meaning</th>
+        </table>"""
+
+    body = f"""
+        <p style="margin:0 0 18px; font-size:14px; color:{_TEXT};">
+          Hi {worker_name}, your payslip for <strong style="color:{_HEADING};">{period_label}</strong> is ready.
+        </p>
+        {hero}
+        <table role="presentation" width="100%" style="margin-bottom:18px; font-size:14px;">
+          <tr>
+            <td style="padding:4px 0; color:{_MUTED};">Selected month</td>
+            <td style="font-weight:700; color:{_HEADING};">{period_label}</td>
+          </tr>
+          <tr>
+            <td style="padding:4px 0; color:{_MUTED};">Employee</td>
+            <td style="font-weight:700; color:{_HEADING};">{worker_name}</td>
+          </tr>
+        </table>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; font-size:13px;">
+          <tr bgcolor="{_HEADER}" style="background-color:{_HEADER};">
+            <th colspan="4" style="padding:10px 12px; border:1px solid {_SECONDARY}; text-align:center;
+                                    color:{_GOLD}; font-weight:700; letter-spacing:0.06em; text-transform:uppercase;">
+              Earnings and deductions
+            </th>
+          </tr>
+          <tr bgcolor="{_SECONDARY}" style="background-color:{_SECONDARY};">
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:left; color:{_TEXT};">Item</th>
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:right; color:{_TEXT};">{local_currency}</th>
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:right; color:{_TEXT};">{base_currency} equivalent</th>
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:left; color:{_TEXT};">Meaning</th>
           </tr>
           {body_rows}
         </table>
         <p style="text-align:center; margin:26px 0 0;">
           <a href="{wallet_url()}"
-             style="display:inline-block; background:#0e2a47; color:#ffffff; text-decoration:none;
+             style="display:inline-block; background:{_EMERALD}; color:{_BG}; text-decoration:none;
                     padding:12px 26px; border-radius:8px; font-size:14px; font-weight:700;">
             View in your wallet
           </a>
         </p>
-        <p style="text-align:center; margin:10px 0 0; font-size:11px; color:#7a8699;">
+        <p style="text-align:center; margin:10px 0 0; font-size:11px; color:{_MUTED};">
           Download the PDF copy any time from your wallet.
         </p>
-      </div>
-      <div style="background:#f4f7fb; padding:14px 28px; font-size:11px; color:#7a8699;">
-        Questions about this payslip? Contact your GlobalSolutions administrator.
-      </div>
-    </div>
     """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Finance",
+        heading="Your payslip",
+        body=body,
+        footer="Questions about this payslip? Contact your GlobalSolutions administrator.",
+    )
 
 
 def render_payslip_text(
@@ -440,3 +529,43 @@ def render_payslip_text(
 
 def render_broadcast_text(title: str, message: str) -> str:
     return f"{title}\n\n{message}\n\n— GlobalSolutions Workforce Platform"
+
+
+def render_otp_html(*, title: str, intro: str, warning: str) -> str:
+    """Confirmation-code email. Callers substitute {{CODE}} after rendering."""
+    body = f"""
+        <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:{_HEADING};">{title}</h2>
+        <p style="margin:0 0 18px; font-size:14px; line-height:1.6; color:{_TEXT};">{intro}</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+               bgcolor="{_HEADER}"
+               style="margin:0 0 20px; background-color:{_HEADER}; border:1px solid {_EMERALD}; border-radius:10px;">
+          <tr>
+            <td style="padding:22px 16px; text-align:center;">
+              <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:0.14em;
+                         text-transform:uppercase; color:{_GOLD};">Confirmation code</p>
+              <p style="margin:0; font-size:32px; font-weight:700; letter-spacing:0.35em;
+                         font-family:Consolas, 'Courier New', monospace; color:{_EMERALD};">
+                {{{{CODE}}}}
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0 0 8px; font-size:13px; color:{_MUTED};">
+          This code expires in 3 minutes and can be used only once.
+        </p>
+        <p style="margin:0; font-size:13px; color:{_GOLD};">{warning}</p>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Security",
+        heading="Confirmation required",
+        body=body,
+        footer="If you did not start this, ignore the email — nothing will be deleted.",
+    )
+
+
+def render_otp_text(*, title: str, intro: str, warning: str) -> str:
+    return (
+        f"{title}\n\n{intro}\n\nCode: {{{{CODE}}}}\n\n"
+        f"Expires in 3 minutes. {warning}\n"
+        "If you did not start this, ignore the email."
+    )

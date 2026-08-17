@@ -277,6 +277,11 @@ export default function WorkingPeriodCalendarPage() {
                   }
                   onRenamed={(label) => setPeriods((prev) =>
                     prev.map((p) => (p.id === selected.id ? { ...p, label } : p)))}
+                  onDeleted={() => {
+                    const idx = periods.findIndex((p) => p.id === selected.id);
+                    const fallback = periods[idx + 1] ?? periods[idx - 1];
+                    void load(fallback?.id ?? null);
+                  }}
                 />
               </div>
               <p className="text-sm text-theme-muted mt-1">

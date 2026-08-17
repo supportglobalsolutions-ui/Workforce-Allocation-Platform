@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { Check, Pencil, X } from 'lucide-react';
+import { Check, Pencil, Trash2, X } from 'lucide-react';
 
+import DeletePeriodModal from '@/components/payroll/DeletePeriodModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -14,6 +15,7 @@ interface Period {
 interface Props {
   period: Period;
   onRenamed: (label: string) => void;
+  onDeleted?: () => void;
   /** Rendered next to the name when not editing (e.g. a status chip). */
   trailing?: React.ReactNode;
   size?: 'sm' | 'lg';
@@ -24,11 +26,12 @@ interface Props {
  * more than one period, so admins can rename them. Names stay globally unique;
  * the API answers 409 on a clash.
  */
-export default function PeriodNameEditor({ period, onRenamed, trailing, size = 'sm' }: Props) {
+export default function PeriodNameEditor({ period, onRenamed, onDeleted, trailing, size = 'sm' }: Props) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(period.label);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const large = size === 'lg';
 
@@ -94,6 +97,22 @@ export default function PeriodNameEditor({ period, onRenamed, trailing, size = '
         </button>
       </span>
       {error && <p className={`text-[10px] text-danger mt-1 ${large ? 'text-center' : ''}`}>{error}</p>}
+      {onDeleted && (
+        <button
+          type="button"
+          onClick={() => setDeleting(true)}
+          className={`mt-2 inline-flex items-center gap-1.5 text-[11px] font-semibold text-danger hover:underline ${large ? 'mx-auto' : ''}`}
+        >
+          <Trash2 size={11} /> Delete this work period
+        </button>
+      )}
+      {deleting && onDeleted && (
+        <DeletePeriodModal
+          period={period}
+          onClose={() => setDeleting(false)}
+          onDeleted={() => { setDeleting(false); setEditing(false); onDeleted(); }}
+        />
+      )}
     </span>
   );
 }

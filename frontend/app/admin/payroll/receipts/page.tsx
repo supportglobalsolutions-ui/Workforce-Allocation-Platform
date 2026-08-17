@@ -1,15 +1,16 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
+import Link from 'next/link';
 import {
-  AlertCircle, CheckCircle, ChevronDown, FileText, Mail, Megaphone,
-  RefreshCw, ScrollText, Send, X,
+  AlertCircle, AtSign, CheckCircle, ChevronDown, FileText, Mail, Megaphone,
+  RefreshCw, ScrollText, Send, Users, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import DataTable from '@/components/platform/DataTable';
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
 import EmailJobProgress, { RecentEmailJobs } from '@/components/admin/EmailJobProgress';
+import EmailRecipientsInput, { isValidRecipient } from '@/components/admin/EmailRecipientsInput';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 
@@ -39,17 +40,7 @@ function slug(s: string) {
 
 interface Country { name: string; currency_code: string; is_active: boolean; }
 
-interface EmailLogEntry {
-  id: string;
-  to_email: string;
-  subject: string;
-  template: string;
-  status: 'sent' | 'failed';
-  error: string | null;
-  created_at: string;
-}
-
-type CommsTab = 'payslips' | 'broadcast' | 'log';
+type CommsTab = 'payslips' | 'broadcast';
 
 const fmt = (x: string | number | null | undefined) =>
   Number(x ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -123,6 +114,10 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
     setSending(true); setError(null); setQueuedNote(null);
     try {
       const override = overrideEmail.trim();
+      if (override && !isValidRecipient(override)) {
+        setError('That redirect address is not a valid inbox. Clear it to email each worker instead.');
+        return;
+      }
       // The request only queues the job; progress arrives from polling below.
       const res = await api.post<{
         job_id: string; queued: number; skipped_no_email: number; skipped_already_sent: number;
@@ -131,11 +126,11 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
         ...(allSelected ? {} : { worker_ids: Array.from(selected) }),
         attach_pdf: attachPdf,
         force_resend: forceResend,
-        ...(override && override.includes('@') ? { override_email: override } : {}),
+        ...(override ? { override_email: override } : {}),
       });
       setJobId(res.job_id);
       setJobsKey((k) => k + 1);
-      const notes: string[] = [`${res.queued} payslip${res.queued === 1 ? '' : 's'} queued.`];
+      const notes: string[] = [`Sending ${res.queued} payslip${res.queued === 1 ? '' : 's'} now.`];
       if (res.skipped_already_sent > 0) {
         notes.push(`${res.skipped_already_sent} already emailed for this period (tick “Re-send” to include them).`);
       }
@@ -177,7 +172,7 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
         <button type="button" onClick={handleSend} disabled={sending || selected.size === 0}
           className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-50">
           {sending ? <SpinningDots size="sm" /> : <Send size={14} />}
-          Queue for {selected.size} worker{selected.size !== 1 ? 's' : ''}
+          Email payslips to {selected.size} worker{selected.size !== 1 ? 's' : ''}
         </button>
       </div>
 
@@ -192,41 +187,32 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
 
       <div className="mb-4 max-w-md">
         <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
-          Send to this email instead (optional)
+          Redirect all payslips to one address (optional)
         </label>
         <input
           type="email"
           value={overrideEmail}
           onChange={(e) => setOverrideEmail(e.target.value)}
-          placeholder="you@example.com — test delivery to any address"
+          placeholder="finance@company.com"
           className="input-field"
         />
         <p className="text-[11px] text-theme-muted mt-1">
-          When set, the selected payslip(s) are emailed to this address instead of each worker&apos;s own email. Great for a quick delivery test.
+          Leave empty to email each worker their own payslip. When set, every selected payslip goes
+          to this address instead — used for finance review or verifying delivery.
         </p>
       </div>
 
       <p className="text-[11px] text-theme-muted mb-4 flex items-center gap-1.5">
         <Mail size={12} className="text-gold-accent" />
-        Payslip emails send from gsdeck.com via Resend. HTML email is the default; PDF attachment is optional.
+        Payslip emails send from gsdeck.com via Resend. Sending runs in the background, so you can
+        leave this page — progress keeps updating when you come back.
       </p>
 
       {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
-      {result && (
-        <Banner kind={result.failed > 0 ? 'error' : 'success'} onDismiss={() => setResult(null)}>
-          <span className="block">
-            Payslips dispatched — {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
-          </span>
-          {result.errors && result.errors.length > 0 && (
-            <span className="block mt-1 opacity-90">
-              {result.errors.join(' · ')}
-              {result.errors.some((e) => e.includes('RESEND_API_KEY') || e.toLowerCase().includes('domain'))
-                ? ' — Check RESEND_API_KEY and RESEND_FROM_EMAIL in backend/.env (verified domain in Resend; app need not be hosted on that domain).'
-                : ''}
-            </span>
-          )}
-        </Banner>
-      )}
+      {queuedNote && <Banner kind="success" onDismiss={() => setQueuedNote(null)}>{queuedNote}</Banner>}
+
+      {jobId && <EmailJobProgress jobId={jobId} onDismiss={() => setJobId(null)} />}
+      <RecentEmailJobs kind="payslip" onSelect={setJobId} refreshKey={jobsKey} />
 
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
@@ -289,16 +275,23 @@ function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
 
 // ── Broadcast tab ──────────────────────────────────────────────────────────────
 
+type Audience = 'workers' | 'custom';
+
 function BroadcastTab({ countries }: { countries: Country[] }) {
   const [title, setTitle] = useState('');
   const [message, setMessage] = useState('');
+  const [audience, setAudience] = useState<Audience>('workers');
   const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
   const [workerType, setWorkerType] = useState<'' | 'gs_registered' | 'partner_worker'>('');
   const [activeOnly, setActiveOnly] = useState(true);
-  const [testEmail, setTestEmail] = useState('');
+  const [extraEmails, setExtraEmails] = useState<string[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [result, setResult] = useState<{ recipients: number; sent: number; failed: number; skipped: number; errors?: string[] } | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [queuedNote, setQueuedNote] = useState<string | null>(null);
+  const [jobsKey, setJobsKey] = useState(0);
+
+  const customOnly = audience === 'custom';
 
   function toggleCountry(name: string) {
     setSelectedCountries((prev) => {
@@ -308,66 +301,56 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
     });
   }
 
-  async function sendBroadcast(opts: { skipWorkers: boolean }) {
-    const extra = testEmail.trim() && testEmail.includes('@') ? [testEmail.trim()] : [];
-    if (opts.skipWorkers && !extra.length) {
-      setError('Enter a test email address first, then use Send test only.');
+  async function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (customOnly && extraEmails.length === 0) {
+      setError('Add at least one email address, or switch the audience back to workers.');
       return;
     }
 
-    const scope = selectedCountries.size > 0 ? `${selectedCountries.size} selected countr${selectedCountries.size === 1 ? 'y' : 'ies'}` : 'all countries';
-    const typeLabel = workerType === 'gs_registered' ? 'GS Members' : workerType === 'partner_worker' ? 'Partners' : 'all worker types';
-    const confirmMsg = opts.skipWorkers
-      ? `Send test email only to ${extra[0]}? (workers will not be emailed)`
-      : `Broadcast "${title}" to ${typeLabel} in ${scope}${activeOnly ? ' (active only)' : ''}${extra.length ? ` (+ test ${extra[0]})` : ''}?`;
+    const scope = selectedCountries.size > 0
+      ? `${selectedCountries.size} selected countr${selectedCountries.size === 1 ? 'y' : 'ies'}`
+      : 'all countries';
+    const typeLabel = workerType === 'gs_registered' ? 'GS Members'
+      : workerType === 'partner_worker' ? 'Partners' : 'all worker types';
+    const extraNote = extraEmails.length
+      ? ` plus ${extraEmails.length} typed address${extraEmails.length === 1 ? '' : 'es'}`
+      : '';
+    const confirmMsg = customOnly
+      ? `Send "${title}" to ${extraEmails.length} typed address${extraEmails.length === 1 ? '' : 'es'}? Workers will not be emailed.`
+      : `Send "${title}" to ${typeLabel} in ${scope}${activeOnly ? ' (active only)' : ''}${extraNote}?`;
     if (!window.confirm(confirmMsg)) return;
 
-    setSending(true); setError(null); setResult(null);
+    setSending(true); setError(null); setQueuedNote(null);
     try {
-      const res = await api.post<{ recipients: number; sent: number; failed: number; skipped: number; errors?: string[] }>('/communications/broadcast', {
+      const res = await api.post<{ job_id: string; queued: number; skipped_no_email: number }>('/communications/broadcast', {
         title,
         message,
-        ...(selectedCountries.size > 0 ? { countries: Array.from(selectedCountries) } : {}),
-        ...(workerType ? { worker_type: workerType } : {}),
-        active_only: activeOnly,
-        ...(extra.length ? { extra_emails: extra } : {}),
-        ...(opts.skipWorkers ? { skip_workers: true } : {}),
+        ...(!customOnly && selectedCountries.size > 0 ? { countries: Array.from(selectedCountries) } : {}),
+        ...(!customOnly && workerType ? { worker_type: workerType } : {}),
+        active_only: customOnly ? false : activeOnly,
+        ...(extraEmails.length ? { extra_emails: extraEmails } : {}),
+        ...(customOnly ? { skip_workers: true } : {}),
       });
-      setResult(res);
-      setTitle(''); setMessage(''); setTestEmail('');
-    } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Failed to send broadcast.';
-      setError(
-        msg.includes('500') || msg.toLowerCase().includes('timeout')
-          ? `${msg} — If this was a full broadcast, check Delivery Log; emails may have been sent before the UI timed out. Prefer “Send test only” for local checks.`
-          : msg,
+      setJobId(res.job_id);
+      setJobsKey((k) => k + 1);
+      setQueuedNote(
+        `Sending to ${res.queued} recipient${res.queued === 1 ? '' : 's'} now.`
+        + (res.skipped_no_email > 0 ? ` ${res.skipped_no_email} skipped with no valid email address.` : ''),
       );
+      setTitle(''); setMessage(''); setExtraEmails([]);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Failed to send the announcement.');
     } finally { setSending(false); }
-  }
-
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    await sendBroadcast({ skipWorkers: false });
   }
 
   return (
     <div className="max-w-3xl">
       {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
-      {result && (
-        <Banner kind={result.failed > 0 ? 'error' : 'success'} onDismiss={() => setResult(null)}>
-          <span className="block">
-            Broadcast complete — {result.recipients} recipients, {result.sent} sent, {result.failed} failed, {result.skipped} skipped.
-          </span>
-          {result.errors && result.errors.length > 0 && (
-            <span className="block mt-1 opacity-90">
-              {result.errors.join(' · ')}
-              {result.errors.some((e) => e.includes('RESEND_API_KEY') || e.toLowerCase().includes('domain'))
-                ? ' — Check RESEND_API_KEY and RESEND_FROM_EMAIL in backend/.env.'
-                : ''}
-            </span>
-          )}
-        </Banner>
-      )}
+      {queuedNote && <Banner kind="success" onDismiss={() => setQueuedNote(null)}>{queuedNote}</Banner>}
+
+      {jobId && <EmailJobProgress jobId={jobId} onDismiss={() => setJobId(null)} />}
+      <RecentEmailJobs kind="broadcast" onSelect={setJobId} refreshKey={jobsKey} />
 
       <form onSubmit={handleSend} className="glass-panel p-6 space-y-5">
         <div>
@@ -382,172 +365,94 @@ function BroadcastTab({ countries }: { countries: Country[] }) {
         </div>
 
         <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 block">
-            Countries {selectedCountries.size === 0 && <span className="normal-case font-normal">(none selected = all countries)</span>}
-          </label>
-          <div className="flex flex-wrap gap-1.5">
-            {countries.map((c) => {
-              const on = selectedCountries.has(c.name);
-              return (
-                <button key={c.name} type="button" onClick={() => toggleCountry(c.name)}
-                  className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
-                    on
-                      ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
-                      : 'border-white/10 text-theme-muted hover:border-emerald-accent/20 hover:text-theme-heading'
-                  }`}>
-                  {c.name}
-                </button>
-              );
-            })}
-            {countries.length === 0 && <span className="text-xs text-theme-muted">No countries configured.</span>}
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 block">Audience</label>
+          <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
+            {([
+              { key: 'workers', label: 'Workers', icon: <Users size={12} /> },
+              { key: 'custom', label: 'Typed addresses only', icon: <AtSign size={12} /> },
+            ] as { key: Audience; label: string; icon: React.ReactNode }[]).map(({ key, label, icon }) => (
+              <button key={key} type="button" onClick={() => setAudience(key)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
+                  audience === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
+                }`}>
+                {icon} {label}
+              </button>
+            ))}
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-5">
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Worker Type</label>
-            <div className="relative">
-              <select value={workerType} onChange={(e) => setWorkerType(e.target.value as typeof workerType)}
-                className="input-field appearance-none pr-8 w-44">
-                <option value="">All</option>
-                <option value="gs_registered">GS Members</option>
-                <option value="partner_worker">Partners</option>
-              </select>
-              <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+        {!customOnly && (
+          <>
+            <div>
+              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 block">
+                Countries {selectedCountries.size === 0 && <span className="normal-case font-normal">(none selected = all countries)</span>}
+              </label>
+              <div className="flex flex-wrap gap-1.5">
+                {countries.map((c) => {
+                  const on = selectedCountries.has(c.name);
+                  return (
+                    <button key={c.name} type="button" onClick={() => toggleCountry(c.name)}
+                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
+                        on
+                          ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
+                          : 'border-white/10 text-theme-muted hover:border-emerald-accent/20 hover:text-theme-heading'
+                      }`}>
+                      {c.name}
+                    </button>
+                  );
+                })}
+                {countries.length === 0 && <span className="text-xs text-theme-muted">No countries configured.</span>}
+              </div>
             </div>
-          </div>
-          <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none mt-4">
-            <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)}
-              className="accent-emerald-400 w-3.5 h-3.5" />
-            Active workers only
-          </label>
-        </div>
 
-        <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
-            Send test to (optional)
-          </label>
-          <input
-            type="email"
-            value={testEmail}
-            onChange={(e) => setTestEmail(e.target.value)}
-            placeholder="you@example.com"
-            className="input-field max-w-md"
-          />
-          <p className="text-[11px] text-theme-muted mt-1">
-            Use <span className="text-theme-heading">Send test only</span> to verify Resend without emailing all workers (avoids UI timeouts on large lists).
+            <div className="flex flex-wrap items-center gap-5">
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Worker Type</label>
+                <div className="relative">
+                  <select value={workerType} onChange={(e) => setWorkerType(e.target.value as typeof workerType)}
+                    className="input-field appearance-none pr-8 w-44">
+                    <option value="">All</option>
+                    <option value="gs_registered">GS Members</option>
+                    <option value="partner_worker">Partners</option>
+                  </select>
+                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
+                </div>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none mt-4">
+                <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)}
+                  className="accent-emerald-400 w-3.5 h-3.5" />
+                Active workers only
+              </label>
+            </div>
+          </>
+        )}
+
+        <EmailRecipientsInput
+          value={extraEmails}
+          onChange={setExtraEmails}
+          label={customOnly ? 'Email addresses' : 'Also send to these addresses (optional)'}
+          placeholder="name@company.com"
+          hint={
+            customOnly
+              ? 'Type an address and press Enter to add another. Paste a comma-separated list to add several at once. Only these addresses receive the email.'
+              : 'Anyone here receives the same email alongside the matching workers — useful for finance, partners or an ops inbox.'
+          }
+        />
+
+        <div className="flex items-center justify-between gap-3 pt-1">
+          <p className="text-[11px] text-theme-muted">
+            Sends run in the background, 100 recipients per call, so you can leave this page.
           </p>
-        </div>
-
-        <div className="flex justify-end gap-2 pt-1">
-          <button
-            type="button"
-            disabled={sending || !testEmail.trim()}
-            onClick={() => void sendBroadcast({ skipWorkers: true })}
-            className="btn-secondary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60"
-          >
-            Send test only
-          </button>
-          <button type="submit" disabled={sending} className="btn-primary text-sm py-2 px-5 flex items-center gap-2 disabled:opacity-60">
-            {sending ? <SpinningDots size="sm" /> : <Megaphone size={14} />} Send Broadcast
+          <button type="submit"
+            disabled={sending || (customOnly && extraEmails.length === 0)}
+            className="btn-primary text-sm py-2 px-5 flex items-center gap-2 disabled:opacity-60">
+            {sending ? <SpinningDots size="sm" /> : <Megaphone size={14} />}
+            {customOnly
+              ? `Send to ${extraEmails.length} address${extraEmails.length === 1 ? '' : 'es'}`
+              : 'Send Announcement'}
           </button>
         </div>
       </form>
-    </div>
-  );
-}
-
-// ── Delivery log tab ───────────────────────────────────────────────────────────
-
-function DeliveryLogTab({ periods }: { periods: PayrollPeriod[] }) {
-  const [template, setTemplate] = useState<'' | 'payslip' | 'broadcast' | 'notification'>('');
-  const [periodId, setPeriodId] = useState('');
-  const [entries, setEntries] = useState<EmailLogEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(() => {
-    setLoading(true); setError(null);
-    const params = new URLSearchParams();
-    if (template) params.set('template', template);
-    if (periodId) params.set('payroll_period_id', periodId);
-    const qs = params.toString();
-    api.get<EmailLogEntry[]>(`/communications/log${qs ? `?${qs}` : ''}`)
-      .then(setEntries)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load delivery log.'))
-      .finally(() => setLoading(false));
-  }, [template, periodId]);
-
-  useEffect(() => { load(); }, [load]);
-
-  const rows = useMemo(() => entries.map((e) => ({ ...e, _e: e })) as unknown as Record<string, unknown>[], [entries]);
-
-  return (
-    <div>
-      <div className="flex flex-wrap items-center gap-2 mb-4">
-        <div className="relative">
-          <select value={template} onChange={(e) => setTemplate(e.target.value as typeof template)}
-            className="input-field appearance-none pr-8 !py-2 w-44">
-            <option value="">Template: All</option>
-            <option value="payslip">Payslips</option>
-            <option value="broadcast">Broadcasts</option>
-            <option value="notification">Notifications</option>
-          </select>
-          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-        </div>
-        <div className="relative">
-          <select value={periodId} onChange={(e) => setPeriodId(e.target.value)}
-            className="input-field appearance-none pr-8 !py-2 w-full sm:w-56">
-            <option value="">Period: All</option>
-            {periods.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-          </select>
-          <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-        </div>
-        <button type="button" onClick={load} className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5">
-          <RefreshCw size={12} /> Refresh
-        </button>
-        <span className="text-xs text-theme-muted ml-1">{entries.length} entr{entries.length === 1 ? 'y' : 'ies'}</span>
-      </div>
-
-      {loading ? (
-        <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
-      ) : error ? (
-        <Banner kind="error">{error}</Banner>
-      ) : (
-        <DataTable
-          columns={[
-            { key: 'created_at', header: 'Sent At', render: (r) => new Date(r.created_at as string).toLocaleString() },
-            { key: 'to_email', header: 'Recipient' },
-            { key: 'subject', header: 'Subject' },
-            {
-              key: 'template', header: 'Template',
-              render: (r) => <span className="capitalize text-theme-muted">{r.template as string}</span>,
-            },
-            {
-              key: 'status', header: 'Status',
-              render: (r) => {
-                const e = (r as { _e: EmailLogEntry })._e;
-                return e.status === 'sent' ? (
-                  <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-emerald-accent/15 text-emerald-accent border-emerald-accent/30">
-                    <CheckCircle size={9} /> Sent
-                  </span>
-                ) : (
-                  <span title={e.error ?? undefined}
-                    className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border bg-danger/15 text-danger border-danger/30">
-                    <AlertCircle size={9} /> Failed
-                  </span>
-                );
-              },
-            },
-            {
-              key: 'error', header: 'Error',
-              render: (r) => (r.error ? <span className="text-danger text-xs">{r.error as string}</span> : '—'),
-            },
-          ]}
-          data={rows}
-          emptyMessage="No delivery log entries match the current filters."
-        />
-      )}
     </div>
   );
 }
@@ -573,25 +478,30 @@ export default function CommunicationsPage() {
 
   const TABS: { key: CommsTab; label: string; icon: React.ReactNode }[] = [
     { key: 'payslips', label: 'Payslips', icon: <Mail size={13} /> },
-    { key: 'broadcast', label: 'Broadcast', icon: <Megaphone size={13} /> },
-    { key: 'log', label: 'Delivery Log', icon: <ScrollText size={13} /> },
+    { key: 'broadcast', label: 'Announcements', icon: <Megaphone size={13} /> },
   ];
 
   return (
     <div>
       <PageHeader
         title="Communications"
-        description="Send payslip emails, broadcast announcements to workers, and audit email deliveries."
+        description="Email each worker their payslip, send announcements to a group, and audit every delivery."
       />
-      <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit mb-6">
-        {TABS.map(({ key, label, icon }) => (
-          <button key={key} type="button" onClick={() => setTab(key)}
-            className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
-              tab === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
-            }`}>
-            {icon} {label}
-          </button>
-        ))}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
+          {TABS.map(({ key, label, icon }) => (
+            <button key={key} type="button" onClick={() => setTab(key)}
+              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                tab === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
+              }`}>
+              {icon} {label}
+            </button>
+          ))}
+        </div>
+        <Link href="/admin/payroll/receipts/history"
+          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5">
+          <ScrollText size={13} /> Email history
+        </Link>
       </div>
 
       {loading ? (
@@ -602,7 +512,6 @@ export default function CommunicationsPage() {
         <>
           {tab === 'payslips' && <PayslipsTab periods={periods} />}
           {tab === 'broadcast' && <BroadcastTab countries={countries} />}
-          {tab === 'log' && <DeliveryLogTab periods={periods} />}
         </>
       )}
     </div>

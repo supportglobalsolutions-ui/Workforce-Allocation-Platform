@@ -376,6 +376,10 @@ erDiagram
 | `partner_entities` | Referenced by workers (Layer 1); commercial terms read by executives (Layer 3) | PostgreSQL only |
 | `partner_arrangements` | Payroll split logic spanning sessions, payroll (Layer 3) and partner workers (Layer 1) | PostgreSQL only |
 | `partner_client_overrides` | Client-specific commercial override layer | PostgreSQL only |
+| `email_jobs` / `email_job_items` | Queued bulk sends (payslips, broadcasts) drained by a background dispatcher rather than the request | PostgreSQL only |
+| `email_log` | Permanent email history: accept/reject outcome plus provider delivery events, for every send path | PostgreSQL only |
+| `platform_settings` | Singleton ops settings, including the alert inbox that receives deletion codes | PostgreSQL only |
+| `admin_otp_challenges` | 3-minute hashed confirmation codes for irreversible admin actions | PostgreSQL only |
 
 ### Authentication (Firebase Auth — not a PostgreSQL table)
 
@@ -816,6 +820,13 @@ Bounded windows for payroll export and approval.
 | `export_generated_at` | `TIMESTAMPTZ` | NULL | Last export timestamp |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Period opened |
 
+Deleting a work period is a two-step admin action, not a plain `DELETE`. `POST /payroll/periods/{id}/delete/request-otp` emails a 6-digit code (3-minute TTL) to the ops alert inbox in `platform_settings`. `POST /payroll/periods/{id}/delete/confirm` consumes that code and then:
+
+- **Removes** line items, worker summaries, country cost pools, and quality ratings/snapshots tied to the period.
+- **Unlinks** (does not erase) sessions, wallet credits, and email history — those stay as worker records.
+
+A newly changed alert email cannot receive these codes for 24 hours; the previous inbox keeps getting them so swapping the address cannot immediately authorize a delete.
+
 ---
 
 ### 12. `payroll_line_items`
@@ -1082,6 +1093,100 @@ Admin-managed SOP and task guidance for workers.
 | `version` | `INTEGER` | Version number |
 | `published_at` | `TIMESTAMPTZ` | When live |
 | `created_by` | `UUID` | FK → admin_users |
+
+---
+
+### 17. Email delivery tables
+
+Three tables, three jobs: `email_jobs` is the batch, `email_job_items` is per-recipient state the dispatcher works through, and `email_log` is the permanent delivery record written by both send paths.
+
+#### `email_jobs`
+
+One queued bulk send (payslips or a broadcast). Created by the HTTP request; drained by `services/email_dispatch.py`.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Job ID returned as `job_id` in the `202` |
+| `kind` | `VARCHAR(16)` | NOT NULL | `payslip` \| `broadcast` |
+| `status` | `VARCHAR(16)` | NOT NULL, default `queued` | `queued` \| `running` \| `completed` \| `cancelled` |
+| `subject` | `VARCHAR(255)` | NOT NULL | Email subject |
+| `body` | `TEXT` | NULL | Broadcast message. NULL for payslips, which render from the payroll summary at send time |
+| `attach_pdf` | `BOOLEAN` | NOT NULL, default false | True forces the slow one-call-per-recipient path (Resend batch rejects attachments) |
+| `payroll_period_id` | `UUID` | FK, NULL, indexed | Period for payslip jobs |
+| `created_by` | `UUID` | FK → admin_users, NULL | Admin who queued it |
+| `total` | `INTEGER` | NOT NULL, default 0 | Recipients queued |
+| `sent` / `failed` / `skipped` | `INTEGER` | NOT NULL, default 0 | Tallies refreshed from item statuses each tick |
+| `error` | `TEXT` | NULL | Job-level failure |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | Queued at |
+| `started_at` | `TIMESTAMPTZ` | NULL | First tick that claimed an item |
+| `finished_at` | `TIMESTAMPTZ` | NULL | Set when nothing is outstanding |
+
+#### `email_job_items`
+
+One recipient. Claimed in chunks with `FOR UPDATE SKIP LOCKED` so multiple app workers can drain the same queue without double-sending.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Item ID; also the idempotency key seed |
+| `job_id` | `UUID` | FK → email_jobs, ON DELETE CASCADE, indexed | Parent job |
+| `worker_id` | `UUID` | FK → workers, NULL | NULL for typed broadcast addresses |
+| `payroll_worker_summary_id` | `UUID` | FK, NULL | Payslip row to render |
+| `to_email` | `VARCHAR(255)` | NOT NULL | Resolved recipient |
+| `status` | `VARCHAR(16)` | NOT NULL, default `pending` | `pending` \| `claimed` \| `sent` \| `failed` \| `skipped` |
+| `attempts` | `INTEGER` | NOT NULL, default 0 | Incremented on claim; capped by `EMAIL_DISPATCH_MAX_ATTEMPTS` |
+| `error` | `TEXT` | NULL | Last failure reason |
+| `resend_id` | `VARCHAR(64)` | NULL | Resend message ID for tracing |
+| `claimed_at` | `TIMESTAMPTZ` | NULL | Drives the stuck-claim reaper |
+| `sent_at` | `TIMESTAMPTZ` | NULL | Delivery accepted at |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | Queued at |
+
+**Constraints and indexes**
+
+- `UNIQUE (job_id, worker_id)` — `uq_email_job_item_job_worker`. A worker cannot appear twice in one job; several typed addresses can coexist because their `worker_id` is NULL.
+- `INDEX (status, job_id)` — `ix_email_job_items_status_job`, drives the claim query.
+
+**Lifecycle rules**
+
+- Failed items return to `pending` until attempts are exhausted, then stay `failed`. `POST /communications/jobs/{id}/retry` resets those to `pending` with `attempts = 0`.
+- Cancelling a job marks outstanding `pending`/`claimed` items `skipped`; anything already `sent` stays sent.
+- Items stuck in `claimed` past `EMAIL_DISPATCH_STUCK_MINUTES` are reaped back to `pending` (or failed if out of attempts), which is how a crash mid-send recovers.
+
+#### `email_log`
+
+One row per recipient per send attempt, written by every send path (queued payslips, queued announcements, and the inline notification emails). Unlike `email_job_items`, rows are never reset or reclaimed — this is the permanent history behind the **Email History** page, and it outlives the job that produced it.
+
+Two different questions live on this row and neither answers the other:
+
+- `status` is **our** outcome at hand-off: did Resend accept the message (`sent`) or did it never leave the platform (`failed`).
+- `last_event` is what the **provider** reported afterwards: `delivered`, `bounced`, `complained`, `opened`, `clicked`, `delivery_delayed`. A `sent` row with `last_event = 'bounced'` was accepted and then rejected by the recipient's server.
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Log entry ID |
+| `to_email` | `VARCHAR(255)` | NOT NULL | Recipient |
+| `from_email` | `VARCHAR(255)` | NULL | Sending identity used, captured from `RESEND_FROM_EMAIL` at send time so a later config change does not rewrite history |
+| `subject` | `VARCHAR(255)` | NOT NULL | Subject line as sent |
+| `template` | `VARCHAR(32)` | NOT NULL | `payslip` \| `broadcast` \| `notification` |
+| `status` | `VARCHAR(16)` | NOT NULL | `sent` (provider accepted) \| `failed` (never sent) |
+| `error` | `TEXT` | NULL | Rejection reason, or the bounce/complaint detail once known |
+| `resend_id` | `VARCHAR(64)` | NULL, indexed | Provider message ID. NULL means delivery state cannot be traced |
+| `last_event` | `VARCHAR(32)` | NULL | Highest-ranked provider event seen so far |
+| `last_event_at` | `TIMESTAMPTZ` | NULL | When that event occurred |
+| `provider_checked_at` | `TIMESTAMPTZ` | NULL | Last time a webhook or poll touched this row |
+| `events` | `JSONB` | NULL | Append-only timeline: `[{ "type", "at", "detail?", "source?" }]` |
+| `email_job_id` | `UUID` | FK → email_jobs, NULL, indexed | Bulk send this row came from. NULL for inline notification emails |
+| `payroll_period_id` | `UUID` | FK, NULL | Work period for payslip emails |
+| `worker_id` | `UUID` | FK → workers, NULL | NULL for typed addresses with no worker behind them |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL, indexed | Send attempt time; the history page pages on this |
+
+**Event ranking**
+
+Events arrive out of order — a webhook can be retried, and polling can observe a state the webhook already delivered. `services/email_events.py` applies a rank so a row never moves backwards: `queued(10) < scheduled(15) < sent(20) < delivery_delayed(30) < delivered(40) < opened(50) < clicked(60) < bounced(90) < complained(95) < failed(99)`. Problems outrank engagement deliberately, because a complaint after an open is the fact an admin needs to act on. A duplicate webhook appends nothing new.
+
+**How events arrive**
+
+1. **Webhook (production).** `POST /communications/resend/webhook` is public by necessity, so every request must carry a valid Svix signature (`svix-id`, `svix-timestamp`, `svix-signature`) verified against `RESEND_WEBHOOK_SECRET` with HMAC-SHA256 over `{id}.{timestamp}.{body}`, plus a 5-minute timestamp tolerance. Unsigned or mismatched requests are rejected with `401`; without the secret configured the endpoint rejects everything, since an open endpoint would let anyone rewrite delivery history.
+2. **Polling (fallback and local dev).** `POST /communications/log/sync` calls `GET https://api.resend.com/emails/{id}` for rows whose outcome is still unknown (`last_event` NULL or one of `queued`/`sent`/`scheduled`/`delivery_delayed`), spacing calls to respect the provider's ~10 req/s limit. `GET /communications/log/{id}?refresh=true` force-checks a single row.
 
 ---
 

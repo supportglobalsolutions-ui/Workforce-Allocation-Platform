@@ -22,7 +22,6 @@ interface Props {
 }
 
 const FIELDS = [
-  { key: 'hours_logged', label: 'Hours' },
   { key: 'rate_per_hour', label: 'Rate / hr' },
   { key: 'bonus', label: 'Bonus' },
   { key: 'transfer_cost', label: 'Transfer cost' },
@@ -64,7 +63,7 @@ export default function ApplyToManyPanel({
   const [open, setOpen] = useState(false);
   const [audience, setAudience] = useState<Audience>('all');
   const [values, setValues] = useState<Record<FieldKey, string>>({
-    hours_logged: '', rate_per_hour: '', bonus: '', transfer_cost: '', external_cost: '', fx_rate: '',
+    rate_per_hour: '', bonus: '', transfer_cost: '', external_cost: '', fx_rate: '',
   });
   const [currency, setCurrency] = useState('');
   const [applying, setApplying] = useState(false);
@@ -106,7 +105,7 @@ export default function ApplyToManyPanel({
           admin_locked: true,
         })),
       });
-      setValues({ hours_logged: '', rate_per_hour: '', bonus: '', transfer_cost: '', external_cost: '', fx_rate: '' });
+      setValues({ rate_per_hour: '', bonus: '', transfer_cost: '', external_cost: '', fx_rate: '' });
       setCurrency('');
       onApplied(targets.length);
     } catch (e) {

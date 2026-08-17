@@ -48,6 +48,15 @@ class Settings(BaseSettings):
     RESEND_API_KEY: str = ""
     RESEND_FROM_EMAIL: str = "GlobalSolutions <noreply@gsdeck.com>"
 
+    # Signing secret (whsec_…) of the Resend webhook that feeds delivery events
+    # into the email history. Unset means the webhook endpoint rejects everything
+    # and the history relies on polling instead.
+    RESEND_WEBHOOK_SECRET: str = ""
+
+    # HMAC pepper for hashing destructive-action confirmation codes. Falls back
+    # to RESEND_API_KEY, then a development default — never store the plaintext.
+    OTP_PEPPER: str = ""
+
     # Public URL of the frontend, used to build links in outgoing email
     # (e.g. the payslip "View in your wallet" button).
     APP_BASE_URL: str = "http://localhost:3000"

@@ -183,6 +183,7 @@ def _process_batch_mode(db: Session, job: EmailJob, items: list[EmailJobItem]) -
             template=job.kind,
             payroll_period_id=job.payroll_period_id,
             worker_ids=worker_ids,
+            email_job_id=job.id,
         )
         by_ref = {r.ref: r for r in results}
         for item in items:
@@ -238,6 +239,7 @@ def _process_single_mode(db: Session, job: EmailJob, items: list[EmailJobItem]) 
             attachments=[{"filename": filename, "content": base64.b64encode(pdf).decode()}],
             payroll_period_id=period.id,
             worker_id=worker.id,
+            email_job_id=job.id,
             # Stable per item so a retry of the same item cannot double-send.
             idempotency_key=f"item-{item.id}-{item.attempts}",
         )

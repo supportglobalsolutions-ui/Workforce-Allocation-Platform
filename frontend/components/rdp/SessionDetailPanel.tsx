@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageUpload from './SessionImageUpload';
@@ -28,6 +28,8 @@ interface Props {
   onEvidenceSaved?: (sessionId: string, patch: Partial<SessionDetail>) => void;
   workerLabel?: string;
   allowEvidenceEdit?: boolean;
+  /** Workers upload; admins inspect only. */
+  allowUpload?: boolean;
 }
 
 function toLocalInput(iso: string | null | undefined): string {
@@ -38,6 +40,18 @@ function toLocalInput(iso: string | null | undefined): string {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return 'Not entered';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return 'Not entered';
+  return d.toLocaleString();
+}
+
+function formatMins(minutes: number | null | undefined): string {
+  if (minutes == null) return '—';
+  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
+}
+
 export default function SessionDetailPanel({
   session,
   onClose,
@@ -45,12 +59,19 @@ export default function SessionDetailPanel({
   onEvidenceSaved,
   workerLabel,
   allowEvidenceEdit = true,
+  allowUpload = true,
 }: Props) {
   const [startAt, setStartAt] = useState(() => toLocalInput(session?.image_start_at));
   const [endAt, setEndAt] = useState(() => toLocalInput(session?.image_end_at));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [durationLabel, setDurationLabel] = useState(session?.duration ?? '—');
+
+  useEffect(() => {
+    setStartAt(toLocalInput(session?.image_start_at));
+    setEndAt(toLocalInput(session?.image_end_at));
+    setDurationLabel(session?.duration ?? formatMins(session?.duration_minutes) ?? '—');
+  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.duration, session?.duration_minutes]);
 
   if (!session) return null;
 
@@ -69,7 +90,7 @@ export default function SessionDetailPanel({
         evidence_complete: boolean;
       }>(`/sessions/${session.id}/evidence`, body);
       const mins = updated.duration_minutes;
-      const label = mins != null ? `${Math.floor(mins / 60)}h ${mins % 60}m` : durationLabel;
+      const label = mins != null ? formatMins(mins) : durationLabel;
       setDurationLabel(label);
       onEvidenceSaved?.(session.id, {
         image_start_at: updated.image_start_at,
@@ -87,12 +108,8 @@ export default function SessionDetailPanel({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{
-        background: 'rgba(0,0,0,0.97)',
-        backdropFilter: 'blur(40px)',
-        WebkitBackdropFilter: 'blur(40px)',
-      }}
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xl"
+      style={{ WebkitBackdropFilter: 'blur(24px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
       <div className="w-full max-w-lg bg-white rounded-2xl overflow-hidden shadow-2xl max-h-[90vh] overflow-y-auto">
@@ -141,8 +158,9 @@ export default function SessionDetailPanel({
               label="Session start screenshot"
               initialUrl={session.start_image_url}
               onUploaded={(url) => onImageUploaded(session.id, 'start', url)}
+              readOnly={!allowUpload}
             />
-            {allowEvidenceEdit && (
+            {allowEvidenceEdit ? (
               <label className="block mt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on start image</span>
                 <input
@@ -152,6 +170,11 @@ export default function SessionDetailPanel({
                   className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
                 />
               </label>
+            ) : (
+              <p className="mt-3 text-xs text-gray-500">
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Time on start image</span>
+                {formatClock(session.image_start_at)}
+              </p>
             )}
           </div>
           <div>
@@ -164,8 +187,9 @@ export default function SessionDetailPanel({
               label="Session end screenshot"
               initialUrl={session.end_image_url}
               onUploaded={(url) => onImageUploaded(session.id, 'end', url)}
+              readOnly={!allowUpload}
             />
-            {allowEvidenceEdit && (
+            {allowEvidenceEdit ? (
               <label className="block mt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on end image</span>
                 <input
@@ -175,6 +199,11 @@ export default function SessionDetailPanel({
                   className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
                 />
               </label>
+            ) : (
+              <p className="mt-3 text-xs text-gray-500">
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Time on end image</span>
+                {formatClock(session.image_end_at)}
+              </p>
             )}
           </div>
         </div>
@@ -195,8 +224,10 @@ export default function SessionDetailPanel({
         )}
 
         <div className="px-6 pb-5">
-          <p className="text-center text-[11px] text-gray-300">
-            Enter the times shown on your screenshots — duration is calculated from those times.
+          <p className="text-center text-[11px] text-gray-400">
+            {allowUpload
+              ? 'Enter the times shown on your screenshots — duration is calculated from those times.'
+              : 'Click an image to inspect with the magnifying lens. Hours for payroll come from these start and end times.'}
           </p>
         </div>
       </div>

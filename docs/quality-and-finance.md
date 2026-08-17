@@ -267,25 +267,29 @@ Sessions are the raw input. Three types exist:
 
 ### Inclusion filter used by `calculate_period`
 
-A session is included **only if all** of these hold:
+A closed session is included when **all** of these hold:
 
-1. `payroll_approval_state == approved`
+1. `end_time` is set (the session is finished)
 2. `start_time` is on or after `period.start_date 00:00 UTC`
 3. `start_time` is on or before `period.end_date 23:59:59 UTC`
+4. `payroll_approval_state` is **not** `flagged` or `excluded`
+5. `payroll_period_id` is empty or already this period (a session billed to another period is not stolen)
 
-Default `payroll_approval_state` is `pending`. Workers **cannot** change it (or `payroll_period_id` / `admin_notes`) — only an admin patch on the session can. States: `pending | approved | flagged | excluded`. Flagged and excluded sessions are ignored by calculate.
+On seed/recalculate the engine stamps `payroll_period_id` and promotes `pending` → `approved`, so the session row stays linked to the finance period in the database.
 
-`close_status` is **not** part of the payroll filter. A force-released session that an admin still marked `approved` will pay. Quality reliability *does* care about close status; payroll does not.
+Workers **cannot** change `payroll_approval_state`, `payroll_period_id`, or `admin_notes`. Admins can still flag or exclude a session and recalculate. States: `pending | approved | flagged | excluded`.
+
+`close_status` is **not** part of the payroll filter. Quality reliability *does* care about close status; payroll does not.
 
 ### Hours (duration)
 
-`duration_minutes` is the number payroll uses. Evidence can fill it:
+`duration_minutes` is the number payroll uses, in this order: on-image times, stored duration, then clock `start_time`/`end_time`. Per worker, those minutes are summed for the period. GS pay is **hours × hourly rate** (set the rate; base pay updates automatically). Evidence can fill duration:
 
 - Worker uploads start and end screenshots and the times shown on those images (`image_start_at`, `image_end_at`).
 - `apply_image_duration` sets `duration_minutes = floor((image_end_at − image_start_at) in minutes)`, floored at 0.
 - Evidence is “complete” only when both image URLs **and** both image times exist. Incomplete closed sessions trigger a worker notification.
 
-**Suggested hours** on the finance ledger (`evidence_hours_for_worker`) sum `duration_minutes` for **all closed** sessions in the window (whether payroll-approved or not) and flag `evidence_incomplete` if any closed session is missing evidence. Suggested hours are a hint for the admin ledger. **Calculate uses only approved sessions’ `duration_minutes`.**
+**Hours on finance** (`evidence_hours_for_worker`) sum every closed session in the period (skipping flagged/excluded). That total is stored on `payroll_worker_summaries.hours_logged` and is not typed by the admin. Entering a rate computes **base pay = hours × rate**. When a worker updates start/end times, the covering open/calculated period is stamped on `sessions.payroll_period_id` and hours (and pay) refresh automatically.
 
 ### Partner / third-party earnings
 
@@ -604,7 +608,68 @@ The wallet Payslip History tab is a card per payslip carrying exactly the PDF li
 
 `/payroll/my-summaries` returns **approved** and **paid** periods. With `?include_pending=true` — which the wallet page uses — it also returns `calculated` periods, so a worker can see the month as soon as finance has worked it out. Those cards carry a **Not final** badge, and each row reports its `period_status`.
 
+Each expanded payslip card has a **Download PDF** button hitting `GET /payroll/my-summaries/{summary_id}/payslip.pdf`. That route is deliberately separate from the admin one: it resolves the caller's own worker row and 404s if the summary belongs to anyone else, so a guessed id leaks nothing. It refuses periods still `open`, matching what `/my-summaries` publishes.
+
 Admins can download one PDF, a zip of all PDFs (sets `export_generated_at`), or a payroll CSV.
+
+## Emailing payslips at scale
+
+Sends are **queued, never inline**. `POST /communications/payslips/send` validates the audience, writes one `email_jobs` row plus one `email_job_items` row per recipient, and returns `202` with a `job_id`. A background loop (`services/email_dispatch.py`, started from the app lifespan) drains the queue. This is what lets a 1000-worker run finish: the HTTP request does bounded work, and a restart mid-send resumes from whatever is still `pending` instead of losing progress or double-sending.
+
+**HTML first.** The default payslip email is a styled HTML message carrying the same lines as the PDF, a hero net-pay figure, and a *View in your wallet* button built from `APP_BASE_URL`. A plain-text alternative is always attached, which matters for deliverability on bulk sends. The PDF is not attached by default because workers can download it from the wallet at any time.
+
+Two send modes, chosen by `attach_pdf`:
+
+| Mode | Endpoint used | Throughput | When |
+| :--- | :--- | :--- | :--- |
+| HTML only (default) | Resend `/emails/batch` | 100 recipients per API call | Normal monthly run |
+| PDF attached | Resend `/emails` | 1 recipient per API call | Only when the attachment is contractually needed |
+
+Resend's batch endpoint rejects attachments, which is the whole reason for the split. The receipts page warns that ticking *Attach PDF* moves the job onto the slow path.
+
+Dispatcher behaviour:
+
+- **Claiming.** Each tick claims up to `EMAIL_DISPATCH_CLAIM_SIZE` (100) pending items with `FOR UPDATE SKIP LOCKED`, so several Gunicorn workers can drain one queue without overlapping.
+- **Retries.** A failed item goes back to `pending` until `EMAIL_DISPATCH_MAX_ATTEMPTS` (3) is spent, then sticks at `failed`. A `429` from Resend is retried inside the call using the `Retry-After` header, then exponential backoff.
+- **Idempotency.** Every batch chunk and every single send carries an `Idempotency-Key`, so a retry after a lost response cannot double-send.
+- **Crash recovery.** Items stuck in `claimed` for longer than `EMAIL_DISPATCH_STUCK_MINUTES` (10) are reaped back to `pending`, or failed if out of attempts.
+- **Business-level skipping.** Workers already emailed for a period (a `sent` payslip row in `email_log`) are skipped unless `force_resend` is set, so re-running after fixing a few rows does not spam everyone.
+
+Queueing a payslip job also raises an in-app `payment` notification per worker, so the wallet surfaces the payslip even if the email is delayed or filtered.
+
+Job control endpoints (all admin):
+
+| Action | Effect |
+| :--- | :--- |
+| `GET /communications/jobs` | Recent jobs with live tallies (drives the *Recent sends* chips) |
+| `GET /communications/jobs/{id}` | One job; `?include_items=true` for per-recipient rows |
+| `POST /communications/jobs/{id}/retry` | Re-queues only the `failed` items; sent recipients are untouched |
+| `POST /communications/jobs/{id}/cancel` | Marks outstanding items `skipped`; already-sent stay sent |
+
+The receipts page polls the job every 2s while it is `queued`/`running` and stops once it settles, showing a progress bar, per-status tallies, a **Retry failed** button, and a **Cancel** button. Announcements run on the same tables and the same dispatcher, with the message body stored on `email_jobs.body` so it survives a restart.
+
+### Announcement audience
+
+`POST /communications/broadcast` sends one identical message. The audience is either workers filtered by `countries` / `worker_type` / `active_only`, or typed addresses only (`skip_workers: true`). `extra_emails` accepts many addresses and is additive in both modes, so finance or an ops inbox can be copied on a real send. Every typed address is validated against the same rules as a worker address, and a rejected one fails the request with a message naming it rather than being silently dropped.
+
+## Email history
+
+`email_log` is the permanent record: one row per recipient per send attempt, written by all three paths (queued payslips, queued announcements, inline notification emails). The **Email History** page (`/admin/payroll/receipts/history`) is the audit surface over it.
+
+It keeps two facts apart, because operators conflate them constantly:
+
+| Column shown | Question it answers |
+| :--- | :--- |
+| **Accepted** (`status`) | Did the message leave the platform — did Resend take it? |
+| **Delivery** (`last_event`) | What happened next: delivered, opened, clicked, delayed, bounced, marked as spam |
+
+A row can be *Accepted: yes* and *Delivery: bounced*. A row that is delivered can still be sitting in the recipient's Spam or Promotions folder — delivery confirms the receiving server accepted it, nothing more, and the page says so.
+
+Provider events reach the row two ways. In production the Resend webhook pushes each event to `POST /communications/resend/webhook`, which requires a valid Svix signature (`RESEND_WEBHOOK_SECRET`) and rejects everything when that secret is unset. Locally, or to backfill a missed webhook, **Sync delivery status** calls `POST /communications/log/sync`, which asks the provider about messages whose outcome is still unknown; the eye-modal's **Re-check** does the same for one row. Events are rank-ordered so a late or duplicate event can never move a row backwards from `delivered` to `sent`.
+
+The page filters on recipient/subject search, type, delivery state (including *Awaiting confirmation* and *Bounced or spam*), accepted/rejected, work period and a date range, and pages 50 at a time. Its counters are computed over the whole filtered set rather than the visible page. The eye opens one email in full: sending identity, provider message id, the work period and worker behind it, the bulk send it came from with that job's tallies and attempt count, and the complete event timeline with bounce reasons and clicked links.
+
+Rows sent before this trace existed, and any row Resend never issued an id for, show **Sent** with no delivery state; the modal says the provider id was not recorded rather than implying delivery.
 
 ## Finance data model (short)
 
@@ -622,23 +687,26 @@ Admins can download one PDF, a zip of all PDFs (sets `export_generated_at`), or 
 | `currencies` | Payout currency catalog (`code`, `name`, `symbol`, `is_active`) behind every currency dropdown |
 | `fx_rates` / `countries` | Manual-over-API FX quoted against USD; country → default local currency |
 | `sessions` | Hours, evidence, `earnings_amount`, `payroll_approval_state` |
+| `email_jobs` / `email_job_items` | Queued bulk sends and their per-recipient state (payslips and announcements) |
+| `email_log` | Permanent email history: our accept/reject outcome plus the provider's delivery events |
 
 ## Admin workflow (practical order)
 
 1. **Open a work period** on Calendar or Payroll (month or custom dates, USD or GBP). Rename it with the pencil if the month already has one.
 2. Workers log sessions; complete start/end evidence so duration is trustworthy.
-3. Admin **approves** sessions for payroll (`payroll_approval_state = approved`). Pending/flagged/excluded stay out of calculate.
-4. Maintain **payment tiers** and assign `pay_tier` on workers; override individuals in the rate table if needed.
+3. **Seed from sessions** on Finance. Closed sessions in the period dates are linked (`payroll_period_id`) and hours are summed per worker. Flag or exclude a session before seeding if it should not pay.
+4. Maintain **payment tiers** and assign `pay_tier` on workers; override individuals in the rate table if needed. Entering a rate (for example 5 USD/hr) auto-calculates base pay as hours × rate.
 5. Check the **Currencies** page: every payout currency present and its `1 USD =` rate current.
 6. Optionally set **country cost pools**.
 7. **Rate quality** for the period (`admin_overall` 1–5). This is for the leaderboard, not pay.
-8. **Seed / Calculate** to build line items and suggested payslips from approved sessions.
-9. Work the **Finance list**: eye for one worker, **Apply to many** for a shared bonus or rate, ledger for wide edits. Any save locks those rows.
-10. Recalculate if session data changed; locked rows keep admin figures.
-11. **Approve** (freeze FX).
-12. **Push to wallets**.
-13. Export payslips / CSV; email receipts as needed.
-14. **Mark paid**.
+8. Work the **Finance list**: eye for one worker, **Apply to many** for a shared bonus or rate, ledger for wide edits. Any save locks those rows.
+9. Recalculate if session data changed; locked rows keep admin figures.
+10. **Approve** (freeze FX).
+11. **Push to wallets**.
+12. Export payslips / CSV, and **queue the payslip emails** on the Receipts page. The send runs in the background — watch the progress bar, then use **Retry failed** for any bounces.
+13. **Mark paid**.
+
+To remove a work period entirely, open the pencil next to its name (Calendar or Finance) and choose **Delete this work period**. Confirm, then enter the 6-digit code emailed to the admin alert inbox (Settings). Codes expire in 3 minutes. Changing that inbox does not let the new address receive codes for 24 hours.
 
 ---
 
@@ -720,6 +788,10 @@ Then convert 100 USD (and any allocated costs) into local currency the same way 
 | Currency catalog | `backend/models/currency.py`, `backend/routers/currencies.py` |
 | Session evidence hours | `backend/services/session_evidence.py` |
 | Payslip PDF | `backend/services/payslip_pdf.py` |
+| Email templates and Resend calls | `backend/services/email_resend.py` |
+| Bulk email dispatcher | `backend/services/email_dispatch.py` |
+| Email job queue HTTP | `backend/routers/communications.py` |
+| Email job tables | `backend/models/email_job.py` |
 | Admin work periods | `frontend/app/admin/calendar/page.tsx`, `frontend/components/payroll/NewWorkPeriodModal.tsx` |
 | Period rename pencil | `frontend/components/payroll/PeriodNameEditor.tsx` |
 | Admin finance list | `frontend/app/admin/payroll/page.tsx` |
@@ -729,4 +801,6 @@ Then convert 100 USD (and any allocated costs) into local currency the same way 
 | Currency dropdown data | `frontend/lib/currencies.ts` |
 | Admin currencies / FX page | `frontend/app/admin/currencies/page.tsx` |
 | Admin quality / ratings | `frontend/app/admin/quality/page.tsx` |
+| Payslip email / broadcast page | `frontend/app/admin/payroll/receipts/page.tsx` |
+| Email job progress UI | `frontend/components/admin/EmailJobProgress.tsx` |
 | Worker wallet | `frontend/app/worker/(shell)/wallet/page.tsx` |

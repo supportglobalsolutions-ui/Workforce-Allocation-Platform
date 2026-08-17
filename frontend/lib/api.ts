@@ -21,8 +21,14 @@ async function getToken(forceRefresh = false): Promise<string | null> {
 
 async function parseErrorMessage(res: Response): Promise<string> {
   const text = await res.text().catch(() => '');
+  const trimmed = text.trim();
+  const proxyFailure =
+    !trimmed
+    || /^internal server error$/i.test(trimmed)
+    || /^<!doctype/i.test(trimmed)
+    || /^<html/i.test(trimmed);
 
-  if (text) {
+  if (trimmed && !proxyFailure) {
     try {
       const json = JSON.parse(text) as { detail?: string | { msg: string }[] };
       if (typeof json.detail === 'string') return json.detail;
@@ -34,11 +40,15 @@ async function parseErrorMessage(res: Response): Promise<string> {
     }
   }
 
-  if (res.status === 500 || res.status === 502 || res.status === 503) {
-    return 'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000';
+  if (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504 || proxyFailure) {
+    return 'Cannot reach the API server. If it is restarting, wait a moment and retry. Start it with: cd backend && python -m uvicorn main:app --reload --port 8000';
   }
 
   return `Request failed (${res.status})`;
+}
+
+function isRetryable(status: number): boolean {
+  return status === 500 || status === 502 || status === 503 || status === 504;
 }
 
 async function request<T>(
@@ -58,24 +68,35 @@ async function request<T>(
     });
   };
 
+  const attempt = async (forceRefresh: boolean) => {
+    try {
+      return await fetchWith(forceRefresh);
+    } catch {
+      throw new Error(
+        'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --reload --port 8000',
+      );
+    }
+  };
+
   let res: Response;
   try {
-    res = await fetchWith(false);
-  } catch {
-    throw new Error(
-      'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000',
-    );
+    res = await attempt(false);
+  } catch (first) {
+    if (method !== 'GET') throw first;
+    await new Promise((r) => setTimeout(r, 600));
+    res = await attempt(false);
   }
 
   // On 401, force-refresh the token and retry once.
   if (res.status === 401) {
-    try {
-      res = await fetchWith(true);
-    } catch {
-      throw new Error(
-        'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --port 8000',
-      );
-    }
+    res = await attempt(true);
+  }
+
+  // Uvicorn --reload drops connections for a second; retry once so a page
+  // load during a backend restart is not a hard failure.
+  if (isRetryable(res.status) && method === 'GET') {
+    await new Promise((r) => setTimeout(r, 600));
+    res = await attempt(false);
   }
 
   if (!res.ok) {

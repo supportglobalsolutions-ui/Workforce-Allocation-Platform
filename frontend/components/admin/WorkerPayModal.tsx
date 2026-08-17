@@ -15,6 +15,7 @@ export interface PayRow {
   worker_pay_tier: string | null;
   suggested_hours: string | number;
   evidence_incomplete: boolean;
+  session_count?: number;
   summary: {
     id: string;
     hours_logged: string | number;
@@ -24,7 +25,6 @@ export interface PayRow {
     external_cost: string | number;
     local_currency: string;
     fx_rate: string | number | null;
-    // Server-derived; recomputed client-side while editing.
     base_pay: string | number;
     gross_earned: string | number;
     total_deductions: string | number;
@@ -41,7 +41,6 @@ interface Props {
   periodId: string;
   periodLabel: string;
   periodCurrency: string;
-  /** Fallback pay currency when the worker has no payslip row yet. */
   defaultCurrency: string;
   locked: boolean;
   onClose: () => void;
@@ -56,7 +55,42 @@ const num = (v: string) => (v === '' ? 0 : Number(v) || 0);
 const money = (x: number) =>
   x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
-/** Eye-click modal: the full payslip row-set for one worker, editable. */
+function Field({
+  label, hint, children, className = '',
+}: {
+  label: string;
+  hint?: string;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <label className={`block ${className}`}>
+      <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
+        {label}
+      </span>
+      {children}
+      {hint && <span className="mt-1 block text-[11px] text-theme-muted">{hint}</span>}
+    </label>
+  );
+}
+
+function Computed({ label, value, accent }: { label: string; value: string; accent?: 'emerald' | 'gold' | 'danger' }) {
+  const color =
+    accent === 'emerald' ? 'text-emerald-accent' :
+    accent === 'gold' ? 'text-gold-accent' :
+    accent === 'danger' ? 'text-danger' :
+    'text-theme-heading';
+  return (
+    <div>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5">{label}</p>
+      <p className={`h-[38px] flex items-center px-3 rounded-xl border border-white/10 bg-white/[0.03] text-sm font-semibold tabular-nums ${color}`}>
+        {value}
+      </p>
+    </div>
+  );
+}
+
+/** Eye-click modal: payslip for one worker. Hours default from sessions; totals follow hours × rate. */
 export default function WorkerPayModal({
   row,
   periodId,
@@ -70,15 +104,18 @@ export default function WorkerPayModal({
 }: Props) {
   const s = row.summary;
   const currencies = useCurrencies();
+  const sessionHours = Number(row.suggested_hours ?? 0);
+  const sessionCount = row.session_count ?? 0;
+  const storedHours = Number(s?.hours_logged ?? 0);
 
-  const [form, setForm] = useState({
-    hours_logged: String(s?.hours_logged ?? row.suggested_hours ?? '0'),
+  const [form, setForm] = useState(() => ({
+    hours_logged: String(storedHours > 0 ? storedHours : sessionHours),
     rate_per_hour: String(s?.rate_per_hour ?? '0'),
     bonus: String(s?.bonus ?? '0'),
     transfer_cost: String(s?.transfer_cost ?? '0'),
     external_cost: String(s?.external_cost ?? '0'),
     fx_rate: s?.fx_rate != null ? String(s.fx_rate) : '',
-  });
+  }));
   const [currency, setCurrency] = useState(s?.local_currency ?? defaultCurrency);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -86,7 +123,6 @@ export default function WorkerPayModal({
   const set = (key: FormKey) => (e: React.ChangeEvent<HTMLInputElement>) =>
     setForm((f) => ({ ...f, [key]: e.target.value }));
 
-  // Mirrors payroll_engine.recompute_summary so the numbers move as you type.
   const totals = useMemo(() => {
     const basePay = num(form.hours_logged) * num(form.rate_per_hour);
     const gross = basePay + num(form.bonus);
@@ -109,7 +145,6 @@ export default function WorkerPayModal({
     setSaving(true);
     setError(null);
     try {
-      // The bulk endpoint upserts, so this works before Calculate has ever run.
       await api.post(`/payroll/periods/${periodId}/summaries/bulk`, {
         upsert: true,
         rows: [{
@@ -120,7 +155,6 @@ export default function WorkerPayModal({
           transfer_cost: num(form.transfer_cost),
           external_cost: num(form.external_cost),
           local_currency: currency,
-          // Omitting FX after a currency switch lets the server re-resolve it.
           ...(form.fx_rate !== '' && !currencyChanged ? { fx_rate: Number(form.fx_rate) } : {}),
           admin_locked: true,
         }],
@@ -134,24 +168,15 @@ export default function WorkerPayModal({
     }
   }
 
-  const lines: { label: string; value: React.ReactNode; strong?: boolean; input?: FormKey; step?: string }[] = [
-    { label: 'Hours Logged', value: null, input: 'hours_logged', step: '0.01' },
-    { label: 'Rate per Hour', value: null, input: 'rate_per_hour', step: '0.01' },
-    { label: 'Base Pay', value: money(totals.basePay) },
-    { label: 'Bonus', value: null, input: 'bonus', step: '0.01' },
-    { label: 'Gross Earned', value: money(totals.gross), strong: true },
-    { label: 'Transfer Cost Deduction', value: null, input: 'transfer_cost', step: '0.01' },
-    { label: 'External Cost Deduction', value: null, input: 'external_cost', step: '0.01' },
-    { label: 'Total Deductions', value: money(totals.deductions) },
-    { label: 'Final Net Pay Due', value: money(totals.net), strong: true },
-  ];
+  const inputClass = 'input-field !py-2 text-sm tabular-nums disabled:opacity-60 w-full';
 
   return (
     <div
-      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+      className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-xl p-4"
+      style={{ WebkitBackdropFilter: 'blur(24px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <form onSubmit={save} className="glass-modal relative z-10 w-full max-w-lg max-h-[92vh] flex flex-col overflow-hidden rounded-2xl">
+      <form onSubmit={save} className="glass-modal relative z-10 w-full max-w-3xl max-h-[92vh] flex flex-col overflow-hidden rounded-2xl">
         <div className="flex items-start justify-between p-5 border-b border-white/[0.06] shrink-0">
           <div>
             <p className="text-base font-bold text-theme-heading">{row.worker_display_name}</p>
@@ -167,78 +192,97 @@ export default function WorkerPayModal({
           </button>
         </div>
 
-        <div className="overflow-y-auto flex-1 p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Pay currency</label>
+        <div className="overflow-y-auto flex-1 p-5 space-y-5">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <Field label="Pay currency">
               <select value={currency} disabled={locked} onChange={(e) => setCurrency(e.target.value)}
-                className="input-field !py-2 text-sm disabled:opacity-60">
+                className="input-field !py-2 text-sm disabled:opacity-60 w-full">
                 {currencyCodes(currencies, currency).map((code) => (
                   <option key={code} value={code}>{code}</option>
                 ))}
               </select>
-            </div>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
-                FX (1 {periodCurrency} =)
-              </label>
+            </Field>
+            <Field
+              label={`FX (1 ${periodCurrency} =)`}
+              hint={currencyChanged ? `Save to load the ${currency} rate from the table.` : undefined}
+            >
               <input type="number" step="any" min="0" disabled={locked || currencyChanged}
                 value={currencyChanged ? '' : form.fx_rate} onChange={set('fx_rate')}
                 placeholder={currencyChanged ? 'Set from rate table' : 'Not set'}
-                className="input-field !py-2 text-sm disabled:opacity-60" />
-            </div>
+                className={inputClass} />
+            </Field>
           </div>
 
-          {currencyChanged && (
-            <p className="text-[11px] text-gold-accent">
-              Switching to {currency} — the rate table supplies the new FX when you save.
-            </p>
-          )}
-
-          <div className="rounded-xl border border-white/10 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 bg-white/[0.03] border-b border-white/[0.06]">
+          <div className="rounded-xl border border-white/10 p-4 space-y-4">
+            <div className="flex items-center justify-between">
               <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Earnings and deductions</span>
               <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">{currency}</span>
             </div>
-            <div className="divide-y divide-white/[0.04]">
-              {lines.map((line) => (
-                <div key={line.label} className="flex items-center justify-between gap-3 px-3 py-2">
-                  <span className={`text-xs ${line.strong ? 'font-bold text-theme-heading' : 'text-theme-muted'}`}>
-                    {line.label}
-                  </span>
-                  {line.input ? (
-                    <input
-                      type="number"
-                      step={line.step}
-                      disabled={locked}
-                      value={form[line.input]}
-                      onChange={set(line.input)}
-                      className="input-field !py-1 !px-2 w-32 text-right text-sm tabular-nums disabled:opacity-60"
-                    />
-                  ) : (
-                    <span className={`text-sm tabular-nums ${
-                      line.label === 'Final Net Pay Due'
-                        ? `font-bold ${totals.net < 0 ? 'text-danger' : 'text-emerald-accent'}`
-                        : line.strong ? 'font-bold text-theme-heading' : 'text-theme-heading'
-                    }`}>
-                      {line.value}
-                    </span>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <Field
+                label="Hours logged"
+                hint={
+                  sessionCount > 0
+                    ? `${sessionHours.toFixed(2)} h from ${sessionCount} session${sessionCount === 1 ? '' : 's'}`
+                    : 'No finished sessions in this period yet'
+                }
+              >
+                <div className="flex gap-2">
+                  <input type="number" step="0.01" min="0" disabled={locked}
+                    value={form.hours_logged} onChange={set('hours_logged')} className={inputClass} />
+                  {sessionHours > 0 && (
+                    <button type="button" disabled={locked}
+                      onClick={() => setForm((f) => ({ ...f, hours_logged: String(sessionHours) }))}
+                      className="btn-secondary text-[11px] py-2 px-3 shrink-0 whitespace-nowrap">
+                      From sessions
+                    </button>
                   )}
                 </div>
-              ))}
+              </Field>
+              <Field label="Rate per hour" hint="Base pay = hours × rate">
+                <input type="number" step="0.01" min="0" disabled={locked}
+                  value={form.rate_per_hour} onChange={set('rate_per_hour')} className={inputClass} />
+              </Field>
+
+              <Computed label="Base pay" value={money(totals.basePay)} />
+              <Field label="Bonus">
+                <input type="number" step="0.01" disabled={locked}
+                  value={form.bonus} onChange={set('bonus')} className={inputClass} />
+              </Field>
+
+              <Field label="Transfer cost deduction">
+                <input type="number" step="0.01" disabled={locked}
+                  value={form.transfer_cost} onChange={set('transfer_cost')} className={inputClass} />
+              </Field>
+              <Field label="External cost deduction">
+                <input type="number" step="0.01" disabled={locked}
+                  value={form.external_cost} onChange={set('external_cost')} className={inputClass} />
+              </Field>
+
+              <Computed label="Gross earned" value={money(totals.gross)} />
+              <Computed label="Total deductions" value={money(totals.deductions)} />
+
+              <Computed
+                label="Final net pay due"
+                value={money(totals.net)}
+                accent={totals.net < 0 ? 'danger' : 'emerald'}
+              />
+              {totals.baseEquivalent !== null ? (
+                <Computed
+                  label={`${periodCurrency} equivalent`}
+                  value={money(totals.baseEquivalent)}
+                  accent="gold"
+                />
+              ) : (
+                <div />
+              )}
             </div>
-            {totals.baseEquivalent !== null && (
-              <div className="px-3 py-2 border-t border-white/[0.06] flex items-center justify-between">
-                <span className="text-[11px] text-theme-muted">{periodCurrency} equivalent</span>
-                <span className="text-[11px] text-gold-accent tabular-nums">{money(totals.baseEquivalent)}</span>
-              </div>
-            )}
           </div>
 
-          <div className="flex flex-wrap gap-3 text-[11px] text-theme-muted">
-            <span>Suggested hours from evidence: {Number(row.suggested_hours ?? 0).toFixed(2)}</span>
-            {row.evidence_incomplete && <span className="text-amber-400">Evidence incomplete</span>}
-          </div>
+          {row.evidence_incomplete && (
+            <p className="text-[11px] text-amber-400">Some sessions are missing images or on-image times.</p>
+          )}
 
           {(s?.exception_flags?.length ?? 0) > 0 && (
             <div className="flex flex-wrap gap-1.5">

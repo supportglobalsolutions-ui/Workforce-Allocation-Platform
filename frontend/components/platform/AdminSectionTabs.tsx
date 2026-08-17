@@ -55,11 +55,11 @@ export function AdminSectionTabs({ tabs }: { tabs: SectionTab[] }) {
 
 export default AdminSectionTabs;
 
-/** Session history sits under Live Sessions in the sidebar. */
-export const SESSIONS_TABS: SectionTab[] = [
-  { label: 'Live', href: '/admin/live-sessions' },
-  { label: 'History', href: '/admin/sessions' },
-];
+/**
+ * Live and history are one page now, switched in-page rather than by route, so
+ * the Sessions screen needs no section tabs.
+ */
+export const SESSIONS_TABS: SectionTab[] = [];
 
 export const QUALITY_TABS: SectionTab[] = [
   { label: 'Leaderboard', href: '/admin/quality' },

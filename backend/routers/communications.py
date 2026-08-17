@@ -7,13 +7,15 @@ writes an email_jobs row plus one email_job_items row per recipient, and returns
 which is what lets a 1000-recipient run finish without timing out the request or
 losing progress on a restart.
 """
+import json
 import logging
 from datetime import datetime, timezone
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel
+from sqlalchemy import func, or_
 from sqlmodel import Session, select
 
 from core.database import get_db
@@ -26,6 +28,7 @@ from models.notification import Notification
 from models.payroll import PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
 from routers.deps import get_admin_user
+from services.email_events import apply_event, sync_delivery_events, verify_webhook_signature
 from services.email_resend import blocked_recipient_reason, is_valid_email_address
 
 router = APIRouter()
@@ -47,8 +50,8 @@ class BroadcastRequest(BaseModel):
     countries: Optional[list[str]] = None       # None = all countries
     worker_type: Optional[str] = None           # gs_registered | partner_worker | None = all
     active_only: bool = False
-    extra_emails: Optional[list[str]] = None    # typed addresses for quick test / extra recipients
-    skip_workers: bool = False                  # True = only email extra_emails (fast local test)
+    extra_emails: Optional[list[str]] = None    # typed addresses emailed alongside the workers
+    skip_workers: bool = False                  # True = email only extra_emails, no workers
 
 
 def _worker_email(db: Session, worker: Worker) -> Optional[str]:
@@ -56,6 +59,48 @@ def _worker_email(db: Session, worker: Worker) -> Optional[str]:
         return None
     admin_user = db.get(AdminUser, worker.admin_user_id)
     return admin_user.email if admin_user else None
+
+
+def _worker_names(db: Session, worker_ids: list[Optional[UUID]]) -> dict[UUID, str]:
+    ids = {w for w in worker_ids if w}
+    if not ids:
+        return {}
+    rows = db.exec(select(Worker.id, Worker.display_name).where(Worker.id.in_(ids))).all()
+    return {wid: name for wid, name in rows}
+
+
+def _period_labels(db: Session, period_ids: list[Optional[UUID]]) -> dict[UUID, str]:
+    ids = {p for p in period_ids if p}
+    if not ids:
+        return {}
+    rows = db.exec(
+        select(PayrollPeriod.id, PayrollPeriod.label).where(PayrollPeriod.id.in_(ids))
+    ).all()
+    return {pid: label for pid, label in rows}
+
+
+def _log_row(log: EmailLog, names: dict[UUID, str], labels: dict[UUID, str]) -> dict:
+    """One email history row: our outcome plus whatever the provider reported."""
+    return {
+        "id": str(log.id),
+        "created_at": log.created_at.isoformat() if log.created_at else None,
+        "to_email": log.to_email,
+        "from_email": log.from_email,
+        "subject": log.subject,
+        "template": log.template,
+        "status": log.status,
+        "error": log.error,
+        "resend_id": log.resend_id,
+        "last_event": log.last_event,
+        "last_event_at": log.last_event_at.isoformat() if log.last_event_at else None,
+        "provider_checked_at": log.provider_checked_at.isoformat() if log.provider_checked_at else None,
+        "events": log.events or [],
+        "email_job_id": str(log.email_job_id) if log.email_job_id else None,
+        "payroll_period_id": str(log.payroll_period_id) if log.payroll_period_id else None,
+        "period_label": labels.get(log.payroll_period_id) if log.payroll_period_id else None,
+        "worker_id": str(log.worker_id) if log.worker_id else None,
+        "worker_name": names.get(log.worker_id) if log.worker_id else None,
+    }
 
 
 def _job_response(db: Session, job: EmailJob) -> dict:
@@ -215,9 +260,20 @@ def broadcast(
     if not body.title.strip() or not body.message.strip():
         raise HTTPException(status_code=400, detail="Title and message are required.")
 
-    extra = [e.strip() for e in (body.extra_emails or []) if e and is_valid_email_address(e)]
+    extra: list[str] = []
+    for raw in body.extra_emails or []:
+        addr = (raw or "").strip()
+        if not addr:
+            continue
+        blocked = blocked_recipient_reason(addr)
+        if blocked:
+            raise HTTPException(status_code=400, detail=blocked)
+        extra.append(addr)
     if body.skip_workers and not extra:
-        raise HTTPException(status_code=400, detail="Provide at least one test email when skip_workers is set.")
+        raise HTTPException(
+            status_code=400,
+            detail="Add at least one email address when sending to typed addresses only.",
+        )
 
     workers: list[Worker] = []
     if not body.skip_workers:
@@ -400,31 +456,239 @@ def cancel_email_job(
     return payload
 
 
+def _log_filters(
+    template: Optional[str],
+    status_filter: Optional[str],
+    last_event: Optional[str],
+    payroll_period_id: Optional[UUID],
+    email_job_id: Optional[UUID],
+    worker_id: Optional[UUID],
+    search: Optional[str],
+    date_from: Optional[datetime],
+    date_to: Optional[datetime],
+) -> list:
+    """Shared WHERE clauses so the page and its totals always agree."""
+    clauses = []
+    if template:
+        clauses.append(EmailLog.template == template)
+    if status_filter:
+        clauses.append(EmailLog.status == status_filter)
+    if last_event:
+        if last_event == "unknown":
+            clauses.append(
+                or_(EmailLog.last_event.is_(None), EmailLog.last_event.in_(("queued", "sent", "scheduled")))
+            )
+        elif last_event == "problem":
+            clauses.append(EmailLog.last_event.in_(("bounced", "complained", "failed")))
+        else:
+            clauses.append(EmailLog.last_event == last_event)
+    if payroll_period_id:
+        clauses.append(EmailLog.payroll_period_id == payroll_period_id)
+    if email_job_id:
+        clauses.append(EmailLog.email_job_id == email_job_id)
+    if worker_id:
+        clauses.append(EmailLog.worker_id == worker_id)
+    if search:
+        needle = f"%{search.strip()}%"
+        clauses.append(or_(EmailLog.to_email.ilike(needle), EmailLog.subject.ilike(needle)))
+    if date_from:
+        clauses.append(EmailLog.created_at >= date_from)
+    if date_to:
+        clauses.append(EmailLog.created_at <= date_to)
+    return clauses
+
+
 @router.get("/log")
 def list_email_log(
     template: Optional[str] = None,
+    status_filter: Optional[str] = Query(default=None, alias="status"),
+    last_event: Optional[str] = None,
     payroll_period_id: Optional[UUID] = None,
-    limit: int = 200,
+    email_job_id: Optional[UUID] = None,
+    worker_id: Optional[UUID] = None,
+    search: Optional[str] = None,
+    date_from: Optional[datetime] = None,
+    date_to: Optional[datetime] = None,
+    limit: int = 50,
+    offset: int = 0,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    """
+    Paginated email history with provider delivery state.
+
+    `stats` is computed over the whole filtered set, not the current page, so the
+    counters stay meaningful while paging.
+    """
+    clauses = _log_filters(
+        template, status_filter, last_event, payroll_period_id,
+        email_job_id, worker_id, search, date_from, date_to,
+    )
+
+    page_size = max(1, min(limit, 200))
     stmt = select(EmailLog)
-    if template:
-        stmt = stmt.where(EmailLog.template == template)
-    if payroll_period_id:
-        stmt = stmt.where(EmailLog.payroll_period_id == payroll_period_id)
-    logs = db.exec(stmt.order_by(EmailLog.created_at.desc()).limit(min(limit, 500))).all()
-    return [
-        {
-            "id": str(l.id),
-            "to_email": l.to_email,
-            "subject": l.subject,
-            "template": l.template,
-            "status": l.status,
-            "error": l.error,
-            "payroll_period_id": str(l.payroll_period_id) if l.payroll_period_id else None,
-            "worker_id": str(l.worker_id) if l.worker_id else None,
-            "created_at": l.created_at.isoformat() if l.created_at else None,
-        }
-        for l in logs
-    ]
+    for clause in clauses:
+        stmt = stmt.where(clause)
+    logs = db.exec(
+        stmt.order_by(EmailLog.created_at.desc()).offset(max(offset, 0)).limit(page_size)
+    ).all()
+
+    count_stmt = select(func.count()).select_from(EmailLog)
+    for clause in clauses:
+        count_stmt = count_stmt.where(clause)
+    total = db.exec(count_stmt).one()
+
+    # Two grouped queries instead of one per row.
+    status_stmt = select(EmailLog.status, func.count()).select_from(EmailLog)
+    event_stmt = select(EmailLog.last_event, func.count()).select_from(EmailLog)
+    for clause in clauses:
+        status_stmt = status_stmt.where(clause)
+        event_stmt = event_stmt.where(clause)
+    by_status = dict(db.exec(status_stmt.group_by(EmailLog.status)).all())
+    by_event = {
+        (event or "unknown"): count
+        for event, count in db.exec(event_stmt.group_by(EmailLog.last_event)).all()
+    }
+
+    names = _worker_names(db, [l.worker_id for l in logs])
+    labels = _period_labels(db, [l.payroll_period_id for l in logs])
+
+    return {
+        "items": [_log_row(l, names, labels) for l in logs],
+        "total": total,
+        "limit": page_size,
+        "offset": max(offset, 0),
+        "stats": {
+            "total": total,
+            "accepted": by_status.get("sent", 0),
+            "rejected": by_status.get("failed", 0),
+            "delivered": by_event.get("delivered", 0),
+            "opened": by_event.get("opened", 0) + by_event.get("clicked", 0),
+            "bounced": by_event.get("bounced", 0),
+            "complained": by_event.get("complained", 0),
+            "in_flight": (
+                by_event.get("unknown", 0) + by_event.get("sent", 0)
+                + by_event.get("queued", 0) + by_event.get("delivery_delayed", 0)
+            ),
+        },
+    }
+
+
+@router.get("/log/{log_id}")
+def get_email_log_entry(
+    log_id: UUID,
+    refresh: bool = False,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Everything known about one email: recipient, provider timeline, source job."""
+    log = db.get(EmailLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Email log entry not found")
+
+    if refresh and log.resend_id:
+        sync_delivery_events(db, log_ids=[log.id], limit=1)
+        db.refresh(log)
+
+    names = _worker_names(db, [log.worker_id])
+    labels = _period_labels(db, [log.payroll_period_id])
+    payload = _log_row(log, names, labels)
+
+    if log.worker_id:
+        worker = db.get(Worker, log.worker_id)
+        if worker:
+            payload["worker"] = {
+                "id": str(worker.id),
+                "display_name": worker.display_name,
+                "country": worker.country,
+                "worker_type": worker.worker_type.value if worker.worker_type else None,
+                "status": worker.status.value if worker.status else None,
+            }
+
+    if log.email_job_id:
+        job = db.get(EmailJob, log.email_job_id)
+        if job:
+            payload["job"] = {
+                "id": str(job.id),
+                "kind": job.kind,
+                "status": job.status,
+                "subject": job.subject,
+                "total": job.total,
+                "sent": job.sent,
+                "failed": job.failed,
+                "skipped": job.skipped,
+                "attach_pdf": job.attach_pdf,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+            }
+        item = db.exec(
+            select(EmailJobItem).where(
+                EmailJobItem.job_id == log.email_job_id,
+                EmailJobItem.to_email == log.to_email,
+            )
+        ).first()
+        if item:
+            payload["job_item"] = {
+                "id": str(item.id),
+                "status": item.status,
+                "attempts": item.attempts,
+                "error": item.error,
+                "sent_at": item.sent_at.isoformat() if item.sent_at else None,
+            }
+
+    return payload
+
+
+@router.post("/log/sync")
+def sync_email_log(
+    limit: int = 100,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """
+    Pull delivery state from Resend for messages whose outcome is still unknown.
+
+    The webhook keeps history current in production; this is the manual path for
+    local development and for backfilling anything the webhook missed.
+    """
+    return sync_delivery_events(db, limit=limit)
+
+
+@router.post("/resend/webhook", include_in_schema=False)
+async def resend_webhook(request: Request, db: Session = Depends(get_db)):
+    """
+    Receive Resend delivery events (delivered, bounced, complained, opened…).
+
+    Public by necessity, so every request must carry a valid Svix signature —
+    otherwise anyone could rewrite delivery history. Configure the endpoint URL
+    and its whsec_ secret in the Resend dashboard.
+    """
+    body = await request.body()
+    problem = verify_webhook_signature(dict(request.headers), body)
+    if problem:
+        logger.warning("Rejected Resend webhook: %s", problem)
+        raise HTTPException(status_code=401, detail=problem)
+
+    try:
+        payload = json.loads(body or b"{}")
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    data = payload.get("data") or {}
+    resend_id = data.get("email_id") or data.get("id")
+    event_type = payload.get("type") or ""
+    if not resend_id or not event_type:
+        raise HTTPException(status_code=400, detail="Missing event type or email id")
+
+    occurred_at = None
+    raw_at = payload.get("created_at") or data.get("created_at")
+    if raw_at:
+        try:
+            occurred_at = datetime.fromisoformat(str(raw_at).replace("Z", "+00:00"))
+        except ValueError:
+            occurred_at = None
+
+    log = apply_event(
+        db, resend_id=resend_id, event_type=event_type, occurred_at=occurred_at, data=data,
+    )
+    # 200 either way: a retry storm for an id we never sent helps nobody.
+    return {"received": True, "matched": log is not None}

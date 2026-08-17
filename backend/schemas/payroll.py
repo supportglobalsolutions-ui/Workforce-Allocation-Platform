@@ -120,6 +120,7 @@ class PayrollWorkerSummaryResponse(SQLModel):
     period_status:       Optional[str] = None
     suggested_hours:     Optional[Decimal] = None
     evidence_incomplete: Optional[bool] = None
+    session_count:       Optional[int] = None
 
     @field_validator("exception_flags", mode="before")
     @classmethod
@@ -167,6 +168,7 @@ class LedgerSheetRow(SQLModel):
     partner_entity_id: Optional[UUID] = None
     suggested_hours: Decimal = Decimal("0")
     evidence_incomplete: bool = False
+    session_count: int = 0
     summary: Optional[PayrollWorkerSummaryResponse] = None
 
 

@@ -1,9 +1,12 @@
 'use client';
 
-import { ExternalLink, ShieldCheck } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertCircle, CheckCircle, ExternalLink, Mail, ShieldCheck } from 'lucide-react';
 import Link from 'next/link';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { SYSTEM_TABS } from '@/components/platform/AdminSectionTabs';
+import SpinningDots from '@/components/shared/SpinningDots';
+import { api } from '@/lib/api';
 
 const PLATFORM = [
   { name: 'Firebase Auth', status: 'Connected' },
@@ -31,16 +34,129 @@ const TOOLS = [
   },
 ] as const;
 
+interface AlertSettings {
+  alert_email: string;
+  otp_recipient_masked: string | null;
+  using_previous_email: boolean;
+  configured_email_trusted_at: string | null;
+  otp_ready: boolean;
+  otp_blocked_reason: string | null;
+}
+
+function AlertEmailCard() {
+  const [data, setData] = useState<AlertSettings | null>(null);
+  const [draft, setDraft] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  async function load() {
+    setLoading(true); setError(null);
+    try {
+      const row = await api.get<AlertSettings>('/settings');
+      setData(row);
+      setDraft(row.alert_email);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to load settings.');
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  useEffect(() => { void load(); }, []);
+
+  async function save(e: React.FormEvent) {
+    e.preventDefault();
+    setSaving(true); setError(null); setNote(null);
+    try {
+      const row = await api.patch<AlertSettings>('/settings/alert-email', { alert_email: draft.trim() });
+      setData(row);
+      setDraft(row.alert_email);
+      setNote(
+        row.using_previous_email
+          ? `Saved. Confirmation codes still go to ${row.otp_recipient_masked} until the new address has been on file for 24 hours.`
+          : 'Saved. This address can receive confirmation codes.',
+      );
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save the alert email.');
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  const trustedAt = data?.configured_email_trusted_at
+    ? new Date(data.configured_email_trusted_at).toLocaleString()
+    : null;
+
+  return (
+    <section className="glass-panel p-5">
+      <div className="flex items-start gap-3 mb-4">
+        <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-gold-accent/30 bg-gold-accent/10 text-gold-accent">
+          <Mail size={16} />
+        </span>
+        <div>
+          <h2 className="text-sm font-bold text-theme-heading">Admin alert email</h2>
+          <p className="text-xs text-theme-muted mt-1">
+            Receives confirmation codes for irreversible actions such as deleting a work period.
+            After you change it, the new address cannot receive those codes for 24 hours — the
+            previous inbox keeps getting them. (Password confirmation for this change is not required yet.)
+          </p>
+        </div>
+      </div>
+
+      {loading ? (
+        <div className="flex justify-center py-6"><SpinningDots size="sm" className="text-emerald-accent" /></div>
+      ) : (
+        <form onSubmit={save} className="space-y-3">
+          {error && (
+            <p className="text-xs text-danger flex items-start gap-1.5">
+              <AlertCircle size={12} className="shrink-0 mt-0.5" /> {error}
+            </p>
+          )}
+          {note && (
+            <p className="text-xs text-emerald-accent flex items-start gap-1.5">
+              <CheckCircle size={12} className="shrink-0 mt-0.5" /> {note}
+            </p>
+          )}
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted block">Email</label>
+          <div className="flex flex-wrap gap-2">
+            <input
+              type="email"
+              required
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              className="input-field flex-1 min-w-[16rem]"
+            />
+            <button type="submit" disabled={saving || draft.trim() === data?.alert_email}
+              className="btn-primary text-sm py-2 px-4 disabled:opacity-50">
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+          {data?.using_previous_email && trustedAt && (
+            <p className="text-[11px] text-gold-accent">
+              Codes currently go to {data.otp_recipient_masked}. The configured address
+              ({data.alert_email}) starts receiving them at {trustedAt}.
+            </p>
+          )}
+        </form>
+      )}
+    </section>
+  );
+}
+
 export default function SystemSettingsPage() {
   return (
     <div>
       <PageHeader
         title="Settings"
-        description="Platform status, leaderboard scoring, and ops tool links."
+        description="Platform status, the admin alert inbox, leaderboard scoring, and ops tool links."
       />
       <AdminSectionTabs tabs={SYSTEM_TABS} />
 
       <div className="max-w-3xl mx-auto space-y-6">
+        <AlertEmailCard />
+
         <section className="glass-panel p-5">
           <h2 className="text-sm font-bold text-theme-heading mb-1">Platform</h2>
           <p className="text-xs text-theme-muted mb-4">Live services this environment depends on.</p>

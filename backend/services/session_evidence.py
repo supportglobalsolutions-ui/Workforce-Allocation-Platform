@@ -8,6 +8,7 @@ from uuid import UUID
 
 from sqlmodel import Session, select
 
+from models.enums import PayrollSessionEnum
 from models.notification import Notification
 from models.session import Session as WorkSession
 
@@ -33,6 +34,25 @@ def apply_image_duration(session: WorkSession) -> None:
         end = end.replace(tzinfo=timezone.utc)
     minutes = int((end - start).total_seconds() // 60)
     session.duration_minutes = max(0, minutes)
+
+
+def effective_duration_minutes(session: WorkSession) -> int:
+    """
+    Minutes payroll should use: on-image times first, then stored duration,
+    then clock start/end.
+    """
+    apply_image_duration(session)
+    if session.duration_minutes:
+        return int(session.duration_minutes)
+    if session.start_time and session.end_time:
+        start = session.start_time
+        end = session.end_time
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return max(0, int((end - start).total_seconds() // 60))
+    return 0
 
 
 def notify_evidence_incomplete(db: Session, session: WorkSession) -> None:
@@ -89,14 +109,19 @@ def evidence_hours_for_worker(
     worker_id: UUID,
     start: Optional[datetime] = None,
     end: Optional[datetime] = None,
-) -> tuple[Decimal, bool]:
+    period_id: Optional[UUID] = None,
+) -> tuple[Decimal, bool, int]:
     """
-    Sum duration_minutes for closed sessions (prefer evidence-complete durations).
-    Returns (hours, any_incomplete_closed_session).
+    Sum session hours for a worker in a date window.
+
+    Skips flagged/excluded sessions and sessions already billed to another period.
+    Returns (hours, any_incomplete_closed_session, session_count).
     """
     stmt = select(WorkSession).where(
         WorkSession.worker_id == worker_id,
         WorkSession.end_time.is_not(None),
+        WorkSession.payroll_approval_state != PayrollSessionEnum.excluded,
+        WorkSession.payroll_approval_state != PayrollSessionEnum.flagged,
     )
     if start is not None:
         stmt = stmt.where(WorkSession.start_time >= start)
@@ -105,9 +130,13 @@ def evidence_hours_for_worker(
     sessions = db.exec(stmt).all()
     total_minutes = 0
     incomplete = False
+    count = 0
     for s in sessions:
+        if period_id and s.payroll_period_id is not None and s.payroll_period_id != period_id:
+            continue
         if not evidence_complete(s):
             incomplete = True
-        total_minutes += s.duration_minutes or 0
+        total_minutes += effective_duration_minutes(s)
+        count += 1
     hours = (Decimal(total_minutes) / Decimal(60)).quantize(Decimal("0.01"))
-    return hours, incomplete
+    return hours, incomplete, count

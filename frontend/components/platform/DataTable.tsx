@@ -40,7 +40,7 @@ export default function DataTable<T extends Record<string, unknown>>({
               </tr>
             ) : (
               data.map((row, i) => (
-                <tr key={i} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                <tr key={String(row.id ?? i)} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
                   {columns.map((col) => (
                     <td key={String(col.key)} className="px-4 py-3 text-brand-on-surface">
                       {col.render ? col.render(row) : String(row[col.key as keyof T] ?? '—')}

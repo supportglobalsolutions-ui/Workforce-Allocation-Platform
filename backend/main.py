@@ -12,7 +12,7 @@ from core.firebase_admin import init_firebase
 from routers import (
     assessments, audit, auth, clients, communications, currencies, leaderboard,
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
-    task_assessments, training, uptime_kuma, wallets, workers,
+    settings as platform_settings, task_assessments, training, uptime_kuma, wallets, workers,
 )
 from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
@@ -102,6 +102,7 @@ app.include_router(rates.router, prefix="/rates", tags=["rates"])
 app.include_router(payment_tiers.router, prefix="/payment-tiers", tags=["payment-tiers"])
 app.include_router(training.router, prefix="/training", tags=["training"])
 app.include_router(communications.router, prefix="/communications", tags=["communications"])
+app.include_router(platform_settings.router, prefix="/settings", tags=["settings"])
 app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
 app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])

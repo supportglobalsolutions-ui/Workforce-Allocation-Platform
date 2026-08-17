@@ -60,7 +60,7 @@ function NotifCard({
           )}
           {isBroadcast && (
             <span className="text-[10px] px-2 py-0.5 rounded-full bg-gold-accent/10 text-gold-accent font-medium">
-              Broadcast
+              Announcement
             </span>
           )}
         </div>

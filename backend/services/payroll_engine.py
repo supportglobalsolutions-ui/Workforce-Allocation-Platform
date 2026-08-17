@@ -18,9 +18,12 @@ from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
+from sqlalchemy import update as sa_update
 from sqlmodel import Session, delete, select
 
 from models.client import Client, ClientRevenueAgreement
+from models.email_job import EmailJob, EmailJobItem
+from models.email_log import EmailLog
 from models.enums import (
     PayrollPeriodStatusEnum,
     PayrollSessionEnum,
@@ -31,11 +34,13 @@ from models.enums import (
 from models.notification import Notification
 from models.partner import PartnerArrangement
 from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
+from models.quality import QualityCompositeScore, QualityIndicatorRating
 from models.rate_table import RateTableEntry
 from models.session import Session as WorkSession
 from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
 from services.fx import currency_for_country, get_rate
+from services.session_evidence import effective_duration_minutes, evidence_hours_for_worker
 
 logger = logging.getLogger(__name__)
 
@@ -106,6 +111,106 @@ def _session_earnings(session: WorkSession) -> Decimal:
         return Decimal("0")
 
 
+def _sessions_for_period(db: Session, period: PayrollPeriod) -> list[WorkSession]:
+    """
+    Closed sessions whose start falls in this work period.
+
+    Pending sessions are included and stamped with payroll_period_id so finance
+    stays linked to the session rows. Flagged / excluded stay out. Sessions
+    already billed to a different period are not stolen.
+    """
+    start = datetime.combine(period.start_date, datetime.min.time(), tzinfo=timezone.utc)
+    end = datetime.combine(period.end_date, datetime.max.time(), tzinfo=timezone.utc)
+    rows = db.exec(
+        select(WorkSession).where(
+            WorkSession.end_time.is_not(None),
+            WorkSession.start_time >= start,
+            WorkSession.start_time <= end,
+            WorkSession.payroll_approval_state != PayrollSessionEnum.excluded,
+            WorkSession.payroll_approval_state != PayrollSessionEnum.flagged,
+        )
+    ).all()
+    included: list[WorkSession] = []
+    for s in rows:
+        if s.payroll_period_id is not None and s.payroll_period_id != period.id:
+            continue
+        minutes = effective_duration_minutes(s)
+        s.duration_minutes = minutes
+        s.payroll_period_id = period.id
+        if s.payroll_approval_state == PayrollSessionEnum.pending:
+            s.payroll_approval_state = PayrollSessionEnum.approved
+        db.add(s)
+        included.append(s)
+    return included
+
+
+def find_period_for_session(db: Session, session: WorkSession) -> Optional[PayrollPeriod]:
+    """Open/calculated/approved period whose dates cover this session's start."""
+    if session.payroll_period_id:
+        period = db.get(PayrollPeriod, session.payroll_period_id)
+        if period and period.status != PayrollPeriodStatusEnum.paid:
+            return period
+    when = session.start_time
+    if when is None:
+        return None
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    day = when.date()
+    return db.exec(
+        select(PayrollPeriod)
+        .where(
+            PayrollPeriod.start_date <= day,
+            PayrollPeriod.end_date >= day,
+            PayrollPeriod.status != PayrollPeriodStatusEnum.paid,
+        )
+        .order_by(PayrollPeriod.start_date.desc())
+    ).first()
+
+
+def sync_hours_from_sessions(
+    db: Session,
+    worker_id: UUID,
+    period: PayrollPeriod,
+) -> Optional[PayrollWorkerSummary]:
+    """Rewrite hours_logged from summed session times and recompute hours × rate."""
+    start = datetime.combine(period.start_date, datetime.min.time(), tzinfo=timezone.utc)
+    end = datetime.combine(period.end_date, datetime.max.time(), tzinfo=timezone.utc)
+    hours, _, _ = evidence_hours_for_worker(db, worker_id, start, end, period_id=period.id)
+    summary = db.exec(
+        select(PayrollWorkerSummary).where(
+            PayrollWorkerSummary.payroll_period_id == period.id,
+            PayrollWorkerSummary.worker_id == worker_id,
+        )
+    ).first()
+    if not summary:
+        return None
+    summary.hours_logged = hours
+    return recompute_summary(db, summary)
+
+
+def on_session_hours_changed(db: Session, session: WorkSession) -> None:
+    """
+    After a worker (or admin) updates session times/images: link the session to
+    the covering work period and refresh that worker's payslip hours.
+    """
+    if session.payroll_approval_state in (
+        PayrollSessionEnum.excluded,
+        PayrollSessionEnum.flagged,
+    ):
+        return
+    period = find_period_for_session(db, session)
+    if not period:
+        return
+    session.payroll_period_id = period.id
+    if session.payroll_approval_state == PayrollSessionEnum.pending:
+        session.payroll_approval_state = PayrollSessionEnum.approved
+    db.add(session)
+    db.flush()
+    if period.status in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid):
+        return
+    sync_hours_from_sessions(db, session.worker_id, period)
+
+
 def calculate_period(db: Session, period_id: UUID) -> dict:
     """(Re)calculate line items + per-worker payslip summaries for a period."""
     period = db.get(PayrollPeriod, period_id)
@@ -114,13 +219,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
     if period.status in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid):
         raise ValueError("Period is already approved — reopen it before recalculating")
 
-    sessions = db.exec(
-        select(WorkSession).where(
-            WorkSession.payroll_approval_state == PayrollSessionEnum.approved,
-            WorkSession.start_time >= datetime.combine(period.start_date, datetime.min.time(), tzinfo=timezone.utc),
-            WorkSession.start_time <= datetime.combine(period.end_date, datetime.max.time(), tzinfo=timezone.utc),
-        )
-    ).all()
+    sessions = _sessions_for_period(db, period)
 
     # Wipe previous calculation results (manual bonuses on summaries survive).
     db.exec(delete(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id))
@@ -151,7 +250,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         if not worker:
             continue
 
-        hours = Decimal(sum(s.duration_minutes or 0 for s in worker_sessions)) / Decimal(60)
+        hours = Decimal(sum(effective_duration_minutes(s) for s in worker_sessions)) / Decimal(60)
         hours = _q(hours)
         rate = _hourly_rate_for(db, worker, period)
         flags: list[str] = []
@@ -159,7 +258,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
 
         # GS RDP hours × rate
         gs_minutes = sum(
-            s.duration_minutes or 0 for s in worker_sessions
+            effective_duration_minutes(s) for s in worker_sessions
             if s.session_type == SessionTypeEnum.gs_rdp
         )
         gs_hours = _q(Decimal(gs_minutes) / Decimal(60))
@@ -172,8 +271,9 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         # Partner / third-party earnings with splits
         for s in worker_sessions:
             if s.session_type == SessionTypeEnum.gs_rdp:
-                if rate is not None and s.duration_minutes:
-                    gross = _q(Decimal(s.duration_minutes) / Decimal(60) * rate)
+                minutes = effective_duration_minutes(s)
+                if rate is not None and minutes:
+                    gross = _q(Decimal(minutes) / Decimal(60) * rate)
                     db.add(PayrollLineItem(
                         payroll_period_id=period_id,
                         session_id=s.id,
@@ -275,9 +375,18 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
 
         summary = existing_summaries.get(worker_id)
         bonus = summary.bonus if summary else Decimal("0")
-        # Sticky admin ledger: do not overwrite locked rows on recalculate.
+        # Locked rows keep admin rate/bonus/costs, but hours always follow sessions.
         if summary and getattr(summary, "admin_locked", False):
-            summary.bonus = bonus
+            summary.hours_logged = data["hours"]
+            summary.base_pay = (
+                _q(summary.hours_logged * summary.rate_per_hour)
+                if summary.rate_per_hour is not None else summary.base_pay
+            )
+            summary.gross_earned = _q(summary.base_pay + bonus)
+            summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
+            summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+            if summary.fx_rate and summary.fx_rate > 0:
+                summary.base_equivalent = _q(summary.final_net / summary.fx_rate)
             summary.exception_flags = list({*(summary.exception_flags or []), *flags})
             summary.updated_at = datetime.now(timezone.utc)
             db.add(summary)
@@ -544,3 +653,67 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
         })
     rows.sort(key=lambda r: Decimal(r["earnings"]), reverse=True)
     return rows
+
+
+def purge_payroll_period(db: Session, period: PayrollPeriod) -> dict:
+    """
+    Permanently remove a work period and the finance/quality rows that belong
+    to it. Sessions, wallet credits and email history are unlinked, not erased
+    — those are worker records, not period records.
+    """
+    period_id = period.id
+    snapshot = {
+        "id": str(period.id),
+        "label": period.label,
+        "status": period.status.value if period.status else None,
+        "start_date": period.start_date.isoformat() if period.start_date else None,
+        "end_date": period.end_date.isoformat() if period.end_date else None,
+    }
+
+    db.exec(delete(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id))
+    db.exec(delete(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id))
+    db.exec(
+        delete(QualityCompositeScore).where(QualityCompositeScore.payroll_period_id == period_id)
+    )
+    db.exec(
+        delete(QualityIndicatorRating).where(QualityIndicatorRating.payroll_period_id == period_id)
+    )
+
+    summary_ids = list(
+        db.exec(
+            select(PayrollWorkerSummary.id).where(PayrollWorkerSummary.payroll_period_id == period_id)
+        ).all()
+    )
+    if summary_ids:
+        db.exec(
+            sa_update(EmailJobItem)
+            .where(EmailJobItem.payroll_worker_summary_id.in_(summary_ids))
+            .values(payroll_worker_summary_id=None)
+        )
+    db.exec(delete(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id))
+
+    db.exec(
+        sa_update(WorkSession)
+        .where(WorkSession.payroll_period_id == period_id)
+        .values(payroll_period_id=None)
+    )
+    db.exec(
+        sa_update(WalletTransaction)
+        .where(WalletTransaction.payroll_period_id == period_id)
+        .values(payroll_period_id=None)
+    )
+    db.exec(
+        sa_update(EmailJob)
+        .where(EmailJob.payroll_period_id == period_id)
+        .values(payroll_period_id=None)
+    )
+    db.exec(
+        sa_update(EmailLog)
+        .where(EmailLog.payroll_period_id == period_id)
+        .values(payroll_period_id=None)
+    )
+
+    db.delete(period)
+    db.commit()
+    return snapshot
+

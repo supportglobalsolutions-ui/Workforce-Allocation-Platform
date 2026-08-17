@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { AlertCircle, Save, X } from 'lucide-react';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
@@ -30,12 +31,12 @@ interface LedgerRow {
   worker_pay_tier: string | null;
   suggested_hours: string | number;
   evidence_incomplete: boolean;
+  session_count?: number;
   summary: PayrollSummary | null;
 }
 
 interface EditRow {
   worker_id: string;
-  hours_logged: string;
   rate_per_hour: string;
   bonus: string;
   transfer_cost: string;
@@ -56,7 +57,6 @@ function toEdit(row: LedgerRow): EditRow {
   const s = row.summary;
   return {
     worker_id: row.worker_id,
-    hours_logged: String(s?.hours_logged ?? row.suggested_hours ?? '0'),
     rate_per_hour: String(s?.rate_per_hour ?? '0'),
     bonus: String(s?.bonus ?? '0'),
     transfer_cost: String(s?.transfer_cost ?? '0'),
@@ -67,6 +67,7 @@ function toEdit(row: LedgerRow): EditRow {
 }
 
 export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClose, onSaved }: Props) {
+  const [mounted, setMounted] = useState(false);
   const [rows, setRows] = useState<LedgerRow[]>([]);
   const [edits, setEdits] = useState<Record<string, EditRow>>({});
   const [loading, setLoading] = useState(true);
@@ -78,7 +79,6 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
     external_cost: '',
     rate_per_hour: '',
     fx_rate: '',
-    hours_logged: '',
   });
 
   const load = useCallback(() => {
@@ -95,6 +95,13 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
   }, [periodId]);
 
   useEffect(() => { load(); }, [load]);
+
+  useEffect(() => {
+    setMounted(true);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
@@ -125,21 +132,7 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
         if (bulk.external_cost !== '') e.external_cost = bulk.external_cost;
         if (bulk.rate_per_hour !== '') e.rate_per_hour = bulk.rate_per_hour;
         if (bulk.fx_rate !== '') e.fx_rate = bulk.fx_rate;
-        if (bulk.hours_logged !== '') e.hours_logged = bulk.hours_logged;
         next[r.worker_id] = e;
-      }
-      return next;
-    });
-  };
-
-  const seedFromEvidence = () => {
-    setEdits((prev) => {
-      const next = { ...prev };
-      for (const r of visible) {
-        next[r.worker_id] = {
-          ...next[r.worker_id],
-          hours_logged: String(r.suggested_hours ?? 0),
-        };
       }
       return next;
     });
@@ -154,7 +147,6 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
         upsert: true,
         rows: Object.values(edits).map((e) => ({
           worker_id: e.worker_id,
-          hours_logged: Number(e.hours_logged || 0),
           rate_per_hour: Number(e.rate_per_hour || 0),
           bonus: Number(e.bonus || 0),
           transfer_cost: Number(e.transfer_cost || 0),
@@ -173,25 +165,30 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
     }
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-stretch sm:items-center justify-center bg-black/70 p-0 sm:p-4">
-      <div className="glass-panel w-full max-w-[1400px] h-full sm:h-[92vh] flex flex-col overflow-hidden sm:rounded-2xl">
-        <div className="flex items-start justify-between gap-3 p-4 border-b border-white/[0.06] shrink-0">
-          <div>
-            <h2 className="text-base font-bold text-white">Period ledger — {periodLabel}</h2>
+  if (!mounted) return null;
+
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true">
+      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onClose} />
+      <div className="glass-modal relative z-10 flex flex-col w-full max-w-[min(1400px,calc(100vw-1.5rem))] max-h-[min(92vh,calc(100dvh-1.5rem))] overflow-hidden rounded-2xl">
+        <div className="flex items-start justify-between gap-3 p-4 sm:p-5 border-b border-white/[0.06] shrink-0 min-w-0">
+          <div className="min-w-0 pr-2">
+            <h2 className="text-base font-bold text-white truncate">Period ledger — {periodLabel}</h2>
             <p className="text-xs text-theme-muted mt-0.5">
-              Editable anytime while the period is open. Hours, rate, bonus, transfer/external costs, FX — receipts use these values.
+              Editable anytime while the period is open. Hours come from session start/end times. Set rate, bonus, and costs — receipts use hours × rate.
             </p>
           </div>
-          <button type="button" onClick={onClose} className="text-theme-muted hover:text-white"><X size={18} /></button>
+          <button type="button" onClick={onClose} aria-label="Close"
+            className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5">
+            <X size={18} />
+          </button>
         </div>
 
         {!locked && (
-          <div className="p-3 border-b border-white/[0.06] space-y-2 shrink-0 bg-white/[0.02]">
+          <div className="p-3 sm:px-5 border-b border-white/[0.06] space-y-2 shrink-0 bg-white/[0.02]">
             <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Bulk apply (same values for many workers)</p>
             <div className="flex flex-wrap gap-2 items-end">
               {([
-                ['hours_logged', 'Hours'],
                 ['rate_per_hour', 'Rate/hr'],
                 ['transfer_cost', 'Transfer'],
                 ['external_cost', 'External'],
@@ -210,12 +207,11 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
               ))}
               <button type="button" onClick={() => applyBulk('selected')} className="btn-secondary text-xs py-1.5 px-3">Apply → selected</button>
               <button type="button" onClick={() => applyBulk('visible')} className="btn-secondary text-xs py-1.5 px-3">Apply → visible</button>
-              <button type="button" onClick={seedFromEvidence} className="btn-secondary text-xs py-1.5 px-3">Prefill hours from evidence</button>
             </div>
           </div>
         )}
 
-        <div className="px-3 py-2 border-b border-white/[0.06] shrink-0">
+        <div className="px-3 sm:px-5 py-2 border-b border-white/[0.06] shrink-0">
           <input
             value={search}
             onChange={(e) => setSearch(e.target.value)}
@@ -225,15 +221,16 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
         </div>
 
         {error && (
-          <div className="mx-3 mt-2 flex items-center gap-2 p-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">
+          <div className="mx-3 sm:mx-5 mt-2 flex items-center gap-2 p-2 rounded-lg bg-danger/10 border border-danger/30 text-danger text-xs">
             <AlertCircle size={12} /> {error}
           </div>
         )}
 
-        <div className="flex-1 overflow-auto min-h-0">
+        <div className="flex-1 overflow-auto min-h-0 overscroll-contain">
           {loading ? (
             <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
           ) : (
+            <div className="min-w-0 overflow-x-auto">
             <table className="w-full text-xs min-w-[1100px]">
               <thead className="sticky top-0 bg-brand-surface-lowest z-10">
                 <tr className="border-b border-white/[0.08]">
@@ -247,8 +244,8 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
                   }} /></th>
                   <th className="text-left px-2 py-2 text-theme-muted">Worker</th>
                   <th className="text-left px-2 py-2 text-theme-muted">Tier</th>
-                  <th className="text-right px-2 py-2 text-theme-muted">Suggested</th>
                   <th className="text-right px-2 py-2 text-theme-muted">Hours</th>
+                  <th className="text-right px-2 py-2 text-theme-muted">Sessions</th>
                   <th className="text-right px-2 py-2 text-theme-muted">Rate/hr</th>
                   <th className="text-right px-2 py-2 text-theme-muted">Bonus</th>
                   <th className="text-right px-2 py-2 text-theme-muted">Transfer</th>
@@ -274,8 +271,9 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
                         )}
                       </td>
                       <td className="px-2 py-1.5 text-theme-muted">{r.worker_pay_tier || '—'}</td>
-                      <td className="px-2 py-1.5 text-right text-theme-muted">{Number(r.suggested_hours).toFixed(2)}</td>
-                      {(['hours_logged', 'rate_per_hour', 'bonus', 'transfer_cost', 'external_cost', 'fx_rate'] as const).map((key) => (
+                      <td className="px-2 py-1.5 text-right tabular-nums text-theme-heading">{Number(r.suggested_hours).toFixed(2)}</td>
+                      <td className="px-2 py-1.5 text-right text-theme-muted">{r.session_count ?? 0}</td>
+                      {(['rate_per_hour', 'bonus', 'transfer_cost', 'external_cost', 'fx_rate'] as const).map((key) => (
                         <td key={key} className="px-1 py-1">
                           <input
                             type="number"
@@ -295,10 +293,11 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
                 })}
               </tbody>
             </table>
+            </div>
           )}
         </div>
 
-        <div className="flex justify-end gap-2 p-4 border-t border-white/[0.06] shrink-0">
+        <div className="flex justify-end gap-2 p-4 sm:p-5 border-t border-white/[0.06] shrink-0">
           <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Close</button>
           {!locked && (
             <button type="button" disabled={saving} onClick={save} className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2">
@@ -307,6 +306,7 @@ export default function PeriodLedgerModal({ periodId, periodLabel, locked, onClo
           )}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }

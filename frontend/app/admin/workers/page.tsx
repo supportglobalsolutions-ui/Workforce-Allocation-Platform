@@ -53,6 +53,8 @@ interface WorkSession {
   rdp_resource_id: string | null;
   start_image_url: string | null;
   end_image_url: string | null;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
 }
 
 interface RDPResource { id: string; nickname: string; status?: string; assigned_worker_id?: string | null; }
@@ -256,6 +258,9 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
     status: s.close_status ?? (s.end_time ? 'completed' : 'active'),
     start_image_url: s.start_image_url,
     end_image_url: s.end_image_url,
+    image_start_at: s.image_start_at,
+    image_end_at: s.image_end_at,
+    duration_minutes: s.duration_minutes,
   }));
 
   const selectedSession = selectedSessionId
@@ -553,6 +558,8 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
         onImageUploaded={(sessionId, type, url) => {
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, [`${type}_image_url`]: url } : s));
         }}
+        allowUpload={false}
+        allowEvidenceEdit={false}
       />
       {showRate && (
         <RateWorkerModal

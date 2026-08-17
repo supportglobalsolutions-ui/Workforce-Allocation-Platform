@@ -36,7 +36,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <Building2 size={18} />, label: 'Partners', href: '/admin/partners' },
     { icon: <Briefcase size={18} />, label: 'Clients', href: '/admin/clients' },
     { icon: <Monitor size={18} />, label: 'RDP Resources', href: '/admin/rdp', shortLabel: 'RDP' },
-    { icon: <Activity size={18} />, label: 'Live Sessions', href: '/admin/live-sessions', shortLabel: 'Live' },
+    { icon: <Activity size={18} />, label: 'Sessions', href: '/admin/sessions' },
     { icon: <CalendarDays size={18} />, label: 'Shifts', href: '/admin/shifts' },
     { icon: <Trophy size={18} />, label: 'Quality', href: '/admin/quality' },
     { icon: <CalendarRange size={18} />, label: 'Calendar', href: '/admin/calendar' },
@@ -65,7 +65,7 @@ export const PORTAL_TOP_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <LayoutDashboard size={16} />, label: 'Command', href: '/admin/dashboard' },
     { icon: <Users size={16} />, label: 'Workers', href: '/admin/workers' },
     { icon: <Monitor size={16} />, label: 'RDP', href: '/admin/rdp' },
-    { icon: <Activity size={16} />, label: 'Live', href: '/admin/live-sessions' },
+    { icon: <Activity size={16} />, label: 'Sessions', href: '/admin/sessions' },
     { icon: <DollarSign size={16} />, label: 'Finance', href: '/admin/payroll' },
   ],
   leadership: [

@@ -827,9 +827,15 @@ export default function PayrollWorkbenchPage() {
                       trailing={<PeriodStatusChip status={selectedPeriod.status} />}
                       onRenamed={(label) => setPeriods((prev) =>
                         prev.map((p) => (p.id === selectedPeriod.id ? { ...p, label } : p)))}
+                      onDeleted={() => {
+                        const idx = periods.findIndex((p) => p.id === selectedPeriod.id);
+                        const fallback = periods[idx + 1] ?? periods[idx - 1];
+                        void loadPeriods(fallback?.id);
+                      }}
                     />
                     <p className="text-[11px] text-theme-muted">
                       {new Date(selectedPeriod.start_date).toLocaleDateString()} – {new Date(selectedPeriod.end_date).toLocaleDateString()} · reporting in {selectedPeriod.currency}
+                      {' · '}Seed from sessions adds up each worker’s finished session hours for these dates, then you enter a rate.
                     </p>
                   </div>
                   <div className="flex-1" />
@@ -841,14 +847,15 @@ export default function PayrollWorkbenchPage() {
                     <Table2 size={13} /> Open ledger
                   </button>
                   {([
-                    { action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Seed from sessions', icon: Calculator, enabled: canCalculate, primary: false },
+                    { action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Seed from sessions', icon: Calculator, enabled: canCalculate, primary: false, title: 'Pull every finished session in this work period, add up hours per worker, and build payslip rows. Then enter a rate — pay is hours × rate.' },
                     { action: 'approve' as const, label: 'Approve', icon: CheckCircle, enabled: canApprove, primary: status === 'calculated' },
                     { action: 'reopen' as const, label: 'Reopen', icon: RotateCcw, enabled: canReopen, primary: false },
                     { action: 'push-wallets' as const, label: 'Push to Wallets', icon: Wallet, enabled: canPush, primary: status === 'approved' && !selectedPeriod.wallet_pushed_at },
                     { action: 'mark-paid' as const, label: 'Mark Paid', icon: Send, enabled: canMarkPaid, primary: status === 'approved' && !!selectedPeriod.wallet_pushed_at },
-                  ]).map(({ action, label, icon: Icon, enabled, primary }) => (
+                  ]).map(({ action, label, icon: Icon, enabled, primary, title }) => (
                     <button key={action} type="button" onClick={() => runAction(action)}
                       disabled={!enabled || actionBusy !== null}
+                      title={title}
                       className={`${primary ? 'btn-primary' : 'btn-secondary'} text-xs py-2 px-3.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}>
                       {actionBusy === action ? <SpinningDots size="sm" /> : <Icon size={13} />}
                       {label}
@@ -980,7 +987,12 @@ export default function PayrollWorkbenchPage() {
                                   {s ? (
                                     <>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">
-                                        {Number(s.hours_logged ?? 0).toFixed(2)}
+                                        {Number(s.hours_logged ?? r.suggested_hours ?? 0).toFixed(2)}
+                                        {(r.session_count ?? 0) > 0 && (
+                                          <span className="block text-[10px] font-normal text-theme-muted">
+                                            {r.session_count} session{r.session_count === 1 ? '' : 's'}
+                                          </span>
+                                        )}
                                       </td>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.rate_per_hour)}</td>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">{fmt(s.base_pay)}</td>
@@ -997,8 +1009,9 @@ export default function PayrollWorkbenchPage() {
                                     </>
                                   ) : (
                                     <td colSpan={9} className="px-3 py-2.5 text-[11px] text-theme-muted">
-                                      No payslip row yet — {Number(r.suggested_hours ?? 0).toFixed(2)} h of evidence.
-                                      {' '}Open the eye to pay this worker.
+                                      No payslip row yet — {Number(r.suggested_hours ?? 0).toFixed(2)} h
+                                      {(r.session_count ?? 0) > 0 ? ` from ${r.session_count} sessions` : ' of evidence'}.
+                                      {' '}Open the eye and enter a rate.
                                     </td>
                                   )}
                                   <td className="px-3 py-2.5 text-right">

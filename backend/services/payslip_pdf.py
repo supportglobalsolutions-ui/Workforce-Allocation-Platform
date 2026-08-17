@@ -11,11 +11,13 @@ from reportlab.lib.units import mm
 from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
 
-NAVY = colors.HexColor("#0e2a47")
-HEADER_BLUE = colors.HexColor("#153e6b")
-LIGHT_BLUE = colors.HexColor("#e9f0f8")
-GREEN = colors.HexColor("#e8f5e9")
-BORDER = colors.HexColor("#dce3ec")
+# Print-friendly take on the platform palette (forest header, gold/emerald accents).
+FOREST = colors.HexColor("#032F25")
+HEADER_GREEN = colors.HexColor("#0A4D3A")
+ROW_TINT = colors.HexColor("#E8F5F0")
+GOLD = colors.HexColor("#D4AF37")
+BORDER = colors.HexColor("#0A4D3A")
+MUTED = colors.HexColor("#5F6F69")
 
 
 def _fmt(value: Decimal | None) -> str:
@@ -40,11 +42,18 @@ def build_payslip_pdf(
         title=f"Payslip {period_label} — {worker_name}",
     )
     styles = getSampleStyleSheet()
-    title_style = ParagraphStyle("gs_title", parent=styles["Title"], textColor=NAVY, fontSize=16, spaceAfter=4)
-    meaning_style = ParagraphStyle("meaning", parent=styles["Normal"], fontSize=8, textColor=colors.HexColor("#4a5568"))
+    title_style = ParagraphStyle("gs_title", parent=styles["Title"], textColor=FOREST, fontSize=16, spaceAfter=4)
+    meaning_style = ParagraphStyle("meaning", parent=styles["Normal"], fontSize=8, textColor=MUTED)
 
+    gold_rule = Table([[""]], colWidths=[174 * mm], rowHeights=[2 * mm])
+    gold_rule.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), GOLD),
+        ("TOPPADDING", (0, 0), (-1, -1), 0),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+    ]))
     elements = [
         Paragraph("GlobalSolutions — Payslip", title_style),
+        gold_rule,
         Spacer(1, 4 * mm),
     ]
 
@@ -53,7 +62,7 @@ def build_payslip_pdf(
         colWidths=[45 * mm, 100 * mm],
     )
     meta.setStyle(TableStyle([
-        ("BACKGROUND", (0, 0), (0, -1), LIGHT_BLUE),
+        ("BACKGROUND", (0, 0), (0, -1), ROW_TINT),
         ("FONTNAME", (1, 0), (1, -1), "Helvetica-Bold"),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
@@ -73,11 +82,12 @@ def build_payslip_pdf(
     table = Table(table_data, colWidths=[42 * mm, 30 * mm, 34 * mm, 68 * mm], repeatRows=2)
     style = [
         ("SPAN", (0, 0), (-1, 0)),
-        ("BACKGROUND", (0, 0), (-1, 0), HEADER_BLUE),
-        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("BACKGROUND", (0, 0), (-1, 0), FOREST),
+        ("TEXTCOLOR", (0, 0), (-1, 0), GOLD),
         ("ALIGN", (0, 0), (-1, 0), "CENTER"),
         ("FONTNAME", (0, 0), (-1, 1), "Helvetica-Bold"),
-        ("BACKGROUND", (0, 1), (-1, 1), LIGHT_BLUE),
+        ("BACKGROUND", (0, 1), (-1, 1), HEADER_GREEN),
+        ("TEXTCOLOR", (0, 1), (-1, 1), colors.white),
         ("FONTSIZE", (0, 0), (-1, -1), 9),
         ("GRID", (0, 0), (-1, -1), 0.5, BORDER),
         ("ALIGN", (1, 1), (2, -1), "RIGHT"),
@@ -89,7 +99,8 @@ def build_payslip_pdf(
     # Highlight the final net row.
     last = len(table_data) - 1
     style += [
-        ("BACKGROUND", (0, last), (-1, last), GREEN),
+        ("BACKGROUND", (0, last), (-1, last), GOLD),
+        ("TEXTCOLOR", (0, last), (-1, last), FOREST),
         ("FONTNAME", (0, last), (-1, last), "Helvetica-Bold"),
     ]
     table.setStyle(TableStyle(style))
