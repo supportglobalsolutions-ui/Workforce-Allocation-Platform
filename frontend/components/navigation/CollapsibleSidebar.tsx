@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
+import { X } from 'lucide-react';
 import LogoMark from '@/components/theme/LogoMark';
 import {
   NavItem,
@@ -12,12 +13,13 @@ import {
 interface CollapsibleSidebarProps {
   role: PortalRole;
   collapsed: boolean;
+  onClose?: () => void;
+  mobileOpen?: boolean;
 }
 
 function sectionMatch(pathname: string | null, href: string): boolean {
   if (!pathname) return false;
 
-  // Payouts owns workbench + wallets; Communications owns receipts; Calendar is its own nav item
   if (href === '/admin/payroll') {
     if (pathname === '/admin/payroll/receipts' || pathname.startsWith('/admin/payroll/receipts/')) {
       return false;
@@ -30,7 +32,6 @@ function sectionMatch(pathname: string | null, href: string): boolean {
 
   if (pathname === href || pathname.startsWith(href + '/')) return true;
 
-  // Hubs: highlight parent for sibling tab routes still nested under one item
   const hubs: Record<string, string[]> = {
     '/admin/sessions': ['/admin/sessions', '/admin/live-sessions'],
     '/admin/quality': ['/admin/quality', '/admin/assessments', '/admin/training'],
@@ -41,7 +42,15 @@ function sectionMatch(pathname: string | null, href: string): boolean {
   return paths.some((p) => pathname === p || pathname.startsWith(p + '/'));
 }
 
-function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean }) {
+function SidebarLink({
+  item,
+  collapsed,
+  onNavigate,
+}: {
+  item: NavItem;
+  collapsed: boolean;
+  onNavigate?: () => void;
+}) {
   const pathname = usePathname();
   const isActive = sectionMatch(pathname, item.href);
 
@@ -49,8 +58,9 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
     <Link
       href={item.href}
       prefetch
+      onClick={onNavigate}
       title={collapsed ? item.label : undefined}
-      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all ${
+      className={`flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all min-h-[44px] ${
         collapsed ? 'justify-center' : ''
       } ${isActive ? 'sidebar-link-active' : 'sidebar-link'}`}
     >
@@ -62,17 +72,26 @@ function SidebarLink({ item, collapsed }: { item: NavItem; collapsed: boolean })
   );
 }
 
-export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSidebarProps) {
+export default function CollapsibleSidebar({
+  role,
+  collapsed,
+  onClose,
+  mobileOpen = false,
+}: CollapsibleSidebarProps) {
   const items = PORTAL_SIDEBAR_NAV[role];
 
   return (
     <aside
-      className={`relative h-full flex flex-col app-sidebar transition-all duration-300 ease-in-out ${
-        collapsed ? 'w-[72px]' : 'w-[240px]'
+      className={`relative h-full flex flex-col app-sidebar transition-all duration-300 ease-in-out w-full md:w-auto ${
+        collapsed ? 'md:w-[72px]' : 'md:w-[240px]'
       }`}
     >
-      <div className={`border-b sidebar-divider ${collapsed ? 'p-3 flex justify-center' : 'p-5'}`}>
-        <Link href="/" className={`flex items-center gap-2 ${collapsed ? 'justify-center' : ''}`}>
+      <div
+        className={`border-b sidebar-divider flex items-center gap-2 ${
+          mobileOpen ? 'p-4 justify-between' : collapsed ? 'p-3 justify-center' : 'p-5'
+        }`}
+      >
+        <Link href="/" className={`flex items-center gap-2 min-w-0 ${collapsed ? 'justify-center' : ''}`} onClick={mobileOpen ? onClose : undefined}>
           <LogoMark size="sm" />
           {!collapsed && (
             <div className="min-w-0">
@@ -81,14 +100,29 @@ export default function CollapsibleSidebar({ role, collapsed }: CollapsibleSideb
             </div>
           )}
         </Link>
+        {mobileOpen && onClose && (
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close menu"
+            className="md:hidden p-2 rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/[0.06] shrink-0"
+          >
+            <X size={18} />
+          </button>
+        )}
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto">
+      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overscroll-contain">
         {!collapsed && (
           <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-gold-accent/80">Navigation</p>
         )}
         {items.map((item) => (
-          <SidebarLink key={item.href} item={item} collapsed={collapsed} />
+          <SidebarLink
+            key={item.href}
+            item={item}
+            collapsed={collapsed}
+            onNavigate={mobileOpen ? onClose : undefined}
+          />
         ))}
       </nav>
     </aside>

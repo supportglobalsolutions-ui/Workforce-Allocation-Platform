@@ -109,7 +109,6 @@ export default function WorkerNotificationsPage() {
     <div className="max-w-2xl mx-auto space-y-6 pb-10">
       <PageHeader
         title="Notifications"
-        description="Messages and alerts from your admin team."
         actions={
           unreadCount > 0 ? (
             <span className="px-2.5 py-1 rounded-full bg-emerald-accent/15 text-emerald-accent text-xs font-semibold">

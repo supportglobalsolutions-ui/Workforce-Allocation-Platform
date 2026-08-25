@@ -64,6 +64,8 @@ export const SESSIONS_TABS: SectionTab[] = [];
 export const QUALITY_TABS: SectionTab[] = [
   { label: 'Leaderboard', href: '/admin/quality' },
   { label: 'Assessments', href: '/admin/assessments' },
+  { label: 'Scores', href: '/admin/assessments/scores' },
+  { label: 'Tests', href: '/admin/assessments/scores/tests' },
   { label: 'Training', href: '/admin/training' },
 ];
 

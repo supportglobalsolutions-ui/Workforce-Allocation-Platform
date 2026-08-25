@@ -58,14 +58,19 @@ export default function DeletePeriodModal({
   }, [challenge]);
 
   async function sendCode() {
+    const isFirstRequest = challenge === null;
+    // Email delivery can complete before the request finishes returning to the
+    // browser. Move to the entry screen immediately so the admin is never left
+    // looking at the old "send code" prompt after the email arrives.
+    setStep('code');
+    setCode('');
     setBusy(true); setError(null);
     try {
       const res = await api.post<Challenge>(`/payroll/periods/${period.id}/delete/request-otp`, {});
       setChallenge(res);
-      setCode('');
-      setStep('code');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Could not send the confirmation code.');
+      if (isFirstRequest) setStep('confirm');
     } finally {
       setBusy(false);
     }
@@ -122,7 +127,7 @@ export default function DeletePeriodModal({
                 Are you sure you want to do this? It will delete all data related to this work period.
               </p>
               <ul className="text-xs text-theme-muted space-y-1 list-disc pl-4">
-                <li>Payslip rows, bonuses, cost pools and period quality scores are removed.</li>
+                <li>Payslip rows, bonuses and period quality scores are removed.</li>
                 <li>Worker sessions stay in history; they are unlinked from this month.</li>
                 <li>Wallet credits already pushed stay in wallets.</li>
               </ul>
@@ -137,14 +142,20 @@ export default function DeletePeriodModal({
             </>
           ) : (
             <>
-              <p className="text-sm text-theme-heading">
-                A 6-digit code was sent to <span className="font-semibold">{challenge?.sent_to}</span>.
-                {challenge?.using_previous_email && (
-                  <span className="block text-xs text-gold-accent mt-1">
-                    The alert email was changed recently, so this code went to the previous inbox.
-                  </span>
-                )}
-              </p>
+              {challenge ? (
+                <p className="text-sm text-theme-heading">
+                  A 6-digit code was sent to <span className="font-semibold">{challenge.sent_to}</span>.
+                  {challenge.using_previous_email && (
+                    <span className="block text-xs text-gold-accent mt-1">
+                      The alert email was changed recently, so this code went to the previous inbox.
+                    </span>
+                  )}
+                </p>
+              ) : (
+                <p className="text-sm text-theme-heading flex items-center gap-2">
+                  <SpinningDots size="sm" /> Sending the confirmation code…
+                </p>
+              )}
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted block">
                 Confirmation code
               </label>
@@ -154,23 +165,27 @@ export default function DeletePeriodModal({
                 autoComplete="one-time-code"
                 maxLength={6}
                 value={code}
-                onChange={(e) => {
-                  const next = e.target.value.replace(/\D/g, '').slice(0, 6);
-                  setCode(next);
-                  if (next.length === 6) void confirmDelete(next);
+                disabled={busy || !challenge || left === 0}
+                onChange={(e) => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter' && challenge && code.length === 6 && left > 0 && !busy) {
+                    e.preventDefault();
+                    void confirmDelete();
+                  }
                 }}
                 placeholder="000000"
-                className="input-field text-center text-2xl tracking-[0.4em] font-mono"
+                aria-label="Six-digit confirmation code"
+                className="input-field text-center text-2xl tracking-[0.4em] font-mono disabled:opacity-50"
               />
               <p className="text-[11px] text-theme-muted">
-                {left > 0 ? `Expires in ${left}s` : 'Code expired — request a new one.'}
+                {!challenge ? 'The code field will activate as soon as delivery is confirmed.' : left > 0 ? `Expires in ${left}s` : 'Code expired — request a new one.'}
               </p>
               <div className="flex justify-end gap-2 pt-1">
-                <button type="button" onClick={() => void sendCode()} disabled={busy || left > 150}
+                <button type="button" onClick={() => void sendCode()} disabled={busy || !challenge || left > 150}
                   className="btn-secondary text-sm py-2 px-4 disabled:opacity-50">
                   Resend
                 </button>
-                <button type="button" onClick={() => void confirmDelete()} disabled={busy || code.length < 6 || left === 0}
+                <button type="button" onClick={() => void confirmDelete()} disabled={busy || !challenge || code.length < 6 || left === 0}
                   className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2 disabled:opacity-50">
                   {busy ? <SpinningDots size="sm" /> : <Trash2 size={14} />}
                   Delete period

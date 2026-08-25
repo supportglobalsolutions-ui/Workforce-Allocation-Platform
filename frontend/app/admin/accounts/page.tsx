@@ -756,7 +756,6 @@ export default function AccountsPage() {
     <div>
       <PageHeader
         title="Accounts"
-        description="Create accounts, manage Partners (same as Partners page), approve signups, and promote or demote."
       />
 
       <div className="flex flex-wrap items-center justify-between gap-3 mb-5">

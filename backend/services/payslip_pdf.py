@@ -1,9 +1,18 @@
 """
 Payslip PDF generation (reportlab). The same PDF is used for admin downloads
 and as the optional Resend email attachment.
+
+PDFs are written to a local cache on Calculate / Generate so emailing and
+preview do not have to rebuild them at send time.
 """
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from decimal import Decimal
 from io import BytesIO
+from pathlib import Path
+from typing import Any
+from uuid import UUID
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
@@ -130,3 +139,98 @@ def payslip_rows(summary) -> list[tuple[str, str, str, str]]:
         ("Total Deductions", _fmt(summary.total_deductions), base_of(summary.total_deductions), "Transfer cost plus external cost."),
         ("Final Net Pay Due", _fmt(summary.final_net), base_of(summary.final_net), "Final amount payable after deductions."),
     ]
+
+
+def _cache_root() -> Path:
+    root = Path(__file__).resolve().parent.parent / "data" / "payslips"
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _stamp(summary: Any, period_label: str) -> str:
+    return "|".join([
+        period_label,
+        str(getattr(summary, "updated_at", "") or ""),
+        str(getattr(summary, "hours_logged", "")),
+        str(getattr(summary, "rate_per_hour", "")),
+        str(getattr(summary, "bonus", "")),
+        str(getattr(summary, "final_net", "")),
+        str(getattr(summary, "fx_rate", "")),
+        str(getattr(summary, "local_currency", "") or ""),
+        str(getattr(summary, "base_currency", "") or ""),
+    ])
+
+
+def _cache_paths(period_id: UUID, summary_id: UUID) -> tuple[Path, Path]:
+    folder = _cache_root() / str(period_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    return folder / f"{summary_id}.pdf", folder / f"{summary_id}.stamp"
+
+
+def payslip_filename(period_label: str, worker_name: str) -> str:
+    safe_period = period_label.replace(" ", "-")
+    safe_name = worker_name.replace(" ", "-")
+    return f"payslip-{safe_period}-{safe_name}.pdf"
+
+
+def render_payslip_pdf(
+    *,
+    summary: Any,
+    period: Any,
+    worker_name: str,
+    force: bool = False,
+) -> tuple[str, bytes]:
+    """Return (filename, bytes), reusing the cache when the payslip has not changed."""
+    filename = payslip_filename(period.label, worker_name)
+    pdf_path, stamp_path = _cache_paths(period.id, summary.id)
+    stamp = _stamp(summary, period.label)
+    if not force and pdf_path.exists() and stamp_path.exists():
+        if stamp_path.read_text(encoding="utf-8").strip() == stamp:
+            return filename, pdf_path.read_bytes()
+
+    pdf = build_payslip_pdf(
+        worker_name=worker_name,
+        period_label=period.label,
+        local_currency=summary.local_currency,
+        base_currency=summary.base_currency or period.currency,
+        rows=payslip_rows(summary),
+    )
+    pdf_path.write_bytes(pdf)
+    stamp_path.write_text(stamp, encoding="utf-8")
+    return filename, pdf
+
+
+def generate_period_pdfs(db: Any, period_id: UUID, *, force: bool = False) -> dict[str, int]:
+    """Build (or refresh) one cached PDF per payslip row in the period."""
+    from sqlmodel import select
+
+    from models.payroll import PayrollPeriod, PayrollWorkerSummary
+    from models.worker import Worker
+
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise ValueError("Payroll period not found")
+
+    summaries = db.exec(
+        select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
+    ).all()
+    if not summaries:
+        raise ValueError("No payslips — calculate the period first.")
+
+    generated = 0
+    reused = 0
+    for summary in summaries:
+        worker = db.get(Worker, summary.worker_id)
+        name = worker.display_name if worker else "Worker"
+        pdf_path, stamp_path = _cache_paths(period.id, summary.id)
+        stamp = _stamp(summary, period.label)
+        if not force and pdf_path.exists() and stamp_path.exists() and stamp_path.read_text(encoding="utf-8").strip() == stamp:
+            reused += 1
+            continue
+        render_payslip_pdf(summary=summary, period=period, worker_name=name, force=True)
+        generated += 1
+
+    period.export_generated_at = datetime.now(timezone.utc)
+    db.add(period)
+    db.commit()
+    return {"generated": generated, "reused": reused, "total": len(summaries)}

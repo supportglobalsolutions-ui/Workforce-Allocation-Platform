@@ -28,6 +28,8 @@ export interface TaskAssessment {
   time_limit_minutes:  number | null;
   passing_score_pct:   number;
   is_active:           boolean;
+  allow_retakes?:      boolean;
+  max_attempts?:       number;
   created_by:          string;
   created_at:          string | null;
   result_count:        number;
@@ -37,7 +39,7 @@ export type TaskResultStatus = 'pending' | 'in_progress' | 'submitted' | 'graded
 
 export interface TaskResult {
   id:                    string;
-  task_assessment_id:    string;
+  task_assessment_id:    string | null;
   worker_id:             string;
   status:                TaskResultStatus;
   submission_notes:      string | null;

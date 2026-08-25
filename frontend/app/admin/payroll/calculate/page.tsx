@@ -51,7 +51,6 @@ export default function PayrollCalculationPage() {
     <div>
       <PageHeader
         title="Payroll Calculation"
-        description="Per-worker earnings with partner splits, GS revenue, exception flags, and approval status."
         actions={<button className="btn-primary text-sm">Approve Period</button>}
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />

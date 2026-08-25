@@ -9,11 +9,13 @@ import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
+import { enteredPayMinutes, rdpConnectedMinutes } from '@/lib/hours';
 
 interface WorkSession {
   id: string;
   session_type: string;
   start_time: string;
+  end_time: string | null;
   duration_minutes: number | null;
   close_status: string | null;
   rdp_resource_id: string | null;
@@ -46,7 +48,7 @@ const STATUS_BY_LABEL: Record<string, string> = {
 };
 
 function formatDuration(minutes: number | null): string {
-  if (!minutes) return '—';
+  if (minutes == null) return '—';
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
@@ -120,7 +122,7 @@ export default function SessionHistoryPage() {
   }, [sessions, machines, search, statusFilter, typeFilter, dateRangeFilter]);
 
   const totalMinutes = useMemo(
-    () => sessions.reduce((sum, s) => sum + (s.duration_minutes || 0), 0),
+    () => sessions.reduce((sum, s) => sum + enteredPayMinutes(s), 0),
     [sessions],
   );
   const incomplete = useMemo(
@@ -140,11 +142,11 @@ export default function SessionHistoryPage() {
   };
 
   const handleExportCsv = () => {
-    const headers = ['Date & Time', 'Machine / Platform', 'Duration', 'Type', 'Status'];
+    const headers = ['Date & Time', 'Machine / Platform', 'Work hours', 'RDP uptime', 'Type', 'Status'];
     const csvRows = [
       headers.join(','),
       ...rows.map((r) =>
-        [r.date, r.machine, r.duration, r.type, r.status]
+        [r.date, r.machine, r.work_hours, r.rdp_uptime, r.type, r.status]
           .map((v) => `"${String(v).replace(/"/g, '""')}"`)
           .join(','),
       ),
@@ -171,8 +173,13 @@ export default function SessionHistoryPage() {
   const rows = filteredSessions.map((s) => ({
     id: s.id,
     date: new Date(s.start_time).toLocaleString(),
+    start_time: s.start_time,
+    end_time: s.end_time,
     machine: machineName(s.rdp_resource_id),
-    duration: formatDuration(s.duration_minutes),
+    duration: formatDuration(enteredPayMinutes(s)),
+    work_hours: formatDuration(enteredPayMinutes(s)),
+    rdp_uptime: formatDuration(rdpConnectedMinutes(s)),
+    rdp_minutes: rdpConnectedMinutes(s),
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
     status: s.close_status ?? 'pending',
     start_image_url: s.start_image_url,
@@ -193,7 +200,6 @@ export default function SessionHistoryPage() {
     <div>
       <PageHeader
         title="Session History"
-        description="Complete log of your sessions across GS RDP, partner multilog, and third-party platforms. Add start/end images and on-image times so hours are recorded correctly."
         actions={
           <button className="btn-secondary flex items-center gap-2" onClick={handleExportCsv}>
             <Download size={16} />
@@ -204,7 +210,7 @@ export default function SessionHistoryPage() {
 
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-5">
         <div className="glass-panel p-4">
-          <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Total hours logged</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Total work hours logged</p>
           <p className="text-2xl font-black text-theme-heading mt-1">
             {(totalMinutes / 60).toFixed(2)}h
           </p>
@@ -213,13 +219,13 @@ export default function SessionHistoryPage() {
         <div className="glass-panel p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Evidence needed</p>
           <p className="text-2xl font-black text-theme-heading mt-1">{incomplete.length}</p>
-          <p className="text-xs text-theme-muted mt-1">Sessions missing images or on-image times</p>
+          <p className="text-xs text-theme-muted mt-1">Sessions missing images or entered work times</p>
         </div>
       </div>
 
       {incomplete.length > 0 && (
         <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 text-sm">
-          After RDP logout, add start &amp; end images and the times shown on those images for{' '}
+          After RDP logout, add start &amp; end images and the required work start and stop / end times for{' '}
           {incomplete.length} session{incomplete.length === 1 ? '' : 's'}. Open a session with the eye icon to complete.
         </div>
       )}
@@ -243,7 +249,8 @@ export default function SessionHistoryPage() {
           columns={[
             { key: 'date', header: 'Date & Time' },
             { key: 'machine', header: 'Machine / Platform' },
-            { key: 'duration', header: 'Duration' },
+            { key: 'work_hours', header: 'Work hours' },
+            { key: 'rdp_uptime', header: 'RDP uptime' },
             { key: 'type', header: 'Type' },
             {
               key: 'status',
@@ -283,7 +290,13 @@ export default function SessionHistoryPage() {
         onImageUploaded={handleImageUploaded}
         onEvidenceSaved={(sessionId, patch) => {
           setSessions((prev) =>
-            prev.map((s) => (s.id === sessionId ? { ...s, ...patch } : s)),
+            prev.map((s) => (s.id === sessionId ? {
+              ...s,
+              image_start_at: patch.image_start_at ?? s.image_start_at,
+              image_end_at: patch.image_end_at ?? s.image_end_at,
+              duration_minutes: patch.duration_minutes ?? s.duration_minutes,
+              evidence_complete: patch.evidence_complete ?? s.evidence_complete,
+            } : s)),
           );
         }}
       />

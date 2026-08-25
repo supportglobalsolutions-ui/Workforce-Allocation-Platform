@@ -8,6 +8,7 @@ import {
 
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -375,18 +376,21 @@ function ModuleDetail({
   tasks,
   onBack,
   onChanged,
+  onRequestDelete,
 }: {
   module: TrainingModule;
   mcqSets: McqSetOption[];
   tasks: TaskOption[];
   onBack: () => void;
   onChanged: () => void;
+  onRequestDelete: () => void;
 }) {
   const lessons = [...(module.lessons ?? [])].sort((a, b) => a.sort_order - b.sort_order);
   const [adding, setAdding] = useState(false);
   const [editingLessonId, setEditingLessonId] = useState<string | null>(null);
   const [deletingId, setDeletingId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [lessonToDelete, setLessonToDelete] = useState<Lesson | null>(null);
 
   // Completion stats — loaded lazily when the panel opens.
   const [progress, setProgress] = useState<ProgressRow[] | null>(null);
@@ -402,12 +406,13 @@ function ModuleDetail({
   const mcqTitle = module.mcq_set_id ? mcqSets.find((s) => s.id === module.mcq_set_id)?.title : null;
   const taskTitle = module.task_assessment_id ? tasks.find((t) => t.id === module.task_assessment_id)?.title : null;
 
-  async function handleDeleteLesson(lesson: Lesson) {
-    if (!window.confirm(`Delete lesson "${lesson.title}"?`)) return;
-    setDeletingId(lesson.id);
+  async function handleDeleteLesson() {
+    if (!lessonToDelete) return;
+    setDeletingId(lessonToDelete.id);
     setError(null);
     try {
-      await api.delete(`/training/lessons/${lesson.id}`);
+      await api.delete(`/training/lessons/${lessonToDelete.id}`);
+      setLessonToDelete(null);
       onChanged();
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to delete lesson');
@@ -427,18 +432,28 @@ function ModuleDetail({
       </button>
 
       <div className="glass-panel rounded-2xl p-6">
-        <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-lg font-bold text-white tracking-tight">{module.title}</h2>
-          {module.is_mandatory_for_new_workers && (
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
-              <Star size={10} /> Mandatory
-            </span>
-          )}
-          {!module.is_active && (
-            <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-white/10 text-theme-muted border border-white/10">
-              Inactive
-            </span>
-          )}
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="flex flex-wrap items-center gap-3 min-w-0">
+            <h2 className="text-lg font-bold text-white tracking-tight">{module.title}</h2>
+            {module.is_mandatory_for_new_workers && (
+              <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
+                <Star size={10} /> Mandatory
+              </span>
+            )}
+            {!module.is_active && (
+              <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-white/10 text-theme-muted border border-white/10">
+                Inactive
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRequestDelete}
+            className="inline-flex items-center gap-1.5 text-xs font-semibold py-1.5 px-3 rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
+            title="Delete module"
+          >
+            <Trash2 size={13} /> Delete module
+          </button>
         </div>
         {module.description && <p className="text-xs text-theme-muted mt-2 whitespace-pre-wrap">{module.description}</p>}
 
@@ -537,7 +552,7 @@ function ModuleDetail({
                   </button>
                   <button
                     type="button"
-                    onClick={() => handleDeleteLesson(l)}
+                    onClick={() => setLessonToDelete(l)}
                     disabled={deletingId === l.id}
                     className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] transition-colors disabled:opacity-50"
                     title="Delete lesson"
@@ -550,6 +565,28 @@ function ModuleDetail({
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={!!lessonToDelete}
+        title="Delete this lesson?"
+        body={
+          lessonToDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{lessonToDelete.title}</span>
+              {' '}({lessonToDelete.content_type}) from{' '}
+              <span className="font-semibold text-theme-heading">{module.title}</span>.
+              {' '}Workers will no longer see this lesson.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete lesson"
+        tone="danger"
+        icon={Trash2}
+        busy={!!deletingId}
+        onCancel={() => { if (!deletingId) setLessonToDelete(null); }}
+        onConfirm={() => void handleDeleteLesson()}
+      />
     </div>
   );
 }
@@ -565,6 +602,8 @@ export default function AdminTrainingPage() {
   const [showCreate, setShowCreate] = useState(false);
   const [openModuleId, setOpenModuleId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
+  const [moduleToDelete, setModuleToDelete] = useState<TrainingModule | null>(null);
+  const [deletingModule, setDeletingModule] = useState(false);
 
   const loadModules = useCallback(async () => {
     try {
@@ -595,13 +634,28 @@ export default function AdminTrainingPage() {
     }
   }
 
+  async function handleDeleteModule() {
+    if (!moduleToDelete) return;
+    setDeletingModule(true);
+    setError(null);
+    try {
+      await api.delete(`/training/modules/${moduleToDelete.id}`);
+      setOpenModuleId((id) => (id === moduleToDelete.id ? null : id));
+      setModuleToDelete(null);
+      await loadModules();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete training module');
+    } finally {
+      setDeletingModule(false);
+    }
+  }
+
   const openModule = modules.find((m) => m.id === openModuleId) ?? null;
 
   return (
     <div>
       <PageHeader
         title="Training Builder"
-        description="Create training modules and lessons, link assessments, and track worker completion."
         actions={
           !openModule ? (
             <button
@@ -616,6 +670,12 @@ export default function AdminTrainingPage() {
       />
       <AdminSectionTabs tabs={QUALITY_TABS} />
 
+      {error && modules.length > 0 && (
+        <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs mb-4">
+          <AlertCircle size={14} /> {error}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
       ) : error && modules.length === 0 ? (
@@ -629,6 +689,7 @@ export default function AdminTrainingPage() {
           tasks={tasks}
           onBack={() => setOpenModuleId(null)}
           onChanged={loadModules}
+          onRequestDelete={() => setModuleToDelete(openModule)}
         />
       ) : modules.length === 0 ? (
         <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-14 text-center">
@@ -637,11 +698,6 @@ export default function AdminTrainingPage() {
         </div>
       ) : (
         <>
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs mb-4">
-              <AlertCircle size={14} /> {error}
-            </div>
-          )}
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {modules.map((m) => {
               const lessonCount = m.lessons?.length ?? 0;
@@ -678,13 +734,23 @@ export default function AdminTrainingPage() {
                       </span>
                       {togglingId === m.id ? '…' : m.is_active ? 'Active' : 'Inactive'}
                     </button>
-                    <button
-                      type="button"
-                      onClick={() => setOpenModuleId(m.id)}
-                      className="btn-secondary text-xs py-1.5 px-3"
-                    >
-                      Manage lessons
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => setOpenModuleId(m.id)}
+                        className="btn-secondary text-xs py-1.5 px-3"
+                      >
+                        Manage lessons
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setModuleToDelete(m)}
+                        title={`Delete ${m.title}`}
+                        className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -701,6 +767,38 @@ export default function AdminTrainingPage() {
           onSaved={loadModules}
         />
       )}
+
+      <ConfirmModal
+        open={!!moduleToDelete}
+        title="Delete this training module?"
+        body={
+          moduleToDelete ? (
+            <div className="space-y-2">
+              <p>
+                Permanently delete{' '}
+                <span className="font-semibold text-theme-heading">{moduleToDelete.title}</span>?
+              </p>
+              <ul className="text-xs space-y-1 list-disc pl-4">
+                <li>
+                  {(moduleToDelete.lessons?.length ?? 0)} lesson
+                  {(moduleToDelete.lessons?.length ?? 0) === 1 ? '' : 's'} will be removed
+                </li>
+                <li>Worker completion progress for this module will be removed</li>
+                {moduleToDelete.is_mandatory_for_new_workers && (
+                  <li>This module is currently mandatory for new workers</li>
+                )}
+                <li>This cannot be undone</li>
+              </ul>
+            </div>
+          ) : null
+        }
+        confirmLabel="Delete module"
+        tone="danger"
+        icon={Trash2}
+        busy={deletingModule}
+        onCancel={() => { if (!deletingModule) setModuleToDelete(null); }}
+        onConfirm={() => void handleDeleteModule()}
+      />
     </div>
   );
 }

@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -17,7 +17,15 @@ if TYPE_CHECKING:
 
 class PayrollPeriod(SQLModel, table=True):
     __tablename__ = "payroll_periods"
-    __table_args__ = (UniqueConstraint("label", name="uq_payroll_periods_label"),)
+    __table_args__ = (
+        UniqueConstraint("label", name="uq_payroll_periods_label"),
+        Index(
+            "uq_payroll_periods_one_current",
+            "is_current",
+            unique=True,
+            postgresql_where=text("is_current IS TRUE"),
+        ),
+    )
 
     id: uuid.UUID = Field(
         default_factory=uuid.uuid4,
@@ -28,6 +36,7 @@ class PayrollPeriod(SQLModel, table=True):
     end_date: date = Field(sa_column=Column(Date, nullable=False))
     currency: str = Field(sa_column=Column(String(3), nullable=False))
     status: PayrollPeriodStatusEnum = Field(sa_column=Column(PayrollPeriodStatus, nullable=False))
+    is_current: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
     approved_by: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),
@@ -53,7 +62,6 @@ class PayrollPeriod(SQLModel, table=True):
     sessions: list["Session"] = Relationship(back_populates="payroll_period")
     line_items: list["PayrollLineItem"] = Relationship(back_populates="payroll_period")
     worker_summaries: list["PayrollWorkerSummary"] = Relationship(back_populates="payroll_period")
-    cost_pools: list["CountryCostPool"] = Relationship(back_populates="payroll_period")
 
 
 class PayrollLineItem(SQLModel, table=True):
@@ -176,34 +184,3 @@ class PayrollWorkerSummary(SQLModel, table=True):
 
     payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="worker_summaries")
     worker: Optional["Worker"] = Relationship(back_populates="payroll_summaries")
-
-
-class CountryCostPool(SQLModel, table=True):
-    """
-    Country-level transfer/external cost pools for a period, allocated across the
-    country's workers proportionally to hours (per-worker overrides live on the
-    worker summary).
-    """
-
-    __tablename__ = "country_cost_pools"
-    __table_args__ = (
-        UniqueConstraint("payroll_period_id", "country", name="uq_country_cost_pool_period_country"),
-    )
-
-    id: uuid.UUID = Field(
-        default_factory=uuid.uuid4,
-        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
-    )
-    payroll_period_id: uuid.UUID = Field(
-        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=False, index=True),
-    )
-    country: str = Field(sa_column=Column(String(64), nullable=False))
-    transfer_cost_total: Decimal = Field(
-        default=Decimal("0.00"), sa_column=Column(Numeric(14, 2), nullable=False, server_default="0.00")
-    )
-    external_cost_total: Decimal = Field(
-        default=Decimal("0.00"), sa_column=Column(Numeric(14, 2), nullable=False, server_default="0.00")
-    )
-    note: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
-
-    payroll_period: Optional["PayrollPeriod"] = Relationship(back_populates="cost_pools")

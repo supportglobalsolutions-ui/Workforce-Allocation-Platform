@@ -110,7 +110,7 @@ export default function WorkerPayModal({
 
   const [form, setForm] = useState(() => ({
     hours_logged: String(storedHours > 0 ? storedHours : sessionHours),
-    rate_per_hour: String(s?.rate_per_hour ?? '0'),
+    rate_per_hour: s?.rate_per_hour != null ? String(s.rate_per_hour) : '',
     bonus: String(s?.bonus ?? '0'),
     transfer_cost: String(s?.transfer_cost ?? '0'),
     external_cost: String(s?.external_cost ?? '0'),
@@ -142,15 +142,51 @@ export default function WorkerPayModal({
 
   async function save(e: React.FormEvent) {
     e.preventDefault();
-    setSaving(true);
     setError(null);
+
+    const requiredAmounts: Array<[string, string]> = [
+      ['Hours logged', form.hours_logged],
+      ['Bonus', form.bonus],
+      ['Transfer cost deduction', form.transfer_cost],
+      ['External cost deduction', form.external_cost],
+    ];
+    const optionalAmounts: Array<[string, string]> = [
+      ['Rate per hour', form.rate_per_hour],
+    ];
+    for (const [label, raw] of requiredAmounts) {
+      const value = Number(raw);
+      if (raw.trim() === '' || !Number.isFinite(value) || value < 0) {
+        setError(`${label} must be a valid number that is zero or greater.`);
+        return;
+      }
+    }
+    for (const [label, raw] of optionalAmounts) {
+      const value = Number(raw);
+      if (raw.trim() !== '' && (!Number.isFinite(value) || value < 0)) {
+        setError(`${label} must be blank or a valid number that is zero or greater.`);
+        return;
+      }
+    }
+    if (form.fx_rate.trim() !== '') {
+      const fx = Number(form.fx_rate);
+      if (!Number.isFinite(fx) || fx <= 0) {
+        setError('FX rate must be a valid number greater than zero.');
+        return;
+      }
+    }
+    if (!/^[A-Z]{3}$/.test(currency)) {
+      setError('Pay currency must be a valid three-letter code.');
+      return;
+    }
+
+    setSaving(true);
     try {
       await api.post(`/payroll/periods/${periodId}/summaries/bulk`, {
         upsert: true,
         rows: [{
           worker_id: row.worker_id,
           hours_logged: num(form.hours_logged),
-          rate_per_hour: num(form.rate_per_hour),
+          ...(form.rate_per_hour.trim() !== '' ? { rate_per_hour: Number(form.rate_per_hour) } : {}),
           bonus: num(form.bonus),
           transfer_cost: num(form.transfer_cost),
           external_cost: num(form.external_cost),
@@ -206,7 +242,7 @@ export default function WorkerPayModal({
               label={`FX (1 ${periodCurrency} =)`}
               hint={currencyChanged ? `Save to load the ${currency} rate from the table.` : undefined}
             >
-              <input type="number" step="any" min="0" disabled={locked || currencyChanged}
+              <input type="number" step="any" min="0.000001" disabled={locked || currencyChanged}
                 value={currencyChanged ? '' : form.fx_rate} onChange={set('fx_rate')}
                 placeholder={currencyChanged ? 'Set from rate table' : 'Not set'}
                 className={inputClass} />
@@ -229,7 +265,7 @@ export default function WorkerPayModal({
                 }
               >
                 <div className="flex gap-2">
-                  <input type="number" step="0.01" min="0" disabled={locked}
+                  <input type="number" step="0.01" min="0" required disabled={locked}
                     value={form.hours_logged} onChange={set('hours_logged')} className={inputClass} />
                   {sessionHours > 0 && (
                     <button type="button" disabled={locked}
@@ -240,23 +276,23 @@ export default function WorkerPayModal({
                   )}
                 </div>
               </Field>
-              <Field label="Rate per hour" hint="Base pay = hours × rate">
+              <Field label="Rate per hour" hint="Leave blank to use the worker’s assigned payment tier">
                 <input type="number" step="0.01" min="0" disabled={locked}
-                  value={form.rate_per_hour} onChange={set('rate_per_hour')} className={inputClass} />
+                  value={form.rate_per_hour} onChange={set('rate_per_hour')} placeholder="From payment tier" className={inputClass} />
               </Field>
 
               <Computed label="Base pay" value={money(totals.basePay)} />
               <Field label="Bonus">
-                <input type="number" step="0.01" disabled={locked}
+                <input type="number" step="0.01" min="0" required disabled={locked}
                   value={form.bonus} onChange={set('bonus')} className={inputClass} />
               </Field>
 
               <Field label="Transfer cost deduction">
-                <input type="number" step="0.01" disabled={locked}
+                <input type="number" step="0.01" min="0" required disabled={locked}
                   value={form.transfer_cost} onChange={set('transfer_cost')} className={inputClass} />
               </Field>
               <Field label="External cost deduction">
-                <input type="number" step="0.01" disabled={locked}
+                <input type="number" step="0.01" min="0" required disabled={locked}
                   value={form.external_cost} onChange={set('external_cost')} className={inputClass} />
               </Field>
 

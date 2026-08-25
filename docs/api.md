@@ -109,6 +109,18 @@ Admin-only. Manages payroll periods and per-session line items.
 
 ---
 
+## Intelligence — `/intelligence`
+
+Admin/leadership snapshot. Concatenates finance, RDP, quality, sessions, clients, and workers. Each source is isolated: one failure is a warning, not a 500.
+
+| Method | Path | Auth | Query params | Description |
+|--------|------|------|--------------|-------------|
+| GET | `/intelligence/snapshot` | admin+ | `period_id` | Period snapshot. Body keys: `payslips`, `revenue_share`, `rdp_earnings`, `line_items`, `sessions`, `quality`, `clients`, `rdps`, `workers`, `warnings`. Each source is `{ok, data, error}`. |
+| GET | `/intelligence/briefing` | admin+ | `period_id` | Ops briefing for Analytics. Three clocks: `today`, `week` (last 7 days), `month` (selected payroll period), plus `moves`, `alarms`, `holding`, `charts`, `warnings`. |
+| GET | `/intelligence/inspection` | admin+ | `period_id` | Gemini ops-chief notes from those three clocks. Isolated: a Gemini timeout does not blank `/intelligence/briefing`. |
+
+---
+
 ## Quality — `/quality`
 
 Tracks quality indicators, manual ratings, and composite scores.

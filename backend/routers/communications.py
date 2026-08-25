@@ -29,7 +29,7 @@ from models.payroll import PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
 from routers.deps import get_admin_user
 from services.email_events import apply_event, sync_delivery_events, verify_webhook_signature
-from services.email_resend import blocked_recipient_reason, is_valid_email_address
+from services.email_resend import blocked_recipient_reason, is_valid_email_address, send_email
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -100,6 +100,11 @@ def _log_row(log: EmailLog, names: dict[UUID, str], labels: dict[UUID, str]) -> 
         "period_label": labels.get(log.payroll_period_id) if log.payroll_period_id else None,
         "worker_id": str(log.worker_id) if log.worker_id else None,
         "worker_name": names.get(log.worker_id) if log.worker_id else None,
+        "can_resend": (
+            log.status == "failed"
+            and log.template != "otp"
+            and bool(log.email_job_id or log.retry_payload)
+        ),
     }
 
 
@@ -344,6 +349,7 @@ def broadcast(
 def list_email_jobs(
     kind: Optional[str] = None,
     payroll_period_id: Optional[UUID] = None,
+    active: bool = False,
     limit: int = 20,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
@@ -353,6 +359,8 @@ def list_email_jobs(
         stmt = stmt.where(EmailJob.kind == kind)
     if payroll_period_id:
         stmt = stmt.where(EmailJob.payroll_period_id == payroll_period_id)
+    if active:
+        stmt = stmt.where(EmailJob.status.in_(["queued", "running"]))
     jobs = db.exec(stmt.order_by(EmailJob.created_at.desc()).limit(min(limit, 100))).all()
     return [_job_response(db, j) for j in jobs]
 
@@ -572,6 +580,119 @@ def list_email_log(
             ),
         },
     }
+
+
+@router.post("/log/{log_id}/resend")
+def resend_failed_email(
+    log_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Retry one failed message and remove the superseded failure entry."""
+    log = db.get(EmailLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Email log entry not found")
+    if log.status != "failed":
+        raise HTTPException(status_code=400, detail="Only failed emails can be resent.")
+    if log.template == "otp":
+        raise HTTPException(
+            status_code=400,
+            detail="Expired confirmation-code emails cannot be resent. Request a new code instead.",
+        )
+
+    if log.email_job_id:
+        job = db.get(EmailJob, log.email_job_id)
+        item = db.exec(
+            select(EmailJobItem).where(
+                EmailJobItem.job_id == log.email_job_id,
+                EmailJobItem.to_email == log.to_email,
+            )
+        ).first()
+        if not job or not item:
+            raise HTTPException(
+                status_code=400,
+                detail="The original send job is no longer available, so this email cannot be rebuilt.",
+            )
+
+        # A failed attempt may have been followed by an automatic successful
+        # attempt. Clearing that stale failure must never send a duplicate.
+        if item.status == "sent":
+            db.delete(log)
+            db.commit()
+            return {
+                "status": "already_sent",
+                "message": "A later attempt already sent this email; the stale failure was removed.",
+            }
+
+        already_queued = item.status in ("pending", "claimed")
+        if not already_queued:
+            item.status = "pending"
+            item.attempts = 0
+            item.error = None
+            item.resend_id = None
+            item.claimed_at = None
+            item.sent_at = None
+            db.add(item)
+
+        job.status = "running" if item.status == "claimed" else "queued"
+        job.finished_at = None
+        job.error = None
+        job.failed = max(0, job.failed - (0 if already_queued else 1))
+        db.add(job)
+        db.delete(log)
+        db.commit()
+        return {
+            "status": "queued",
+            "message": (
+                "This email was already queued for another attempt."
+                if already_queued
+                else "Email queued to resend."
+            ),
+        }
+
+    retry_payload = log.retry_payload or {}
+    html = retry_payload.get("html")
+    if not isinstance(html, str) or not html:
+        raise HTTPException(
+            status_code=400,
+            detail="The original message content was not stored, so this older failure cannot be resent.",
+        )
+
+    retried = send_email(
+        db,
+        to_email=log.to_email,
+        subject=log.subject,
+        html=html,
+        text=retry_payload.get("text") if isinstance(retry_payload.get("text"), str) else None,
+        template=log.template,
+        payroll_period_id=log.payroll_period_id,
+        worker_id=log.worker_id,
+        idempotency_key=f"email-log-retry-{log.id}",
+    )
+    db.delete(log)
+    db.commit()
+    return {
+        "status": retried.status,
+        "message": "Email resent." if retried.status == "sent" else "The resend failed and was saved for another retry.",
+        "log_id": str(retried.id),
+        "error": retried.error,
+    }
+
+
+@router.delete("/log/{log_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_failed_email(
+    log_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Remove a failed attempt from the retry list without touching its source job."""
+    log = db.get(EmailLog, log_id)
+    if not log:
+        raise HTTPException(status_code=404, detail="Email log entry not found")
+    if log.status != "failed":
+        raise HTTPException(status_code=400, detail="Only failed email entries can be deleted here.")
+    db.delete(log)
+    db.commit()
 
 
 @router.get("/log/{log_id}")

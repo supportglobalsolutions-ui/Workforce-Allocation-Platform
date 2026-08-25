@@ -135,7 +135,6 @@ export default function AdminShiftsPage() {
     <div>
       <PageHeader
         title="Shifts"
-        description="Review and approve worker schedule submissions."
       />
       <FilterBar
         searchPlaceholder="Search by worker name…"

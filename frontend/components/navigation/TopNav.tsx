@@ -2,12 +2,13 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import {
   AlignLeft, Bell, ChevronDown, ChevronLeft, ChevronRight, Handshake, LogOut, Menu, Search, X,
 } from 'lucide-react';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import LogoMark from '@/components/theme/LogoMark';
+import PageSearchModal, { usePageSearchShortcut } from '@/components/navigation/PageSearchModal';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { api } from '@/lib/api';
 import {
@@ -21,6 +22,7 @@ interface TopNavProps {
   variant: 'public' | 'portal';
   role?: PortalRole;
   sidebarCollapsed?: boolean;
+  mobileSidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   showSidebarToggle?: boolean;
 }
@@ -37,17 +39,26 @@ export default function TopNav({
   variant,
   role,
   sidebarCollapsed,
+  mobileSidebarOpen = false,
   onToggleSidebar,
   showSidebarToggle = false,
 }: TopNavProps) {
   const pathname = usePathname();
   const { session, logout, canAccess } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [searchOpen, setSearchOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
   const [isPartner, setIsPartner] = useState(false);
   const [partnerName, setPartnerName] = useState<string | null>(null);
 
-  // Partner workers see a "Partner" label at the top right of their portal.
+  useEffect(() => {
+    setMobileMenuOpen(false);
+    setSearchOpen(false);
+  }, [pathname]);
+
+  const openSearch = useCallback(() => setSearchOpen(true), []);
+  usePageSearchShortcut(variant === 'portal' ? openSearch : () => {});
+
   useEffect(() => {
     if (variant !== 'portal' || role !== 'worker' || !session) return;
     api.get<{ worker_type: string; partner_entity_name: string | null }>('/workers/me')
@@ -75,54 +86,103 @@ export default function TopNav({
 
   return (
     <>
-    <header className="h-14 border-b border-theme bg-brand-surface-lowest px-4 md:px-6 flex items-center gap-4 sticky top-0 z-50 shrink-0">
-      {/* Left — sidebar toggle + search */}
-      <div className="flex items-center gap-3 flex-1 min-w-0">
+    <header className="h-14 border-b border-theme bg-brand-surface-lowest px-3 sm:px-4 md:px-6 flex items-center gap-2 sm:gap-4 sticky top-0 z-50 shrink-0">
+      <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
         {showSidebarToggle && onToggleSidebar && (
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-            className="group flex items-center gap-0.5 p-1.5 rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/[0.06] border border-transparent hover:border-theme active:scale-95 transition-all shrink-0"
-          >
-            <AlignLeft size={18} strokeWidth={2} />
-            {sidebarCollapsed ? (
-              <ChevronRight size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
-            ) : (
-              <ChevronLeft size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
-            )}
-          </button>
+          <>
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              aria-label={mobileSidebarOpen ? 'Close menu' : 'Open menu'}
+              aria-expanded={mobileSidebarOpen}
+              className="md:hidden p-2 rounded-xl border border-theme text-theme-muted hover:text-theme-heading hover:bg-white/[0.06] active:scale-95 transition-all shrink-0"
+            >
+              {mobileSidebarOpen ? <X size={18} /> : <Menu size={18} />}
+            </button>
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+              className="group hidden md:flex items-center gap-0.5 p-1.5 rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/[0.06] border border-transparent hover:border-theme active:scale-95 transition-all shrink-0"
+            >
+              <AlignLeft size={18} strokeWidth={2} />
+              {sidebarCollapsed ? (
+                <ChevronRight size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
+              ) : (
+                <ChevronLeft size={14} strokeWidth={2.5} className="opacity-70 group-hover:opacity-100" />
+              )}
+            </button>
+          </>
         )}
 
         {variant === 'public' && (
-          <Link href="/" className="flex items-center gap-2 shrink-0">
+          <Link href="/" className="flex items-center gap-2 shrink-0 min-w-0">
             <LogoMark size="sm" />
-            <span className="font-black text-theme-heading text-sm hidden sm:inline">GlobalSolutions</span>
+            <span className="font-black text-theme-heading text-sm hidden sm:inline truncate">GlobalSolutions</span>
           </Link>
         )}
 
+        {variant === 'public' && (
+          <nav className="hidden md:flex items-center gap-1 ml-2 min-w-0 overflow-x-auto">
+            {PUBLIC_TOP_NAV.map((item) => {
+              const active = pathname === item.href;
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  prefetch
+                  className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold whitespace-nowrap transition-colors ${
+                    active ? 'bg-emerald-accent/10 text-emerald-accent' : 'text-theme-muted hover:text-theme-heading hover:bg-white/[0.04]'
+                  }`}
+                >
+                  {item.icon}
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        )}
+
+        {variant === 'portal' && role && (
+          <p className="md:hidden text-xs font-semibold text-theme-heading truncate">
+            {ROLE_LABELS[role]}
+          </p>
+        )}
+
         {variant === 'portal' && (
-          <div className="relative w-full max-w-xs hidden md:block">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-            <input
-              type="search"
-              placeholder="Search..."
-              className="w-full pl-8 pr-4 py-1.5 rounded-full text-sm bg-white/5 border border-theme text-theme-heading placeholder:text-theme-muted focus:outline-none focus:border-emerald-accent/40 transition-colors"
-            />
-          </div>
+          <button
+            type="button"
+            onClick={openSearch}
+            className="relative w-full max-w-xs hidden md:flex items-center gap-2 pl-8 pr-3 py-1.5 rounded-full text-sm bg-white/5 border border-theme text-theme-muted hover:text-theme-heading hover:border-emerald-accent/30 transition-colors text-left"
+          >
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none" />
+            <span className="truncate">Search pages…</span>
+            <kbd className="ml-auto hidden lg:inline text-[10px] font-mono px-1.5 py-0.5 rounded bg-white/5 border border-theme shrink-0">
+              Ctrl K
+            </kbd>
+          </button>
         )}
       </div>
 
-      {/* Right — workspace, bell, theme, user, sign out */}
-      <div className="flex items-center gap-2 shrink-0">
+      <div className="flex items-center gap-1.5 sm:gap-2 shrink-0">
+        {variant === 'portal' && (
+          <button
+            type="button"
+            className="md:hidden p-2 rounded-xl border border-theme text-theme-muted hover:text-theme-heading"
+            onClick={openSearch}
+            aria-label="Search pages"
+          >
+            <Search size={18} />
+          </button>
+        )}
+
         {variant === 'portal' && role === 'worker' && isPartner && (
           <span
-            className="flex items-center gap-1.5 px-3 py-1 rounded-full bg-gold-accent/15 text-gold-accent border border-gold-accent/30 text-[11px] font-black uppercase tracking-wider"
+            className="hidden sm:flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-gold-accent/15 text-gold-accent border border-gold-accent/30 text-[10px] font-black uppercase tracking-wider max-w-[140px]"
             title={partnerName ? `Partner — ${partnerName}` : 'Partner worker'}
           >
-            <Handshake size={13} />
-            Partner
-            {partnerName && <span className="hidden xl:inline font-semibold normal-case tracking-normal">· {partnerName}</span>}
+            <Handshake size={13} className="shrink-0" />
+            <span className="truncate">Partner</span>
           </span>
         )}
 
@@ -132,7 +192,7 @@ export default function TopNav({
               type="button"
               onClick={() => canSwitchWorkspace && setWorkspaceOpen((o) => !o)}
               disabled={!canSwitchWorkspace}
-              className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border border-theme transition-all ${
+              className={`flex items-center gap-1.5 px-2 py-1.5 rounded-lg border border-theme transition-all ${
                 canSwitchWorkspace
                   ? 'hover:border-gold-accent/40 hover:bg-white/[0.04]'
                   : 'cursor-default opacity-90'
@@ -184,7 +244,8 @@ export default function TopNav({
             type="button"
             className="md:hidden p-2 rounded-xl border border-theme"
             onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            aria-label="Toggle menu"
+            aria-label={mobileMenuOpen ? 'Close menu' : 'Open menu'}
+            aria-expanded={mobileMenuOpen}
           >
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
@@ -193,6 +254,7 @@ export default function TopNav({
           <Link
             href={notificationsHref}
             className="relative p-2 rounded-full hover:bg-white/5 transition-colors"
+            aria-label="Notifications"
           >
             <Bell size={18} className="text-theme-muted" />
             <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger rounded-full" />
@@ -201,8 +263,8 @@ export default function TopNav({
         <ThemeToggle variant="icon" />
         {variant === 'portal' && session && (
           <>
-            <div className="flex items-center gap-2.5 pl-2 ml-1 border-l border-theme">
-              <div className="hidden lg:flex flex-col leading-tight text-right">
+            <div className="hidden lg:flex items-center gap-2.5 pl-2 ml-1 border-l border-theme">
+              <div className="flex flex-col leading-tight text-right">
                 <span className="text-xs font-bold text-theme-heading truncate max-w-[140px]">{session.displayName}</span>
                 <span className="text-[10px] text-theme-muted">{role ? ROLE_LABELS[role] : ''}</span>
               </div>
@@ -210,10 +272,13 @@ export default function TopNav({
                 {initials}
               </span>
             </div>
+            <span className="lg:hidden w-8 h-8 rounded-full bg-emerald-accent/15 text-emerald-accent flex items-center justify-center text-[11px] font-black shrink-0">
+              {initials}
+            </span>
             <button
               type="button"
               onClick={logout}
-              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-bold text-brand-background bg-gold-accent hover:bg-gold-accent/90 active:scale-[0.98] transition-colors shrink-0"
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold text-brand-background bg-gold-accent hover:bg-gold-accent/90 active:scale-[0.98] transition-colors shrink-0"
             >
               <LogOut size={14} />
               <span className="hidden sm:inline">Sign out</span>
@@ -222,8 +287,13 @@ export default function TopNav({
         )}
       </div>
     </header>
+
+    {variant === 'portal' && (
+      <PageSearchModal open={searchOpen} onClose={() => setSearchOpen(false)} />
+    )}
+
     {variant === 'public' && mobileMenuOpen && (
-      <div className="md:hidden border-b border-theme bg-brand-card px-4 py-3 space-y-1 z-40 sticky top-14">
+      <div className="md:hidden border-b border-theme bg-brand-card px-3 py-3 space-y-1 z-40 sticky top-14">
         {PUBLIC_TOP_NAV.map((item) => {
           const active = pathname === item.href;
           return (
@@ -231,7 +301,7 @@ export default function TopNav({
               key={item.href}
               href={item.href}
               onClick={() => setMobileMenuOpen(false)}
-              className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold ${
+              className={`flex items-center gap-2 px-3 py-2.5 rounded-lg text-sm font-semibold ${
                 active ? 'bg-emerald-accent/10 text-emerald-accent' : 'text-theme-muted'
               }`}
             >

@@ -38,6 +38,7 @@ class PaymentTierResponse(SQLModel):
     is_active: bool
     description: Optional[str] = None
     hourly_equivalent: Optional[Decimal] = None
+    member_count: int = 0
     created_at: datetime
     updated_at: datetime
 
@@ -54,4 +55,9 @@ class PaymentTierAssignRequest(SQLModel):
 
 class PaymentTierAssignResponse(SQLModel):
     assigned: int
+    tier_name: str
+
+
+class PaymentTierUnassignResponse(SQLModel):
+    removed: int
     tier_name: str

@@ -11,6 +11,8 @@ import PendingRatingsModal from '@/components/quality/PendingRatingsModal';
 import WorkerQualityModal from '@/components/quality/WorkerQualityModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
+import { pickCurrentPeriod } from '@/lib/periods';
 
 interface Worker {
   id: string;
@@ -40,6 +42,13 @@ interface PendingWorker {
   country: string;
 }
 
+interface SessionHours {
+  worker_id: string;
+  start_time: string;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
+}
+
 function pts(raw: number | null | undefined, weight: number): string {
   if (raw == null) return '—';
   return (Number(raw) * weight).toFixed(1);
@@ -62,22 +71,30 @@ export default function AdminQualityPage() {
   const [error, setError] = useState<string | null>(null);
   const [recalculating, setRecalculating] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [sessionHours, setSessionHours] = useState<SessionHours[]>([]);
+
+  const [periodsReady, setPeriodsReady] = useState(false);
 
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     const suffix = periodId ? `?payroll_period_id=${periodId}` : '';
-    const leaderboardQuery = new URLSearchParams({ period: 'payroll', limit: '100' });
+    const leaderboardQuery = new URLSearchParams({
+      period: periodId ? 'payroll' : 'all',
+      limit: '100',
+    });
     if (periodId) leaderboardQuery.set('payroll_period_id', periodId);
     try {
-      const [board, periodRatings, periodPending] = await Promise.all([
+      const [board, periodRatings, periodPending, sessions] = await Promise.all([
         api.get<LeaderboardEntry[]>(`/leaderboard?${leaderboardQuery.toString()}`),
         api.get<Rating[]>(`/quality/ratings${suffix}`),
         api.get<PendingRatings>(`/quality/pending-ratings${suffix}`),
+        api.get<SessionHours[]>('/sessions?limit=1000&include_images=false'),
       ]);
       setEntries(board);
       setRatings(periodRatings);
       setPending(periodPending);
+      setSessionHours(sessions);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load quality data.');
     } finally {
@@ -86,16 +103,38 @@ export default function AdminQualityPage() {
   }, [periodId]);
 
   useEffect(() => {
-    api.get<PeriodFilterOption[]>('/payroll/periods').then(setPeriods).catch(() => {});
+    api.get<PeriodFilterOption[]>('/payroll/periods').then((list) => {
+      setPeriods(list);
+      setPeriodId(pickCurrentPeriod(list)?.id || '');
+      setPeriodsReady(true);
+    }).catch(() => setPeriodsReady(true));
     api.get<Worker[]>('/workers').then(setWorkers).catch(() => {});
   }, []);
-  useEffect(() => { load(); }, [load]);
+  useEffect(() => { if (periodsReady) void load(); }, [load, periodsReady]);
 
   const selectedPeriod = periods.find((period) => period.id === periodId);
+  const viewingAll = !periodId;
   const activePeriodId = periodId || pending?.payroll_period_id || '';
-  const activePeriodLabel = selectedPeriod?.label ?? pending?.period_label ?? entries[0]?.period_label ?? 'Latest working month';
+  const activePeriodLabel = viewingAll
+    ? 'All working months'
+    : (selectedPeriod?.label ?? pending?.period_label ?? entries[0]?.period_label ?? 'Latest working month');
   const entriesByWorker = useMemo(() => new Map(entries.map((entry) => [entry.worker_id, entry])), [entries]);
   const ratingsByWorker = useMemo(() => new Map(ratings.map((rating) => [rating.worker_id, rating])), [ratings]);
+  const hoursByWorker = useMemo(() => {
+    const start = selectedPeriod?.start_date.slice(0, 10);
+    const end = selectedPeriod?.end_date.slice(0, 10);
+    const scoped = start && end
+      ? sessionHours.filter((s) => {
+          const d = s.start_time.slice(0, 10);
+          return d >= start && d <= end;
+        })
+      : sessionHours;
+    const map = new Map<string, number>();
+    for (const s of scoped) {
+      map.set(s.worker_id, (map.get(s.worker_id) ?? 0) + enteredPayMinutes(s));
+    }
+    return map;
+  }, [sessionHours, selectedPeriod]);
   const selectedWorker = workers.find((worker) => worker.id === selectedWorkerId);
 
   async function recalculate() {
@@ -116,7 +155,6 @@ export default function AdminQualityPage() {
     <div>
       <PageHeader
         title="Quality"
-        description="Review performance and complete ratings for each working month."
         actions={
           <>
             <button type="button" onClick={recalculate} disabled={recalculating} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4 disabled:opacity-60">
@@ -135,7 +173,7 @@ export default function AdminQualityPage() {
       />
       <AdminSectionTabs tabs={QUALITY_TABS} />
 
-      <PeriodFilter periods={periods} value={periodId} onChange={setPeriodId} allowAll allLabel="All periods" label="Working month" />
+      <PeriodFilter periods={periods} value={periodId} onChange={setPeriodId} allowAll allLabel="All working months" label="Working month" />
 
       {message && (
         <div className="flex items-center gap-2 p-3 mb-4 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-xs">
@@ -147,9 +185,7 @@ export default function AdminQualityPage() {
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
           <div>
             <h2 className="text-sm font-bold text-theme-heading">Workers</h2>
-            <p className="text-xs text-theme-muted mt-0.5">
-              {activePeriodLabel} · scores on the list · eye opens admin rating edit
-            </p>
+            <p className="text-xs text-theme-muted mt-0.5">{activePeriodLabel}</p>
           </div>
           {pending && (
             <span className="text-xs text-theme-muted">{pending.rated_count}/{pending.total_workers} rated</span>
@@ -164,15 +200,16 @@ export default function AdminQualityPage() {
           <p className="p-5 text-sm text-theme-muted">No workers available.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[860px] text-left border-collapse">
+            <table className="w-full min-w-[960px] text-left border-collapse">
               <thead>
                 <tr className="border-b border-white/[0.06] bg-white/[0.02]">
                   <th className={`${thClass} text-left pl-5 pr-4`}>Worker</th>
+                  <th className={`${thClass} text-right`}>Hours</th>
                   <th className={`${thClass} text-right`}>Total</th>
                   <th className={`${thClass} text-right`}>Assessment /40</th>
                   <th className={`${thClass} text-right`}>Rating /20</th>
-                  <th className={`${thClass} text-right`}>Reliability /25</th>
-                  <th className={`${thClass} text-right`}>Consistency /15</th>
+                  <th className={`${thClass} text-right`}>Reliability /15</th>
+                  <th className={`${thClass} text-right`}>Consistency /25</th>
                   <th className={`${thClass} text-right`}>Admin 1–5</th>
                   <th className={`${thClass} text-center pr-5 w-14`} />
                 </tr>
@@ -187,6 +224,12 @@ export default function AdminQualityPage() {
                         <p className="text-sm font-medium text-theme-heading truncate max-w-[16rem]">{worker.display_name}</p>
                         <p className="text-xs text-theme-muted truncate">{worker.country || 'Unassigned'}</p>
                       </td>
+                      <td className={`${tdClass} text-right font-semibold text-theme-heading`}>
+                        {(() => {
+                          const mins = hoursByWorker.get(worker.id) ?? 0;
+                          return mins > 0 ? formatLoggedHours(mins) : '—';
+                        })()}
+                      </td>
                       <td className={`${tdClass} text-right font-semibold text-emerald-accent`}>
                         {entry ? Number(entry.composite_score).toFixed(1) : '—'}
                       </td>
@@ -197,13 +240,13 @@ export default function AdminQualityPage() {
                         {pts(entry?.rating_component, 0.2)}
                       </td>
                       <td className={`${tdClass} text-right text-theme-heading`}>
-                        {pts(entry?.reliability_component, 0.25)}
+                        {pts(entry?.reliability_component, 0.15)}
                       </td>
                       <td className={`${tdClass} text-right text-theme-heading`}>
-                        {pts(entry?.consistency_component, 0.15)}
+                        {pts(entry?.consistency_component, 0.25)}
                       </td>
-                      <td className={`${tdClass} text-right font-bold ${rating ? 'text-gold-accent' : 'text-theme-muted'}`}>
-                        {rating ? `${Number(rating.score)}/5` : '—'}
+                      <td className={`${tdClass} text-right font-bold ${!viewingAll && rating ? 'text-gold-accent' : 'text-theme-muted'}`}>
+                        {viewingAll ? '—' : (rating ? `${Number(rating.score)}/5` : '—')}
                       </td>
                       <td className="pr-5 py-3 text-center">
                         <button
@@ -225,7 +268,7 @@ export default function AdminQualityPage() {
       </section>
 
       <p className="text-xs text-theme-muted mt-3">
-        Composite = assessment/40 + rating/20 + reliability/25 + consistency/15. Eye edits admin rating only.
+        Composite = assessment/40 + rating/20 + reliability/15 + consistency/25. One current score per test (retake overwrites). Period view averages tests in that month; All working months averages every current test. Rating 1–5 is per month. Recalculate after score changes.
       </p>
 
       {pendingOpen && pending && (

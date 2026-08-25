@@ -74,11 +74,20 @@ html.light {
 }
 
 @layer base {
+  html {
+    overflow-x: clip;
+  }
+
   body {
     @apply antialiased transition-colors duration-300;
     color: var(--foreground);
     background-color: var(--background);
     min-height: 100vh;
+    overflow-x: clip;
+  }
+
+  body.nav-scroll-lock {
+    overflow: hidden;
   }
 
   html.light body {
@@ -392,6 +401,9 @@ html.light {
   .text-theme-body { color: var(--on-surface); }
   .text-theme-muted { color: var(--on-surface-variant); }
   .border-theme { border-color: var(--glass-border); }
+  .divide-theme > :not([hidden]) ~ :not([hidden]) {
+    border-color: var(--glass-border);
+  }
 
   /* Theme toggle control */
   .theme-toggle {

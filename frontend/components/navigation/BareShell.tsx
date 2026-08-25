@@ -6,11 +6,11 @@ import SiteFooter from '@/components/layout/SiteFooter';
 /** Minimal shell — no navigation, theme toggle top-right, footer at bottom */
 export default function BareShell({ children }: { children: React.ReactNode }) {
   return (
-    <div className="min-h-screen flex flex-col bg-brand-background relative overflow-hidden">
+    <div className="min-h-screen flex flex-col bg-brand-background relative overflow-x-clip">
       <div className="fixed top-4 right-4 z-50">
         <ThemeToggle variant="icon" />
       </div>
-      <div className="flex-1 flex flex-col">{children}</div>
+      <div className="flex-1 flex flex-col w-full min-w-0 px-4 sm:px-6">{children}</div>
       <SiteFooter />
     </div>
   );

@@ -10,8 +10,11 @@ import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSecti
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import NewWorkPeriodModal, { WorkPeriodCreated } from '@/components/payroll/NewWorkPeriodModal';
+import PeriodDatesEditor from '@/components/payroll/PeriodDatesEditor';
 import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
+import PeriodFilter from '@/components/platform/PeriodFilter';
 import { api } from '@/lib/api';
+import { coversToday, pickCurrentPeriod } from '@/lib/periods';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -27,6 +30,7 @@ interface WorkingPeriod {
   wallet_pushed_at: string | null;
   paid_at: string | null;
   created_at: string;
+  is_current?: boolean;
 }
 
 interface PeriodSummary {
@@ -80,19 +84,6 @@ function dateToYmd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-function fmtLongRange(start: string, end: string): string {
-  const a = ymdToDate(start);
-  const b = ymdToDate(end);
-  const opts: Intl.DateTimeFormatOptions = { month: 'long', day: 'numeric', year: 'numeric' };
-  return `${a.toLocaleDateString(undefined, opts)} → ${b.toLocaleDateString(undefined, opts)}`;
-}
-
-function coversToday(p: WorkingPeriod, todayYmd: string): boolean {
-  const s = isoDay(p.start_date);
-  const e = isoDay(p.end_date);
-  return s <= todayYmd && todayYmd <= e;
-}
-
 function aggregateSummaries(rows: PeriodSummary[], fallbackCurrency: string): PeriodStats {
   return {
     workers: rows.length,
@@ -143,6 +134,7 @@ export default function WorkingPeriodCalendarPage() {
   const [error, setError] = useState<string | null>(null);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [pinning, setPinning] = useState(false);
 
   const load = useCallback(async (preferId?: string | null) => {
     setLoading(true);
@@ -155,12 +147,7 @@ export default function WorkingPeriodCalendarPage() {
       );
       setPeriods(sorted);
 
-      const today = dateToYmd(new Date());
-      const preferred = preferId ? sorted.find((p) => p.id === preferId) : undefined;
-      const current = preferred
-        ?? sorted.find((p) => coversToday(p, today))
-        ?? sorted[sorted.length - 1]
-        ?? null;
+      const current = pickCurrentPeriod(sorted);
       setSelectedId((prev) => {
         if (preferId && sorted.some((p) => p.id === preferId)) return preferId;
         if (prev && sorted.some((p) => p.id === prev)) return prev;
@@ -212,11 +199,24 @@ export default function WorkingPeriodCalendarPage() {
     await load(created.id);
   }
 
+  async function setAsCurrent() {
+    if (!selected) return;
+    setPinning(true);
+    setError(null);
+    try {
+      await api.patch<WorkingPeriod>(`/payroll/periods/${selected.id}`, { is_current: true });
+      await load(selected.id);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to set current period.');
+    } finally {
+      setPinning(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Work Period Calendar"
-        description="Browse work periods on a calendar. Create new ones here; use Payroll to calculate and pay."
         actions={
           <button
             type="button"
@@ -248,6 +248,13 @@ export default function WorkingPeriodCalendarPage() {
         </div>
       ) : selected ? (
         <div className="space-y-5 max-w-4xl mx-auto">
+          <PeriodFilter
+            periods={periods}
+            value={selected.id}
+            onChange={setSelectedId}
+            label="Jump to work period"
+          />
+
           {/* Work period navigator: < previous · > next */}
           <div className="flex items-center gap-2 sm:gap-4">
             <button
@@ -271,9 +278,21 @@ export default function WorkingPeriodCalendarPage() {
                   period={selected}
                   size="lg"
                   trailing={
-                    <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${STATUS_STYLE[selected.status]}`}>
-                      {selected.status}
-                    </span>
+                    <>
+                      <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${STATUS_STYLE[selected.status]}`}>
+                        {selected.status}
+                      </span>
+                      {coversToday(selected, todayYmd) && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-emerald-accent/15 text-emerald-accent border-emerald-accent/30">
+                          Today
+                        </span>
+                      )}
+                      {selected.is_current && (
+                        <span className="text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border bg-gold-accent/15 text-gold-accent border-gold-accent/30">
+                          Current
+                        </span>
+                      )}
+                    </>
                   }
                   onRenamed={(label) => setPeriods((prev) =>
                     prev.map((p) => (p.id === selected.id ? { ...p, label } : p)))}
@@ -284,13 +303,28 @@ export default function WorkingPeriodCalendarPage() {
                   }}
                 />
               </div>
-              <p className="text-sm text-theme-muted mt-1">
-                {fmtLongRange(selected.start_date, selected.end_date)}
-              </p>
+              <div className="mt-1">
+                <PeriodDatesEditor
+                  period={selected}
+                  allPeriods={periods}
+                  onSaved={(dates) => setPeriods((prev) =>
+                    prev.map((p) => (p.id === selected.id ? { ...p, ...dates } : p)))}
+                />
+              </div>
               <p className="text-[11px] text-theme-muted/80 mt-0.5">
                 Work period {index + 1} of {periods.length}
-                {coversToday(selected, todayYmd) ? ' · current' : ''}
+                {selected.is_current ? ' · this is the current period for all finance screens' : ' · browsing only — calendar range on this page'}
               </p>
+              {!selected.is_current && (
+                <button
+                  type="button"
+                  disabled={pinning}
+                  onClick={() => void setAsCurrent()}
+                  className="mt-2 btn-secondary text-xs py-1.5 px-3 disabled:opacity-50"
+                >
+                  {pinning ? 'Saving…' : 'Set as current'}
+                </button>
+              )}
             </div>
 
             <button

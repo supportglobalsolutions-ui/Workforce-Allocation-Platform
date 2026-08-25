@@ -15,6 +15,7 @@ class PayrollPeriodBase(SQLModel):
     end_date:   date
     currency:   str
     status:     PayrollPeriodStatusEnum = PayrollPeriodStatusEnum.open
+    is_current: bool = False
 
 
 class PayrollPeriodCreate(SQLModel):
@@ -27,8 +28,11 @@ class PayrollPeriodCreate(SQLModel):
 
 
 class PayrollPeriodUpdate(SQLModel):
-    """Label is auto-generated on create; admins may rename it afterwards."""
+    """Label is auto-generated on create; admins may rename or retarget dates afterwards."""
     label:               Optional[str]                    = None
+    start_date:          Optional[date]                   = None
+    end_date:            Optional[date]                   = None
+    is_current:          Optional[bool]                   = None
     status:              Optional[PayrollPeriodStatusEnum] = None
     approved_by:         Optional[UUID]                   = None
     export_generated_at: Optional[datetime]               = None
@@ -139,6 +143,36 @@ class PayrollWorkerSummaryUpdate(SQLModel):
     fx_rate:        Optional[Decimal] = None
     admin_locked:   Optional[bool] = None
 
+    @field_validator(
+        "hours_logged",
+        "rate_per_hour",
+        "bonus",
+        "transfer_cost",
+        "external_cost",
+    )
+    @classmethod
+    def _non_negative_amounts(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is not None and (not value.is_finite() or value < 0):
+            raise ValueError("Payroll amounts must be finite and zero or greater")
+        return value
+
+    @field_validator("fx_rate")
+    @classmethod
+    def _positive_fx_rate(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is not None and (not value.is_finite() or value <= 0):
+            raise ValueError("FX rate must be a finite number greater than zero")
+        return value
+
+    @field_validator("local_currency")
+    @classmethod
+    def _valid_currency(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        return normalized
+
 
 class PayrollSummaryBulkItem(SQLModel):
     worker_id:      UUID
@@ -150,6 +184,36 @@ class PayrollSummaryBulkItem(SQLModel):
     local_currency: Optional[str] = None
     fx_rate:        Optional[Decimal] = None
     admin_locked:   Optional[bool] = True
+
+    @field_validator(
+        "hours_logged",
+        "rate_per_hour",
+        "bonus",
+        "transfer_cost",
+        "external_cost",
+    )
+    @classmethod
+    def _non_negative_amounts(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is not None and (not value.is_finite() or value < 0):
+            raise ValueError("Payroll amounts must be finite and zero or greater")
+        return value
+
+    @field_validator("fx_rate")
+    @classmethod
+    def _positive_fx_rate(cls, value: Optional[Decimal]) -> Optional[Decimal]:
+        if value is not None and (not value.is_finite() or value <= 0):
+            raise ValueError("FX rate must be a finite number greater than zero")
+        return value
+
+    @field_validator("local_currency")
+    @classmethod
+    def _valid_currency(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        normalized = value.strip().upper()
+        if len(normalized) != 3 or not normalized.isalpha():
+            raise ValueError("Currency must be a three-letter code")
+        return normalized
 
 
 class PayrollSummaryBulkRequest(SQLModel):
@@ -172,19 +236,15 @@ class LedgerSheetRow(SQLModel):
     summary: Optional[PayrollWorkerSummaryResponse] = None
 
 
-# ── CountryCostPool ────────────────────────────────────────────────────────────
+class PayrollHistoryRow(LedgerSheetRow):
+    """Read-only worker payslip row with its working-month context."""
+    period_id: UUID
+    period_label: str
+    period_currency: str
+    period_status: PayrollPeriodStatusEnum
+    period_start_date: date
+    period_end_date: date
 
-class CountryCostPoolUpsert(SQLModel):
-    country:             str
-    transfer_cost_total: Decimal = Decimal("0.00")
-    external_cost_total: Decimal = Decimal("0.00")
-    note:                Optional[str] = None
-
-
-class CountryCostPoolResponse(CountryCostPoolUpsert):
-    model_config = ConfigDict(from_attributes=True)
-    id:                UUID
-    payroll_period_id: UUID
 
 
 # ── Worker payroll overview (wallet / payments page) ───────────────────────────

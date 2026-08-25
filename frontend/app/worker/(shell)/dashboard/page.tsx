@@ -82,7 +82,7 @@ export default function WorkerDashboard() {
     <div className="max-w-6xl mx-auto space-y-8 pb-10">
       <PageHeader
         title="Dashboard"
-        description={`${totalSessions === 200 ? '200+' : totalSessions} sessions on record · Overview of your performance and quick access to daily tasks.`}
+        description={`${totalSessions === 200 ? '200+' : totalSessions} sessions on record`}
       />
 
       {me?.work_ready === false && (

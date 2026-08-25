@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertCircle, Check, Plus, Search, X } from 'lucide-react';
+import { AlertCircle, Check, Pencil, Plus, Search, Trash2, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -18,6 +18,7 @@ interface PaymentTier {
   is_active: boolean;
   description: string | null;
   hourly_equivalent: string | number | null;
+  member_count?: number;
 }
 
 interface WorkerLite {
@@ -28,11 +29,6 @@ interface WorkerLite {
   worker_type: string;
   partner_entity_id?: string | null;
   status: string;
-}
-
-interface CurrencyRow {
-  currency_code: string;
-  is_active: boolean;
 }
 
 const UNIT_LABELS: Record<TierUnit, string> = {
@@ -60,8 +56,12 @@ export default function PaymentTiersPage() {
   const [form, setForm] = useState(emptyForm);
   const [saving, setSaving] = useState(false);
   const [showCreate, setShowCreate] = useState(false);
+  const [editTier, setEditTier] = useState<PaymentTier | null>(null);
+  const [deleteTierTarget, setDeleteTierTarget] = useState<PaymentTier | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const [applyTierId, setApplyTierId] = useState<string | null>(null);
+  const [applyTab, setApplyTab] = useState<'pending' | 'members'>('pending');
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState<'all' | 'gs_registered' | 'partner_worker'>('all');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -87,9 +87,13 @@ export default function PaymentTiersPage() {
 
   useEffect(() => { load(); }, [load]);
 
-  const filteredWorkers = useMemo(() => {
+  const activeApplyTier = tiers.find((t) => t.id === applyTierId);
+
+  const pendingWorkers = useMemo(() => {
+    if (!activeApplyTier) return [];
     const q = search.trim().toLowerCase();
     return workers.filter((w) => {
+      if (w.pay_tier === activeApplyTier.name) return false;
       if (typeFilter !== 'all' && w.worker_type !== typeFilter) return false;
       if (!q) return true;
       return (
@@ -98,64 +102,104 @@ export default function PaymentTiersPage() {
         (w.pay_tier || '').toLowerCase().includes(q)
       );
     });
-  }, [workers, search, typeFilter]);
+  }, [workers, search, typeFilter, activeApplyTier]);
 
-  const createTier = async (e: React.FormEvent) => {
+  const memberWorkers = useMemo(() => {
+    if (!activeApplyTier) return [];
+    const q = search.trim().toLowerCase();
+    return workers.filter((w) => {
+      if (w.pay_tier !== activeApplyTier.name) return false;
+      if (typeFilter !== 'all' && w.worker_type !== typeFilter) return false;
+      if (!q) return true;
+      return w.display_name.toLowerCase().includes(q) || w.country.toLowerCase().includes(q);
+    });
+  }, [workers, search, typeFilter, activeApplyTier]);
+
+  const visibleList = applyTab === 'pending' ? pendingWorkers : memberWorkers;
+
+  const openCreate = () => {
+    setForm(emptyForm);
+    setEditTier(null);
+    setShowCreate(true);
+  };
+
+  const openEdit = (t: PaymentTier) => {
+    setEditTier(t);
+    setForm({
+      name: t.name,
+      currency: t.currency,
+      rate: String(t.rate),
+      unit: t.unit,
+      description: t.description || '',
+    });
+    setShowCreate(true);
+  };
+
+  const saveTier = async (e: React.FormEvent) => {
     e.preventDefault();
     setSaving(true);
     setError(null);
+    const payload = {
+      name: form.name.trim(),
+      currency: form.currency,
+      rate: Number(form.rate),
+      unit: form.unit,
+      description: form.description.trim() || null,
+    };
     try {
-      await api.post('/payment-tiers', {
-        name: form.name.trim(),
-        currency: form.currency,
-        rate: Number(form.rate),
-        unit: form.unit,
-        description: form.description.trim() || null,
-      });
+      if (editTier) {
+        await api.patch(`/payment-tiers/${editTier.id}`, payload);
+      } else {
+        await api.post('/payment-tiers', payload);
+      }
       setForm(emptyForm);
       setShowCreate(false);
+      setEditTier(null);
       load();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create tier');
+      setError(err instanceof Error ? err.message : 'Failed to save tier');
     } finally {
       setSaving(false);
     }
   };
 
-  const toggleAll = () => {
-    if (selected.size === filteredWorkers.length) {
-      setSelected(new Set());
-    } else {
-      setSelected(new Set(filteredWorkers.map((w) => w.id)));
+  const confirmDeleteTier = async () => {
+    if (!deleteTierTarget) return;
+    setDeleting(true);
+    setError(null);
+    try {
+      await api.delete(`/payment-tiers/${deleteTierTarget.id}`);
+      if (applyTierId === deleteTierTarget.id) setApplyTierId(null);
+      setDeleteTierTarget(null);
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to delete tier');
+    } finally {
+      setDeleting(false);
     }
   };
 
-  const runAssign = async (mode: 'selected' | 'filtered' | 'all') => {
+  const toggleAll = () => {
+    if (selected.size === visibleList.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(visibleList.map((w) => w.id)));
+    }
+  };
+
+  const runAssign = async () => {
     if (!applyTierId) return;
+    if (!selected.size) {
+      setError('Select at least one worker.');
+      return;
+    }
     setApplying(true);
     setApplyMsg(null);
     setError(null);
     try {
-      let body: Record<string, unknown>;
-      if (mode === 'all') {
-        body = { apply_all_active: true };
-      } else if (mode === 'filtered') {
-        body = {
-          worker_ids: filteredWorkers.map((w) => w.id),
-          ...(typeFilter !== 'all' ? { worker_type: typeFilter } : {}),
-          ...(search.trim() ? { search: search.trim() } : {}),
-        };
-      } else {
-        if (!selected.size) {
-          setError('Select at least one worker.');
-          setApplying(false);
-          return;
-        }
-        body = { worker_ids: Array.from(selected) };
-      }
       const res = await api.post<{ assigned: number; tier_name: string }>(
         `/payment-tiers/${applyTierId}/assign`,
-        body,
+        { worker_ids: Array.from(selected) },
       );
       setApplyMsg(`Assigned “${res.tier_name}” to ${res.assigned} worker${res.assigned === 1 ? '' : 's'}.`);
       setSelected(new Set());
@@ -167,15 +211,36 @@ export default function PaymentTiersPage() {
     }
   };
 
-  const activeApplyTier = tiers.find((t) => t.id === applyTierId);
+  const runUnassign = async () => {
+    if (!applyTierId) return;
+    if (!selected.size) {
+      setError('Select at least one member to remove.');
+      return;
+    }
+    setApplying(true);
+    setApplyMsg(null);
+    setError(null);
+    try {
+      const res = await api.post<{ removed: number; tier_name: string }>(
+        `/payment-tiers/${applyTierId}/unassign`,
+        { worker_ids: Array.from(selected) },
+      );
+      setApplyMsg(`Removed ${res.removed} worker${res.removed === 1 ? '' : 's'} from “${res.tier_name}”.`);
+      setSelected(new Set());
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Remove failed');
+    } finally {
+      setApplying(false);
+    }
+  };
 
   return (
     <div>
       <PageHeader
         title="Payment Tiers"
-        description="Create named rates (currency, amount, per hour/day/week/month), then apply to workers with search and filters."
         actions={
-          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2">
+          <button type="button" onClick={openCreate} className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2">
             <Plus size={14} /> New tier
           </button>
         }
@@ -198,20 +263,21 @@ export default function PaymentTiersPage() {
       ) : (
         <div className="space-y-6">
           <div className="glass-panel overflow-x-auto">
-            <table className="w-full text-sm min-w-[640px]">
+            <table className="w-full text-sm min-w-[760px]">
               <thead>
                 <tr className="border-b border-white/[0.06]">
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Name</th>
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Rate</th>
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Unit</th>
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Hourly equiv.</th>
+                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Members</th>
                   <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Status</th>
                   <th className="px-4 py-3" />
                 </tr>
               </thead>
               <tbody>
                 {tiers.length === 0 ? (
-                  <tr><td colSpan={6} className="px-4 py-10 text-center text-theme-muted">No payment tiers yet.</td></tr>
+                  <tr><td colSpan={7} className="px-4 py-10 text-center text-theme-muted">No payment tiers yet.</td></tr>
                 ) : tiers.map((t) => (
                   <tr key={t.id} className="border-b border-white/[0.04] last:border-0">
                     <td className="px-4 py-3 text-white font-medium">{t.name}</td>
@@ -220,6 +286,7 @@ export default function PaymentTiersPage() {
                     <td className="px-4 py-3 text-theme-muted">
                       {t.hourly_equivalent != null ? `${Number(t.hourly_equivalent).toFixed(2)} /hr` : '—'}
                     </td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white">{t.member_count ?? 0}</td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
                         t.is_active ? 'text-emerald-accent border-emerald-accent/30 bg-emerald-accent/10' : 'text-theme-muted border-white/10'
@@ -227,14 +294,20 @@ export default function PaymentTiersPage() {
                         {t.is_active ? 'Active' : 'Inactive'}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-right">
+                    <td className="px-4 py-3 text-right whitespace-nowrap">
+                      <button type="button" onClick={() => openEdit(t)} className="btn-secondary text-xs py-1.5 px-2 mr-1 inline-flex items-center gap-1">
+                        <Pencil size={12} /> Edit
+                      </button>
                       <button
                         type="button"
                         disabled={!t.is_active}
-                        onClick={() => { setApplyTierId(t.id); setApplyMsg(null); }}
-                        className="btn-secondary text-xs py-1.5 px-3"
+                        onClick={() => { setApplyTierId(t.id); setApplyTab('pending'); setSelected(new Set()); setApplyMsg(null); }}
+                        className="btn-secondary text-xs py-1.5 px-3 mr-1"
                       >
                         Apply
+                      </button>
+                      <button type="button" onClick={() => setDeleteTierTarget(t)} className="btn-secondary text-xs py-1.5 px-2 inline-flex items-center gap-1 text-danger">
+                        <Trash2 size={12} /> Delete
                       </button>
                     </td>
                   </tr>
@@ -249,11 +322,36 @@ export default function PaymentTiersPage() {
                 <div>
                   <h2 className="text-sm font-bold text-theme-heading">Apply “{activeApplyTier.name}”</h2>
                   <p className="text-xs text-theme-muted mt-0.5">
-                    Search, filter GS / partners, select individuals, or apply to the filtered set.
+                    {workers.filter((w) => w.pay_tier === activeApplyTier.name).length} on this tier · pending list is people not yet attached
                   </p>
                 </div>
                 <button type="button" onClick={() => setApplyTierId(null)} className="text-theme-muted hover:text-white">
                   <X size={16} />
+                </button>
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => { setApplyTab('pending'); setSelected(new Set()); }}
+                  className={`text-xs py-1.5 px-3 rounded-lg border ${
+                    applyTab === 'pending'
+                      ? 'border-emerald-accent/40 bg-emerald-accent/10 text-emerald-accent'
+                      : 'border-white/10 text-theme-muted'
+                  }`}
+                >
+                  Pending ({pendingWorkers.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setApplyTab('members'); setSelected(new Set()); }}
+                  className={`text-xs py-1.5 px-3 rounded-lg border ${
+                    applyTab === 'members'
+                      ? 'border-emerald-accent/40 bg-emerald-accent/10 text-emerald-accent'
+                      : 'border-white/10 text-theme-muted'
+                  }`}
+                >
+                  On this tier ({memberWorkers.length})
                 </button>
               </div>
 
@@ -279,15 +377,15 @@ export default function PaymentTiersPage() {
               </div>
 
               <div className="flex flex-wrap gap-2">
-                <button type="button" disabled={applying} onClick={() => runAssign('selected')} className="btn-primary text-xs py-2 px-3">
-                  Apply to selected ({selected.size})
-                </button>
-                <button type="button" disabled={applying} onClick={() => runAssign('filtered')} className="btn-secondary text-xs py-2 px-3">
-                  Apply to filtered ({filteredWorkers.length})
-                </button>
-                <button type="button" disabled={applying} onClick={() => runAssign('all')} className="btn-secondary text-xs py-2 px-3">
-                  Apply to all active
-                </button>
+                {applyTab === 'pending' ? (
+                  <button type="button" disabled={applying} onClick={() => void runAssign()} className="btn-primary text-xs py-2 px-3">
+                    Apply to selected ({selected.size})
+                  </button>
+                ) : (
+                  <button type="button" disabled={applying} onClick={() => void runUnassign()} className="btn-primary text-xs py-2 px-3">
+                    Remove selected ({selected.size})
+                  </button>
+                )}
               </div>
 
               <div className="max-h-72 overflow-y-auto rounded-xl border border-white/10">
@@ -295,7 +393,7 @@ export default function PaymentTiersPage() {
                   <thead className="sticky top-0 bg-brand-surface-lowest">
                     <tr className="border-b border-white/[0.06]">
                       <th className="px-3 py-2 text-left">
-                        <input type="checkbox" checked={selected.size === filteredWorkers.length && filteredWorkers.length > 0} onChange={toggleAll} />
+                        <input type="checkbox" checked={selected.size === visibleList.length && visibleList.length > 0} onChange={toggleAll} />
                       </th>
                       <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">Worker</th>
                       <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">Type</th>
@@ -303,7 +401,13 @@ export default function PaymentTiersPage() {
                     </tr>
                   </thead>
                   <tbody>
-                    {filteredWorkers.map((w) => (
+                    {visibleList.length === 0 ? (
+                      <tr>
+                        <td colSpan={4} className="px-3 py-8 text-center text-theme-muted text-xs">
+                          {applyTab === 'pending' ? 'Everyone is already on this tier.' : 'No members on this tier yet.'}
+                        </td>
+                      </tr>
+                    ) : visibleList.map((w) => (
                       <tr key={w.id} className="border-b border-white/[0.04]">
                         <td className="px-3 py-2">
                           <input
@@ -335,15 +439,15 @@ export default function PaymentTiersPage() {
       )}
 
       {showCreate && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={(e) => { if (e.target === e.currentTarget) setShowCreate(false); }}>
-          <form onSubmit={createTier} className="glass-panel w-full max-w-md p-5 space-y-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={(e) => { if (e.target === e.currentTarget) { setShowCreate(false); setEditTier(null); } }}>
+          <form onSubmit={saveTier} className="glass-panel w-full max-w-md p-5 space-y-4">
             <div className="flex justify-between items-start">
-              <h2 className="text-base font-bold text-white">New payment tier</h2>
-              <button type="button" onClick={() => setShowCreate(false)} className="text-theme-muted hover:text-white"><X size={16} /></button>
+              <h2 className="text-base font-bold text-white">{editTier ? 'Edit payment tier' : 'New payment tier'}</h2>
+              <button type="button" onClick={() => { setShowCreate(false); setEditTier(null); }} className="text-theme-muted hover:text-white"><X size={16} /></button>
             </div>
             <label className="block">
               <span className="text-[10px] font-bold uppercase text-theme-muted">Name *</span>
-              <input required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. 4hrs per hour" className="input-field mt-1" />
+              <input required value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. 8" className="input-field mt-1" />
             </label>
             <div className="grid grid-cols-2 gap-3">
               <label className="block">
@@ -365,7 +469,7 @@ export default function PaymentTiersPage() {
                 ))}
               </select>
               <p className="text-[10px] text-theme-muted mt-1">
-                Day÷8, week÷40, month÷160 convert to the hourly rate used in payroll.
+                Changing name, rate, or currency updates every worker on this tier.
               </p>
             </label>
             <label className="block">
@@ -373,10 +477,61 @@ export default function PaymentTiersPage() {
               <input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} className="input-field mt-1" />
             </label>
             <div className="flex justify-end gap-2 pt-2">
-              <button type="button" onClick={() => setShowCreate(false)} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-              <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4">{saving ? 'Saving…' : 'Create'}</button>
+              <button type="button" onClick={() => { setShowCreate(false); setEditTier(null); }} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+              <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4">{saving ? 'Saving…' : (editTier ? 'Save' : 'Create')}</button>
             </div>
           </form>
+        </div>
+      )}
+
+      {deleteTierTarget && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-md p-4"
+          onClick={(e) => { if (e.target === e.currentTarget && !deleting) setDeleteTierTarget(null); }}
+        >
+          <div className="glass-panel w-full max-w-md p-5 space-y-4 border border-danger/20">
+            <div className="flex justify-between items-start gap-3">
+              <div className="flex items-start gap-3">
+                <span className="mt-0.5 inline-flex h-10 w-10 shrink-0 items-center justify-center rounded-xl border border-danger/40 bg-danger/15 text-danger">
+                  <Trash2 size={16} />
+                </span>
+                <div>
+                  <h2 className="text-base font-bold text-white">Delete this tier?</h2>
+                  <p className="text-xs text-theme-muted mt-0.5">This cannot be undone from this screen.</p>
+                </div>
+              </div>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => setDeleteTierTarget(null)}
+                className="text-theme-muted hover:text-white disabled:opacity-50"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <p className="text-sm text-theme-heading">
+              Delete <span className="font-semibold text-white">“{deleteTierTarget.name}”</span>
+              {deleteTierTarget.member_count ? ` (${deleteTierTarget.member_count} member${deleteTierTarget.member_count === 1 ? '' : 's'})` : ''}?
+            </p>
+            <ul className="text-xs text-theme-muted space-y-1 list-disc pl-4">
+              <li>People on this tier become unassigned.</li>
+              <li>Pay them again after you assign another tier.</li>
+            </ul>
+            <div className="flex justify-end gap-2 pt-1">
+              <button type="button" disabled={deleting} onClick={() => setDeleteTierTarget(null)} className="btn-secondary text-sm py-2 px-4">
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={deleting}
+                onClick={() => void confirmDeleteTier()}
+                className="text-sm py-2 px-4 inline-flex items-center gap-2 rounded-xl font-semibold bg-danger/90 text-white hover:bg-danger disabled:opacity-50"
+              >
+                {deleting ? <SpinningDots size="sm" /> : <Trash2 size={14} />}
+                {deleting ? 'Deleting…' : 'Yes, delete tier'}
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

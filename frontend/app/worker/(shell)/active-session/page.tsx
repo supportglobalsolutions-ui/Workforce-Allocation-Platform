@@ -95,7 +95,6 @@ export default function ActiveSessionPage() {
       <div className="max-w-3xl">
         <PageHeader
           title="Active session"
-          description="Current RDP work session."
         />
         <div className="glass-panel p-8 text-center">
           <p className="text-brand-on-surface-variant mb-4">You don&apos;t have an active session.</p>
@@ -109,7 +108,6 @@ export default function ActiveSessionPage() {
     <div className="max-w-3xl">
       <PageHeader
         title="Active session"
-        description="Current RDP work session."
         actions={<StatusBadge status="active" label="Live" />}
       />
       <div className="grid lg:grid-cols-2 gap-6">

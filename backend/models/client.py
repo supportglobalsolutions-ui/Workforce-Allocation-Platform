@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, Text, text
+from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -72,6 +72,7 @@ class Client(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[Client.owner_partner_entity_id]"},
     )
     revenue_agreements: list["ClientRevenueAgreement"] = Relationship(back_populates="client")
+    period_earnings: list["ClientPeriodEarning"] = Relationship(back_populates="client")
     rdp_resources: list["RDPResource"] = Relationship(back_populates="client")
     sessions: list["Session"] = Relationship(back_populates="client")
 
@@ -105,3 +106,40 @@ class ClientRevenueAgreement(SQLModel, table=True):
     )
 
     client: Optional["Client"] = Relationship(back_populates="revenue_agreements")
+
+
+class ClientPeriodEarning(SQLModel, table=True):
+    """Admin-entered gross client/platform earnings for one payroll period."""
+
+    __tablename__ = "client_period_earnings"
+    __table_args__ = (
+        UniqueConstraint(
+            "client_id",
+            "payroll_period_id",
+            name="uq_client_period_earnings_client_period",
+        ),
+        CheckConstraint("amount >= 0", name="ck_client_period_earnings_amount_non_negative"),
+    )
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    client_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id"), nullable=False, index=True),
+    )
+    payroll_period_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=False, index=True),
+    )
+    amount: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+
+    client: Optional["Client"] = Relationship(back_populates="period_earnings")

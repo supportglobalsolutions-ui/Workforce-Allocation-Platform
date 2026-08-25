@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, Field as PydField
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
@@ -15,9 +16,45 @@ from models.partner import PartnerEntity
 from models.rdp_machine import RDPResource
 from models.worker import Worker
 from schemas.worker import WorkerAdminUpdate, WorkerCreate, WorkerResponse, WorkerUpdate
-from .deps import apply_update, get_worker_for_user
+from services.admin_otp import (
+    PURPOSE_DELETE_WORKERS,
+    bulk_delete_target_id,
+    issue_otp,
+    verify_otp,
+)
+from services.audit_service import record_audit
+from services.email_resend import render_otp_html, render_otp_text
+from services.security_risk import (
+    BULK_HARD_MAX,
+    BULK_OTP_THRESHOLD,
+    after_destructive_bulk,
+)
+from services.worker_purge import purge_workers
+from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
+
+
+class WorkerBulkDeleteRequest(BaseModel):
+    worker_ids: list[UUID] = PydField(min_length=1)
+
+
+class WorkerBulkDeleteConfirm(BaseModel):
+    worker_ids: list[UUID] = PydField(min_length=1)
+    challenge_id: UUID | None = None
+    code: str | None = None
+
+
+def _normalize_worker_ids(ids: list[UUID]) -> list[UUID]:
+    unique = list(dict.fromkeys(ids))
+    if not unique:
+        raise HTTPException(status_code=400, detail="Select at least one worker.")
+    if len(unique) > BULK_HARD_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete more than {BULK_HARD_MAX} workers at once.",
+        )
+    return unique
 
 
 def _enrich_worker(db: Session, worker: Worker) -> WorkerResponse:
@@ -111,6 +148,92 @@ def list_workers(
         .order_by(Worker.display_name)
     ).all()
     return [_enrich_worker(db, w) for w in workers]
+
+
+# ── Bulk delete (registered before /{worker_id}) ────────────────────────────────
+
+@router.post("/delete/request-otp")
+def request_workers_delete_otp(
+    body: WorkerBulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    ids = _normalize_worker_ids(body.worker_ids)
+    if len(ids) <= BULK_OTP_THRESHOLD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"OTP is only required when deleting more than {BULK_OTP_THRESHOLD} workers.",
+        )
+    admin = get_admin_user(db, current_user)
+    target = bulk_delete_target_id(PURPOSE_DELETE_WORKERS, ids)
+    html = render_otp_html(
+        title="Confirm worker deletion",
+        intro=(
+            f"An administrator asked to permanently delete <strong>{len(ids)}</strong> workers. "
+            "Enter this code in the platform to continue."
+        ),
+        warning="This cannot be undone. Sessions, wallets, and payslip rows for these workers will be removed.",
+    )
+    text = render_otp_text(
+        title="Confirm worker deletion",
+        intro=f"An administrator asked to permanently delete {len(ids)} workers.",
+        warning="This cannot be undone.",
+    )
+    payload = issue_otp(
+        db,
+        purpose=PURPOSE_DELETE_WORKERS,
+        target_id=target,
+        subject=f"Confirmation code — delete {len(ids)} workers",
+        html=html,
+        text=text,
+        admin=admin,
+    )
+    payload["count"] = len(ids)
+    return payload
+
+
+@router.post("/delete/confirm")
+def confirm_workers_delete(
+    body: WorkerBulkDeleteConfirm,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    ids = _normalize_worker_ids(body.worker_ids)
+    admin = get_admin_user(db, current_user)
+
+    if len(ids) > BULK_OTP_THRESHOLD:
+        if not body.challenge_id or not body.code:
+            raise HTTPException(status_code=400, detail="Confirmation code is required for this delete.")
+        verify_otp(
+            db,
+            challenge_id=body.challenge_id,
+            purpose=PURPOSE_DELETE_WORKERS,
+            target_id=bulk_delete_target_id(PURPOSE_DELETE_WORKERS, ids),
+            code=body.code,
+        )
+
+    result = purge_workers(db, ids)
+    deleted_ids = [UUID(row["id"]) for row in result["deleted"]]
+
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="workers.bulk_deleted",
+        target_type="worker",
+        target_id=admin.id,
+        previous_value={"workers": result["deleted"]},
+        reason_note=f"Deleted {result['deleted_count']} worker(s)",
+    )
+    after_destructive_bulk(
+        db,
+        admin_user_id=admin.id,
+        admin_email=admin.email,
+        kind="workers",
+        count=result["deleted_count"],
+        ids=deleted_ids,
+    )
+    db.commit()
+    return result
 
 
 @router.get("/{worker_id}", response_model=WorkerResponse)

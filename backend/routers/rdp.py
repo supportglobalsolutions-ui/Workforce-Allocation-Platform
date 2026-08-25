@@ -18,6 +18,7 @@ from core.database import engine, get_db
 from core.firebase_admin import verify_firebase_token
 from core.guacamole import GuacamoleClient
 from core.permissions import require_admin, require_user
+from core.rate_limit import check_rate_limit
 from core.redis import get_redis
 from models.admin_users import AdminUser
 from models.allocation import Allocation
@@ -25,6 +26,7 @@ from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, Ses
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.worker import Worker
+from models.client import Client
 from schemas.rdp import (
     RDPResourceCreate,
     RDPResourceResponse,
@@ -40,7 +42,9 @@ from services.rdp_state import (
     transition_rdp_status,
     validate_worker_may_claim,
 )
-from .deps import apply_update, get_worker_for_user
+from services.client_owners import client_owner_name
+from services.audit_service import record_audit
+from .deps import apply_update, get_admin_user, get_worker_for_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -48,6 +52,87 @@ router = APIRouter()
 
 def _utc_now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _request_ip(request: Request | None) -> str | None:
+    if request is None:
+        return None
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        return forwarded.split(",")[0].strip()[:45]
+    if request.client:
+        return request.client.host
+    return None
+
+
+def _record_rdp_login(
+    db: Session,
+    *,
+    worker: Worker,
+    resource: RDPResource,
+    session_id: UUID,
+    ip_address: str | None = None,
+) -> None:
+    record_audit(
+        db,
+        action="rdp.logged_in",
+        target_type="rdp_access",
+        target_id=resource.id,
+        new_value={
+            "worker_id": str(worker.id),
+            "worker_name": worker.display_name,
+            "rdp_id": str(resource.id),
+            "rdp_nickname": resource.nickname,
+            "session_id": str(session_id),
+            "at": _utc_now().isoformat(),
+        },
+        ip_address=ip_address,
+    )
+
+
+def _record_rdp_logout(
+    db: Session,
+    *,
+    worker: Worker | None,
+    resource: RDPResource,
+    session_ids: list[str],
+    ip_address: str | None = None,
+    initiated_by: str = "worker",
+    admin_id: UUID | None = None,
+) -> None:
+    if worker is None:
+        return
+    record_audit(
+        db,
+        actor_id=admin_id,
+        action="rdp.logged_out",
+        target_type="rdp_access",
+        target_id=resource.id,
+        new_value={
+            "worker_id": str(worker.id),
+            "worker_name": worker.display_name,
+            "rdp_id": str(resource.id),
+            "rdp_nickname": resource.nickname,
+            "session_ids": session_ids,
+            "initiated_by": initiated_by,
+            "at": _utc_now().isoformat(),
+        },
+        ip_address=ip_address,
+    )
+
+
+def _rdp_response(db: Session, resource: RDPResource) -> RDPResourceResponse:
+    resp = RDPResourceResponse.model_validate(resource)
+    if resource.assigned_worker_id:
+        worker = db.get(Worker, resource.assigned_worker_id)
+        resp.assigned_worker_name = worker.display_name if worker else None
+    if resource.client_id:
+        client = db.get(Client, resource.client_id)
+        if client:
+            resp.client_name = client.name
+            resp.owner_type = client.owner_type.value if client.owner_type else None
+            resp.owner_name = client_owner_name(db, client)
+    return resp
 
 
 def _disconnect_guacamole(redis_client: redis_lib.Redis, resource: RDPResource) -> bool:
@@ -251,6 +336,9 @@ def _end_rdp_connection(
     worker_id: UUID | None = None,
     require_owner: bool = True,
     release_reason: ReleaseReasonEnum = ReleaseReasonEnum.completed,
+    ip_address: str | None = None,
+    initiated_by: str = "worker",
+    admin_id: UUID | None = None,
 ) -> dict:
     db.refresh(resource)
     open_allocs = db.exec(
@@ -259,6 +347,14 @@ def _end_rdp_connection(
             Allocation.released_at.is_(None),
         )
     ).all()
+
+    def _logout_worker() -> Worker | None:
+        logout_worker_id = worker_id
+        if logout_worker_id is None and open_allocs:
+            logout_worker_id = open_allocs[0].worker_id
+        if logout_worker_id is None:
+            logout_worker_id = resource.assigned_worker_id
+        return db.get(Worker, logout_worker_id) if logout_worker_id else None
 
     # Sync status with an open allocation (partial claim/release drift).
     if open_allocs:
@@ -288,6 +384,16 @@ def _end_rdp_connection(
                 detail="You do not have an open claim on this machine",
             )
         closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
+        logout_worker = _logout_worker()
+        _record_rdp_logout(
+            db,
+            worker=logout_worker,
+            resource=resource,
+            session_ids=[str(sid) for sid in closed_session_ids],
+            ip_address=ip_address,
+            initiated_by=initiated_by,
+            admin_id=admin_id,
+        )
         now = _utc_now()
         resource.status = RdpStatusEnum.online_free
         resource.assigned_worker_id = None
@@ -335,6 +441,16 @@ def _end_rdp_connection(
         db.add(alloc)
 
     closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
+    logout_worker = _logout_worker()
+    _record_rdp_logout(
+        db,
+        worker=logout_worker,
+        resource=resource,
+        session_ids=[str(sid) for sid in closed_session_ids],
+        ip_address=ip_address,
+        initiated_by=initiated_by,
+        admin_id=admin_id,
+    )
 
     resource.status = RdpStatusEnum.online_free
     resource.assigned_worker_id = None
@@ -409,12 +525,13 @@ def list_rdp_resources(
     db: Session = Depends(get_db),
     _: dict = Depends(require_user),
 ):
-    return db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()
+    return [_rdp_response(db, resource) for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()]
 
 
 @router.api_route("/tunnel", methods=["GET", "POST"])
 async def proxy_guacamole_tunnel(
     request: Request,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
     """
@@ -422,7 +539,20 @@ async def proxy_guacamole_tunnel(
     Streams responses so remote-desktop frames arrive in real time.
     Auth: Firebase Bearer token (sent by the viewer as an extra tunnel header).
     """
-    _ = current_user
+    is_admin = current_user.get("role") in {"admin", "super_admin"}
+    if not is_admin:
+        worker = get_worker_for_user(db, current_user)
+        open_alloc = db.exec(
+            select(Allocation).where(
+                Allocation.worker_id == worker.id,
+                Allocation.released_at.is_(None),
+            )
+        ).first()
+        if not open_alloc:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="No open RDP claim — use the authenticated WebSocket tunnel",
+            )
     guac_base = settings.GUACAMOLE_URL.rstrip("/")
     query = str(request.url.query)
     if query:
@@ -496,7 +626,7 @@ def get_rdp_resource(
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    return resource
+    return _rdp_response(db, resource)
 
 
 @router.post("", response_model=RDPResourceResponse, status_code=status.HTTP_201_CREATED)
@@ -557,6 +687,7 @@ def update_rdp_resource(
 @router.post("/{rdp_id}/claim", status_code=status.HTTP_201_CREATED)
 def claim_rdp_resource(
     rdp_id: UUID,
+    request: Request,
     background_tasks: BackgroundTasks,
     shift_id: UUID | None = None,
     db: Session = Depends(get_db),
@@ -567,6 +698,7 @@ def claim_rdp_resource(
     Claim an online-free RDP machine.
     Creates allocation + work session; returns proxied viewer path for in-app embed.
     """
+    check_rate_limit(request, scope="rdp-claim", limit=20, window_seconds=3600)
     worker = get_worker_for_user(db, current_user)
     if not worker.work_ready:
         raise HTTPException(
@@ -666,6 +798,14 @@ def claim_rdp_resource(
         db.flush()
         work_session.allocation_id = allocation.id
         db.add(work_session)
+        db.flush()
+        _record_rdp_login(
+            db,
+            worker=worker,
+            resource=resource,
+            session_id=work_session.id,
+            ip_address=_request_ip(request),
+        )
         db.commit()
         db.refresh(allocation)
         db.refresh(work_session)
@@ -690,6 +830,7 @@ def claim_rdp_resource(
 @router.post("/{rdp_id}/end-connection")
 def end_rdp_connection(
     rdp_id: UUID,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
@@ -703,12 +844,18 @@ def end_rdp_connection(
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
         is_admin = current_user.get("role") in {"admin", "super_admin"}
+        admin_id = None
+        if is_admin:
+            admin_id = get_admin_user(db, current_user).id
         result = _end_rdp_connection(
             db,
             resource,
             redis_client,
             worker_id=worker.id,
             require_owner=not is_admin,
+            ip_address=_request_ip(request),
+            initiated_by="admin" if is_admin else "worker",
+            admin_id=admin_id,
         )
 
         background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
@@ -730,13 +877,14 @@ def end_rdp_connection(
 @router.post("/{rdp_id}/release")
 def release_rdp_resource(
     rdp_id: UUID,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
     redis_client: redis_lib.Redis = Depends(get_redis),
 ):
     """Alias for end-connection (backward compatible)."""
-    return end_rdp_connection(rdp_id, background_tasks, db, current_user, redis_client)
+    return end_rdp_connection(rdp_id, request, background_tasks, db, current_user, redis_client)
 
 
 @router.post("/{rdp_id}/lock")
@@ -799,6 +947,7 @@ def maintenance_rdp_resource(
 def force_release_rdp_resource(
     rdp_id: UUID,
     body: RdpForceReleaseBody,
+    request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
@@ -814,6 +963,7 @@ def force_release_rdp_resource(
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
+    admin = get_admin_user(db, current_user)
     result = _end_rdp_connection(
         db,
         resource,
@@ -821,6 +971,9 @@ def force_release_rdp_resource(
         worker_id=None,
         require_owner=False,
         release_reason=ReleaseReasonEnum.force_released,
+        ip_address=_request_ip(request),
+        initiated_by="admin",
+        admin_id=admin.id,
     )
     db.refresh(resource)
     note = f"Force release: {body.reason.strip()}"

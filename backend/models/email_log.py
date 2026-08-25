@@ -42,6 +42,10 @@ class EmailLog(SQLModel, table=True):
     )
     # Append-only [{"type": "delivered", "at": "..."}] timeline, newest last.
     events: Optional[list[dict[str, Any]]] = Field(default=None, sa_column=Column(JSONB, nullable=True))
+    # Only populated for failed, non-sensitive direct sends. It lets an admin
+    # retry the exact message without keeping successful email bodies forever.
+    # Queue-backed messages are rebuilt from their EmailJob instead.
+    retry_payload: Optional[dict[str, Any]] = Field(default=None, sa_column=Column(JSONB, nullable=True))
 
     email_job_id: Optional[uuid.UUID] = Field(
         default=None,

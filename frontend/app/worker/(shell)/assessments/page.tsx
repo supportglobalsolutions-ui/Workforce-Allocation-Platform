@@ -21,6 +21,7 @@ interface AvailableAssessment {
   best_score_pct: number | null;
   passed: boolean;
   attempts: number;
+  can_attempt?: boolean;
 }
 
 interface TakeQuestion {
@@ -521,7 +522,6 @@ export default function AssessmentCenterPage() {
     <div>
       <PageHeader
         title="Assessment Center"
-        description="MCQ tests and graded task assessments — results feed your composite quality score."
       />
 
       {/* Tabs */}
@@ -603,9 +603,10 @@ export default function AssessmentCenterPage() {
                 <button
                   type="button"
                   onClick={() => setTaking(a)}
-                  className={`mt-auto text-sm py-2 ${a.passed ? 'btn-secondary' : 'btn-primary'}`}
+                  disabled={a.can_attempt === false}
+                  className={`mt-auto text-sm py-2 disabled:opacity-40 ${a.passed ? 'btn-secondary' : 'btn-primary'}`}
                 >
-                  {a.attempts > 0 ? 'Retake assessment' : 'Take assessment'}
+                  {a.can_attempt === false ? 'No attempts left' : a.attempts > 0 ? 'Retake assessment' : 'Take assessment'}
                 </button>
               </div>
             ))}

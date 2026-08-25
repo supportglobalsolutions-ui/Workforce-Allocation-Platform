@@ -18,17 +18,41 @@ const nextConfig = {
     ];
     return config;
   },
+  async headers() {
+    const csp = [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob: https://firebasestorage.googleapis.com https://*.firebasestorage.app https://*.googleapis.com",
+      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss: ws:",
+      "font-src 'self' data:",
+      "frame-src 'self'",
+      "object-src 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+    ].join('; ');
+
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          { key: 'Content-Security-Policy', value: csp },
+          { key: 'X-Content-Type-Options', value: 'nosniff' },
+          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+        ],
+      },
+    ];
+  },
   async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000';
+    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
     const guacamoleUrl = process.env.NEXT_PUBLIC_GUACAMOLE_URL || 'http://localhost:8080/guacamole';
     return [
       {
-        // Proxy /api/:path* → backend :path*
         source: '/api/:path*',
         destination: `${backendUrl}/:path*`,
       },
       {
-        // Same-origin Guacamole embed (Phase 1 iframe fallback)
         source: '/remote/:path*',
         destination: `${guacamoleUrl}/:path*`,
       },

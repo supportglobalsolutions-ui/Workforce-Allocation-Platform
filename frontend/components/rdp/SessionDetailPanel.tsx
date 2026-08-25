@@ -5,6 +5,7 @@ import { X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageUpload from './SessionImageUpload';
 import { api } from '@/lib/api';
+import { rdpConnectedMinutes } from '@/lib/hours';
 
 interface SessionDetail {
   id: string;
@@ -12,6 +13,9 @@ interface SessionDetail {
   machine: string;
   type: string;
   duration: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  rdp_minutes?: number | null;
   status: string;
   start_image_url: string | null;
   end_image_url: string | null;
@@ -52,6 +56,17 @@ function formatMins(minutes: number | null | undefined): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+function minutesBetween(
+  start: string | null | undefined,
+  end: string | null | undefined,
+): number | null {
+  if (!start || !end) return null;
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return null;
+  return Math.floor((endMs - startMs) / 60_000);
+}
+
 export default function SessionDetailPanel({
   session,
   onClose,
@@ -65,18 +80,34 @@ export default function SessionDetailPanel({
   const [endAt, setEndAt] = useState(() => toLocalInput(session?.image_end_at));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [durationLabel, setDurationLabel] = useState(session?.duration ?? '—');
 
   useEffect(() => {
     setStartAt(toLocalInput(session?.image_start_at));
     setEndAt(toLocalInput(session?.image_end_at));
-    setDurationLabel(session?.duration ?? formatMins(session?.duration_minutes) ?? '—');
-  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.duration, session?.duration_minutes]);
+  }, [session?.id, session?.image_start_at, session?.image_end_at]);
 
   if (!session) return null;
 
+  const draftWorkMinutes = minutesBetween(
+    startAt ? new Date(startAt).toISOString() : null,
+    endAt ? new Date(endAt).toISOString() : null,
+  );
+  const savedWorkMinutes = minutesBetween(session.image_start_at, session.image_end_at);
+  const workMinutes = allowEvidenceEdit ? (draftWorkMinutes ?? savedWorkMinutes) : savedWorkMinutes;
+  const rdpMinutes = session.rdp_minutes
+    ?? rdpConnectedMinutes({ start_time: session.start_time, end_time: session.end_time });
+  const showRdp = formatMins(rdpMinutes);
+
   const saveEvidence = async () => {
     if (!allowEvidenceEdit) return;
+    if (!startAt || !endAt) {
+      setError('Start time and stop / end time are required for every session.');
+      return;
+    }
+    if (workMinutes == null) {
+      setError('Stop / end time must be after the start time.');
+      return;
+    }
     setSaving(true);
     setError(null);
     try {
@@ -89,15 +120,11 @@ export default function SessionDetailPanel({
         image_end_at: string | null;
         evidence_complete: boolean;
       }>(`/sessions/${session.id}/evidence`, body);
-      const mins = updated.duration_minutes;
-      const label = mins != null ? formatMins(mins) : durationLabel;
-      setDurationLabel(label);
       onEvidenceSaved?.(session.id, {
         image_start_at: updated.image_start_at,
         image_end_at: updated.image_end_at,
         duration_minutes: updated.duration_minutes,
         evidence_complete: updated.evidence_complete,
-        duration: label,
       });
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to save times');
@@ -132,14 +159,22 @@ export default function SessionDetailPanel({
           </button>
         </div>
 
-        <div className="px-4 sm:px-6 py-4 grid grid-cols-1 sm:grid-cols-3 gap-4 border-b border-gray-100 bg-gray-50">
+        <div className="px-4 sm:px-6 py-4 grid grid-cols-2 sm:grid-cols-4 gap-4 border-b border-gray-100 bg-gray-50">
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Type</p>
             <p className="text-sm font-medium text-gray-800">{session.type}</p>
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Duration</p>
-            <p className="text-sm font-medium text-gray-800">{durationLabel}</p>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5">RDP uptime</p>
+            <p className="text-sm font-bold text-gray-800 tabular-nums">{showRdp}</p>
+            <p className="text-[10px] text-gray-400 mt-0.5">Machine connected</p>
+          </div>
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-600 mb-0.5">Work hours</p>
+            <p className={`text-sm font-bold tabular-nums ${workMinutes == null ? 'text-gray-400' : 'text-emerald-700'}`}>
+              {workMinutes == null ? 'Not entered' : formatMins(workMinutes)}
+            </p>
+            <p className="text-[10px] text-gray-400 mt-0.5">Screenshots · payroll</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Status</p>
@@ -162,7 +197,7 @@ export default function SessionDetailPanel({
             />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on start image</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time entered by worker</span>
                 <input
                   type="datetime-local"
                   value={startAt}
@@ -172,7 +207,7 @@ export default function SessionDetailPanel({
               </label>
             ) : (
               <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Time on start image</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Start time entered by worker</span>
                 {formatClock(session.image_start_at)}
               </p>
             )}
@@ -191,7 +226,7 @@ export default function SessionDetailPanel({
             />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Time on end image</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Stop / end time entered by worker</span>
                 <input
                   type="datetime-local"
                   value={endAt}
@@ -201,7 +236,7 @@ export default function SessionDetailPanel({
               </label>
             ) : (
               <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Time on end image</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Stop / end time entered by worker</span>
                 {formatClock(session.image_end_at)}
               </p>
             )}
@@ -214,20 +249,18 @@ export default function SessionDetailPanel({
           <div className="px-6 pb-3">
             <button
               type="button"
-              disabled={saving || (!startAt && !endAt)}
+              disabled={saving || !startAt || !endAt}
               onClick={saveEvidence}
               className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5"
             >
-              {saving ? 'Saving…' : 'Save on-image times & calculate duration'}
+              {saving ? 'Saving…' : 'Save work times & calculate work hours'}
             </button>
           </div>
         )}
 
         <div className="px-6 pb-5">
           <p className="text-center text-[11px] text-gray-400">
-            {allowUpload
-              ? 'Enter the times shown on your screenshots — duration is calculated from those times.'
-              : 'Click an image to inspect with the magnifying lens. Hours for payroll come from these start and end times.'}
+            RDP uptime is how long the machine was connected. Work hours are the difference between the worker-entered start and stop / end times used by payroll.
           </p>
         </div>
       </div>

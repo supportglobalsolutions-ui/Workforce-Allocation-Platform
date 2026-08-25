@@ -77,7 +77,6 @@ export default function PartnerManagementPage() {
     <div>
       <PageHeader
         title="Partners"
-        description="Partners are workers with a Partner designation. View and edit personal details, payment, RDP, and company (or Self)."
         actions={
           canPartner ? (
             <button type="button" onClick={() => { setShowAdd(true); setSuccess(''); }}

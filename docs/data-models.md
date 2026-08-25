@@ -380,6 +380,7 @@ erDiagram
 | `email_log` | Permanent email history: accept/reject outcome plus provider delivery events, for every send path | PostgreSQL only |
 | `platform_settings` | Singleton ops settings, including the alert inbox that receives deletion codes | PostgreSQL only |
 | `admin_otp_challenges` | 3-minute hashed confirmation codes for irreversible admin actions | PostgreSQL only |
+| `security_risk_events` | Per-admin risk points from destructive deletes; drives 24h score + alert emails | PostgreSQL only |
 
 ### Authentication (Firebase Auth — not a PostgreSQL table)
 
@@ -822,10 +823,12 @@ Bounded windows for payroll export and approval.
 
 Deleting a work period is a two-step admin action, not a plain `DELETE`. `POST /payroll/periods/{id}/delete/request-otp` emails a 6-digit code (3-minute TTL) to the ops alert inbox in `platform_settings`. `POST /payroll/periods/{id}/delete/confirm` consumes that code and then:
 
-- **Removes** line items, worker summaries, country cost pools, and quality ratings/snapshots tied to the period.
+- **Removes** line items, worker summaries, and quality ratings/snapshots tied to the period.
 - **Unlinks** (does not erase) sessions, wallet credits, and email history — those stay as worker records.
 
 A newly changed alert email cannot receive these codes for 24 hours; the previous inbox keeps getting them so swapping the address cannot immediately authorize a delete.
+
+**Bulk worker / session deletes** use the same alert inbox and OTP machinery when more than 10 ids are selected (`POST /workers/delete/*`, `POST /sessions/delete/*`). Deleting more than 5 ids also sends an informational alert email. Each successful delete writes `security_risk_events` (see below). Live sessions are never deleted until they have an `end_time`.
 
 ---
 
@@ -985,8 +988,8 @@ Generic indicator definitions — extensible without schema changes.
 | `composite_score` | `NUMERIC(5,2)` | Final score |
 | `assessment_component` | `NUMERIC(5,2)` | 40% assessment average |
 | `rating_component` | `NUMERIC(5,2)` | 20% all-period admin rating average |
-| `reliability_component` | `NUMERIC(5,2)` | 25% session completion share |
-| `consistency_component` | `NUMERIC(5,2)` | 15% weekly-hours stability |
+| `reliability_component` | `NUMERIC(5,2)` | 15% finished vs not-finished closed sessions |
+| `consistency_component` | `NUMERIC(5,2)` | 25% average of hours, unique days, and weeks with paid hours |
 | `period_type` | `VARCHAR(16)` | `calendar` or `payroll` |
 | `period_label` | `VARCHAR(64)` | Display name, e.g. `March 2026` |
 | `payroll_period_id` | `UUID` | FK, NULL — set on payroll snapshots |
@@ -1062,6 +1065,23 @@ Every material action is permanently attributable.
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Immutable timestamp |
 
 **Rule:** No UPDATE or DELETE privileges on this table for application roles.
+
+---
+
+### 15b. `security_risk_events`
+
+Append-only risk points used to compute a per-admin threat score over the last 24 hours. When the score reaches 50, the Settings alert email is notified (debounced 1 hour).
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Event ID |
+| `admin_user_id` | `UUID` | FK → `admin_users`, NOT NULL | Actor |
+| `event_type` | `VARCHAR(64)` | NOT NULL | e.g. `worker_deleted`, `session_deleted`, `payroll_period_deleted`, `bulk_over_5`, `risk_threshold_email` |
+| `points` | `INTEGER` | NOT NULL | Score weight (0 for notify markers) |
+| `payload` | `JSONB` | NULL | Context (ids, counts, email status) |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | When recorded |
+
+Weights (code constants in `services/security_risk.py`): worker 10, session 2, period 30, bulk_over_5 +15.
 
 ---
 

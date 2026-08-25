@@ -14,8 +14,14 @@ class Settings(BaseSettings):
     DEV_AUTH_BYPASS: bool = False
     DEV_AUTH_ROLE: str = "user"  # role of the fake test user: user | admin | super_admin
 
+    # ── Logging ───────────────────────────────────────────────
+    LOG_LEVEL: str = "DEBUG"
+
+    # ── Session cookie (signed HttpOnly cookie for Next.js middleware) ──
+    SESSION_COOKIE_SECRET: str = ""
+
     # ── Database ──────────────────────────────────────────────
-    DATABASE_URL: str = "postgresql://postgres:122333@localhost:5432/workforceallocationdb"
+    DATABASE_URL: str = "postgresql://postgres:CHANGE_ME@localhost:5432/workforceallocationdb"
 
     # ── Redis ─────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
@@ -33,7 +39,7 @@ class Settings(BaseSettings):
     # ── Apache Guacamole ──────────────────────────────────────
     GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
     GUACAMOLE_USERNAME: str = "guacadmin"
-    GUACAMOLE_PASSWORD: str = "guacadmin"
+    GUACAMOLE_PASSWORD: str = ""
 
     # ── Firebase Admin ────────────────────────────────────────
     FIREBASE_CREDENTIALS_PATH: str = "./firebase-service-account.json"
@@ -73,6 +79,11 @@ class Settings(BaseSettings):
     # ── FX rates ──────────────────────────────────────────────
     # Free endpoint returning {"rates": {"KES": 129.3, ...}} for a base currency.
     FX_API_URL: str = "https://open.er-api.com/v6/latest"
+
+    # ── Gemini (ops briefing inspection copy) ─────────────────
+    # Google AI Studio key. Empty means Analytics shows rules only.
+    GOOGLE_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.6-flash"
 
     @property
     def is_production(self) -> bool:

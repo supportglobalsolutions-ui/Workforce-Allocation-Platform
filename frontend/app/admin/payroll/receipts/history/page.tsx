@@ -1,13 +1,13 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, Suspense } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import {
-  AlertCircle, ArrowLeft, Ban, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
-  Eye, Mail, RefreshCw, Search, Send, X,
+  AlertCircle, Ban, CheckCircle, ChevronDown, ChevronLeft, ChevronRight,
+  Eye, Mail, RefreshCw, Search, Send, ArrowLeft, X,
 } from 'lucide-react';
 
-import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import EmailDetailModal, { DeliveryBadge, type EmailLogEntry } from '@/components/admin/EmailDetailModal';
@@ -43,6 +43,20 @@ const EMPTY_STATS: HistoryStats = {
 
 /** Every email the platform has sent, with what the provider reported back. */
 export default function EmailHistoryPage() {
+  return (
+    <Suspense fallback={<div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>}>
+      <EmailHistoryBody />
+    </Suspense>
+  );
+}
+
+function EmailHistoryBody() {
+  const searchParams = useSearchParams();
+  const cameFrom = searchParams.get('from');
+  const periodFromQuery = searchParams.get('period') ?? '';
+  const backHref = cameFrom === 'finance' ? '/admin/payroll' : '/admin/payroll/receipts';
+  const backTitle = cameFrom === 'finance' ? 'Back to Finance' : 'Back to Send email';
+
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [rows, setRows] = useState<EmailLogEntry[]>([]);
   const [stats, setStats] = useState<HistoryStats>(EMPTY_STATS);
@@ -54,7 +68,7 @@ export default function EmailHistoryPage() {
   const [template, setTemplate] = useState('');
   const [status, setStatus] = useState('');
   const [delivery, setDelivery] = useState('');
-  const [periodId, setPeriodId] = useState('');
+  const [periodId, setPeriodId] = useState(periodFromQuery);
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
 
@@ -63,6 +77,10 @@ export default function EmailHistoryPage() {
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (periodFromQuery) setPeriodId(periodFromQuery);
+  }, [periodFromQuery]);
 
   useEffect(() => {
     api.get<PayrollPeriod[]>('/payroll/periods').then(setPeriods).catch(() => setPeriods([]));
@@ -136,24 +154,31 @@ export default function EmailHistoryPage() {
 
   return (
     <div>
-      <PageHeader
-        title="Email History"
-        description="Every payslip, announcement and notification this platform has sent, with the provider's delivery outcome for each one."
-      />
-
-      <div className="flex flex-wrap items-center gap-2 mb-5">
-        <Link href="/admin/payroll/receipts"
-          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5">
-          <ArrowLeft size={12} /> Back to Communications
-        </Link>
-        <button type="button" onClick={() => void load()} disabled={loading}
-          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 disabled:opacity-50">
-          <RefreshCw size={12} /> Reload
-        </button>
-        <button type="button" onClick={() => void syncFromProvider()} disabled={syncing}
-          className="btn-primary text-xs py-2 px-3 flex items-center gap-1.5 disabled:opacity-50">
-          {syncing ? <SpinningDots size="sm" /> : <Send size={12} />} Sync delivery status
-        </button>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-8">
+        <div className="flex items-center gap-3">
+          <Link href={backHref}
+            className="h-9 w-9 inline-flex items-center justify-center rounded-xl border border-theme text-theme-muted hover:text-theme-heading hover:border-emerald-accent/30 transition-colors"
+            title={backTitle}
+          >
+            <ArrowLeft size={16} />
+          </Link>
+          <div>
+            <h1 className="text-2xl md:text-3xl font-black text-theme-heading tracking-tight">Email history</h1>
+            {cameFrom === 'finance' && (
+              <p className="text-xs text-theme-muted mt-0.5">Opened from Finance — back returns there.</p>
+            )}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <button type="button" onClick={() => void load()} disabled={loading}
+            className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5 disabled:opacity-50">
+            <RefreshCw size={12} /> Reload
+          </button>
+          <button type="button" onClick={() => void syncFromProvider()} disabled={syncing}
+            className="btn-primary text-xs py-2 px-3 flex items-center gap-1.5 disabled:opacity-50">
+            {syncing ? <SpinningDots size="sm" /> : <Send size={12} />} Sync status
+          </button>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-5 gap-3 mb-5">
@@ -203,9 +228,9 @@ export default function EmailHistoryPage() {
           <div className="relative">
             <select value={status} onChange={(e) => { setStatus(e.target.value); setOffset(0); }}
               className="input-field appearance-none pr-8 !py-2 w-36">
-              <option value="">Accepted &amp; rejected</option>
+              <option value="">Accepted &amp; failed</option>
               <option value="sent">Accepted</option>
-              <option value="failed">Rejected</option>
+              <option value="failed">Failed</option>
             </select>
             <ChevronDown size={13} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
           </div>
@@ -252,6 +277,17 @@ export default function EmailHistoryPage() {
       )}
 
       <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
+        {status === 'failed' && (
+          <div className="flex items-start gap-2 border-b border-danger/20 bg-danger/[0.04] px-4 py-3">
+            <AlertCircle size={14} className="mt-0.5 shrink-0 text-danger" />
+            <div>
+              <h2 className="text-sm font-bold text-theme-heading">Failed emails</h2>
+              <p className="text-[11px] text-theme-muted">
+                Select the eye on a failed email to view its error, resend it, or delete it.
+              </p>
+            </div>
+          </div>
+        )}
         {loading ? (
           <div className="flex justify-center py-20"><SpinningDots size="lg" className="text-emerald-accent" /></div>
         ) : (
@@ -305,7 +341,12 @@ export default function EmailHistoryPage() {
                       <button type="button"
                         onClick={(e) => { e.stopPropagation(); setOpenId(r.id); }}
                         aria-label={`Open details for ${r.to_email}`}
-                        className="inline-flex h-7 w-7 items-center justify-center rounded-lg text-theme-muted transition-colors hover:bg-white/5 hover:text-emerald-accent">
+                        title={r.status === 'failed' ? 'View error and resend options' : 'View email details'}
+                        className={`inline-flex h-7 w-7 items-center justify-center rounded-lg transition-colors ${
+                          r.status === 'failed'
+                            ? 'text-danger hover:bg-danger/10'
+                            : 'text-theme-muted hover:bg-white/5 hover:text-emerald-accent'
+                        }`}>
                         <Eye size={14} />
                       </button>
                     </td>
@@ -347,7 +388,20 @@ export default function EmailHistoryPage() {
       </p>
 
       {openId && (
-        <EmailDetailModal logId={openId} onClose={() => setOpenId(null)} onUpdated={() => void load()} />
+        <EmailDetailModal
+          logId={openId}
+          onClose={() => setOpenId(null)}
+          onUpdated={() => void load()}
+          onAction={(message, isError) => {
+            if (isError) {
+              setError(message);
+              setNote(null);
+            } else {
+              setNote(message);
+              setError(null);
+            }
+          }}
+        />
       )}
     </div>
   );

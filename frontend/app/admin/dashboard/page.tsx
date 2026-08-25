@@ -19,12 +19,14 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut, Line, PolarArea, Radar } from 'react-chartjs-2';
 import {
-  Activity, AlertTriangle, DollarSign, Server, TrendingUp, Users,
+  Activity, AlertTriangle, Clock, DollarSign, Server, TrendingUp, Users,
 } from 'lucide-react';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
+import { dateToYmd, pickCurrentPeriod } from '@/lib/periods';
 
 ChartJS.register(
   CategoryScale,
@@ -54,6 +56,8 @@ interface WorkSession {
   start_time: string;
   session_type: string;
   duration_minutes: number | null;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
 }
 
 interface RDPResource {
@@ -91,6 +95,7 @@ interface PayrollPeriod {
   start_date: string;
   end_date: string;
   status: string;
+  is_current?: boolean;
 }
 
 // ── Theme helpers ──────────────────────────────────────────────────────────────
@@ -110,19 +115,6 @@ function greeting() {
   if (h < 12) return 'Good morning';
   if (h < 17) return 'Good afternoon';
   return 'Good evening';
-}
-
-function isoDay(d: Date): string {
-  const y = d.getFullYear();
-  const m = String(d.getMonth() + 1).padStart(2, '0');
-  const day = String(d.getDate()).padStart(2, '0');
-  return `${y}-${m}-${day}`;
-}
-
-function coversToday(p: PayrollPeriod, today: string): boolean {
-  const s = p.start_date.slice(0, 10);
-  const e = p.end_date.slice(0, 10);
-  return s <= today && today <= e;
 }
 
 function countBy<T>(items: T[], keyFn: (item: T) => string): Record<string, number> {
@@ -245,14 +237,7 @@ export default function AdminDashboard() {
       .finally(() => setLoading(false));
   }, []);
 
-  const today = useMemo(() => isoDay(new Date()), []);
-
-  const currentPeriod = useMemo(() => {
-    const sorted = [...periods].sort(
-      (a, b) => new Date(b.start_date).getTime() - new Date(a.start_date).getTime(),
-    );
-    return sorted.find((p) => coversToday(p, today)) ?? sorted[0] ?? null;
-  }, [periods, today]);
+  const currentPeriod = useMemo(() => pickCurrentPeriod(periods) ?? null, [periods]);
 
   const workersOnline = workers.filter((w) => w.status === 'active').length;
   const activeSessions = sessions.filter((s) => !s.end_time).length;
@@ -275,10 +260,15 @@ export default function AdminDashboard() {
     });
   }, [sessions, currentPeriod]);
 
+  const loggedHoursLabel = useMemo(() => {
+    const minutes = periodSessions.reduce((sum, s) => sum + enteredPayMinutes(s), 0);
+    return formatLoggedHours(minutes);
+  }, [periodSessions]);
+
   // ── Chart data ───────────────────────────────────────────────────────────────
 
   const kpiBarData: ChartData<'bar'> = useMemo(() => ({
-    labels: ['Workers', 'Sessions', 'Machines', 'Quality %', 'Exceptions', 'Payroll'],
+    labels: ['Workers', 'Sessions', 'Machines', 'Quality %', 'Exceptions', 'Payroll', 'Hours'],
     datasets: [{
       label: 'Live snapshot',
       data: [
@@ -288,13 +278,14 @@ export default function AdminDashboard() {
         qualityAvg ?? 0,
         exceptions,
         payrollPending,
+        Number(loggedHoursLabel.replace(/,/g, '')) || 0,
       ],
-      backgroundColor: [EMERALD, BLUE, PURPLE, GOLD, RED, '#FBBF24'],
+      backgroundColor: [EMERALD, BLUE, PURPLE, GOLD, RED, '#FBBF24', '#67E8F9'],
       borderRadius: 8,
       borderSkipped: false,
       maxBarThickness: 36,
     }],
-  }), [workersOnline, activeSessions, machinesOnline, qualityAvg, exceptions, payrollPending]);
+  }), [workersOnline, activeSessions, machinesOnline, qualityAvg, exceptions, payrollPending, loggedHoursLabel]);
 
   const workersDoughnut: ChartData<'doughnut'> = useMemo(() => {
     const counts = countBy(workers, (w) => w.status);
@@ -341,13 +332,13 @@ export default function AdminDashboard() {
         const d = new Date(start);
         d.setDate(start.getDate() + i);
         if (d > end) break;
-        days.push(isoDay(d));
+        days.push(dateToYmd(d));
       }
     } else {
       for (let i = 13; i >= 0; i--) {
         const d = new Date();
         d.setDate(d.getDate() - i);
-        days.push(isoDay(d));
+        days.push(dateToYmd(d));
       }
     }
 
@@ -356,7 +347,7 @@ export default function AdminDashboard() {
       counts.push(daySessions.length);
       hours.push(
         Math.round(
-          daySessions.reduce((sum, s) => sum + (Number(s.duration_minutes) || 0), 0) / 60 * 10,
+          daySessions.reduce((sum, s) => sum + enteredPayMinutes(s), 0) / 60 * 10,
         ) / 10,
       );
     }
@@ -541,7 +532,7 @@ export default function AdminDashboard() {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-3">
         <KpiCard compact label="Workers Online" value={workersOnline} icon={Users} />
         <KpiCard compact label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
         <KpiCard compact label="Machines Online" value={machinesOnline} icon={Server} />
@@ -551,6 +542,7 @@ export default function AdminDashboard() {
           value={qualityAvg != null ? `${qualityAvg.toFixed(1)}%` : '—'}
           icon={TrendingUp}
         />
+        <KpiCard compact label="Logged Hours" value={loggedHoursLabel} icon={Clock} />
         <KpiCard compact label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
         <KpiCard compact label="Payroll Pending" value={payrollPending} icon={DollarSign} accent="gold" />
       </div>

@@ -323,7 +323,6 @@ export default function TrainingPage() {
     <div className="max-w-5xl mx-auto space-y-6 pb-10">
       <PageHeader
         title="Training"
-        description="Complete your assigned training modules and linked assessments."
       />
 
       {me?.work_ready === false && (

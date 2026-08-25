@@ -6,6 +6,7 @@ import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSecti
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import { AlertCircle, Download } from 'lucide-react';
 import { api } from '@/lib/api';
+import { pickCurrentPeriod } from '@/lib/periods';
 import { downloadFile } from '@/lib/download';
 
 interface PayrollPeriod {
@@ -28,7 +29,7 @@ export default function PayrollExportPage() {
     api.get<PayrollPeriod[]>('/payroll/periods')
       .then((list) => {
         setPeriods(list);
-        if (list.length > 0) setPeriodId(list[0].id);
+        if (list.length > 0) setPeriodId(pickCurrentPeriod(list)?.id ?? list[0].id);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load periods'))
       .finally(() => setLoading(false));
@@ -54,7 +55,6 @@ export default function PayrollExportPage() {
     <div className="max-w-2xl">
       <PageHeader
         title="Payroll Export Center"
-        description="Download the bulk payslip zip for a named working month."
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />
       {loading ? (

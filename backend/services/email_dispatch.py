@@ -34,7 +34,7 @@ from services.email_resend import (
     BatchMessage, render_broadcast_html, render_broadcast_text,
     render_payslip_html, render_payslip_text, send_email_batch, send_email_detailed,
 )
-from services.payslip_pdf import build_payslip_pdf, payslip_rows
+from services.payslip_pdf import render_payslip_pdf, payslip_rows
 
 logger = logging.getLogger(__name__)
 
@@ -217,17 +217,8 @@ def _process_single_mode(db: Session, job: EmailJob, items: list[EmailJobItem]) 
             continue
 
         subject, html, text, summary, worker = content
-        rows = payslip_rows(summary)
-        pdf = build_payslip_pdf(
-            worker_name=worker.display_name,
-            period_label=period.label,
-            local_currency=summary.local_currency,
-            base_currency=summary.base_currency or period.currency,
-            rows=rows,
-        )
-        filename = (
-            f"payslip-{period.label.replace(' ', '-')}-"
-            f"{worker.display_name.replace(' ', '-')}.pdf"
+        filename, pdf = render_payslip_pdf(
+            summary=summary, period=period, worker_name=worker.display_name,
         )
         log, resend_id = send_email_detailed(
             db,

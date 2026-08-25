@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Session, select
 
@@ -23,8 +23,11 @@ from core.firebase_admin import (
     set_user_role,
     unban_firebase_user,
     user_to_dict,
+    verify_firebase_token,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
+from core.rate_limit import check_rate_limit
+from core.session_cookie import sign_session
 from models.admin_users import AdminUser
 from models.enums import (
     AccountStatusEnum,
@@ -58,6 +61,10 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     displayName: str
+
+
+class SessionTokenRequest(BaseModel):
+    id_token: str
 
 
 class ApproveUserRequest(BaseModel):
@@ -159,10 +166,12 @@ def _ensure_login_profile(
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_user(body: RegisterRequest):
+def register_user(body: RegisterRequest, request: Request):
     """
     Public self-registration. Creates a disabled Firebase user pending admin approval.
     """
+    check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=body.email.lower())
+    check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
     if len(body.password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -441,18 +450,46 @@ def update_user_role(
 
 
 @router.get("/account-status")
-def get_account_status(email: str):
+def get_account_status(email: str, request: Request):
     """
-    Public endpoint — returns only the account status (banned/pending/rejected/approved).
-    Used by the login page to show the correct error message when Firebase says 'user-disabled'.
+    Rate-limited status lookup for the login page when Firebase returns user-disabled.
+    Returns a generic response when the address is not registered to reduce enumeration.
     """
+    check_rate_limit(request, scope="auth-account-status", limit=10, window_seconds=60)
+    check_rate_limit(
+        request,
+        scope="auth-account-status-email",
+        limit=5,
+        window_seconds=300,
+        key_suffix=email.lower()[:120],
+    )
     try:
         user = get_firebase_user_by_email(email)
     except Exception:
-        return {"status": "not_found"}
+        return {"status": "unknown"}
     claims = user.custom_claims or {}
     status = claims.get("status", "approved" if not user.disabled else "pending")
     return {"status": status}
+
+
+@router.post("/session-token")
+def create_session_token(body: SessionTokenRequest, request: Request):
+    """Verify Firebase ID token and return a signed cookie value for Next.js middleware."""
+    check_rate_limit(request, scope="auth-session-token", limit=30, window_seconds=60)
+    try:
+        decoded = verify_firebase_token(body.id_token)
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid or expired token",
+        ) from exc
+
+    role = decoded.get("role", "user")
+    if role not in {"user", "partner", "admin", "super_admin"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
+
+    token = sign_session(decoded["uid"], role)
+    return {"token": token, "role": role}
 
 
 @router.patch("/users/{uid}/ban")

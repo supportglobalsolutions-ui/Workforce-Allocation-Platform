@@ -1,13 +1,17 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, ChevronDown, Download, Eye, RefreshCw, Users, X } from 'lucide-react';
+import { Calendar, CheckCircle, ChevronDown, Clock, Download, Eye, RefreshCw, Server, TimerOff, Trash2, Users, X } from 'lucide-react';
 
+import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import DataTable from '@/components/platform/DataTable';
+import KpiCard from '@/components/platform/KpiCard';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
+import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
+import { periodForSessionDay, shortPeriodLabel, type PeriodLike } from '@/lib/periods';
 
 interface WorkSession {
   id: string;
@@ -24,6 +28,7 @@ interface WorkSession {
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
   type_specific_fields?: Record<string, unknown> | null;
+  payroll_period_id?: string | null;
 }
 
 interface Worker {
@@ -42,11 +47,19 @@ interface SessionRow {
   id: string;
   date: string;
   start_time: string;
+  end_time: string | null;
   session_type: string;
+  worker_id: string;
   worker: string;
   email: string;
   machine: string;
   duration: string;
+  /** RDP connected minutes (claim → release). */
+  rdp_minutes: number;
+  /** Worker-entered screenshot start/end minutes. */
+  worker_minutes: number;
+  logged_hours: string;
+  logged_minutes: number;
   type: string;
   status: string;
   live: boolean;
@@ -57,6 +70,7 @@ interface SessionRow {
   image_end_at?: string | null;
   duration_minutes?: number | null;
   evidence_complete?: boolean | null;
+  period: string;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -96,6 +110,17 @@ function formatDuration(minutes: number | null): string {
 function formatElapsed(startTime: string, now: number): string {
   const elapsed = Math.max(0, Math.floor((now - new Date(startTime).getTime()) / 60_000));
   return `${Math.floor(elapsed / 60)}h ${elapsed % 60}m`;
+}
+
+/** Minutes the RDP was claimed/connected (start → end, or start → now if live). */
+function rdpUptimeMinutes(
+  s: { start_time: string; end_time?: string | null },
+  now: number,
+): number {
+  const start = new Date(s.start_time).getTime();
+  const end = s.end_time ? new Date(s.end_time).getTime() : now;
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.floor((end - start) / 60_000);
 }
 
 function passesDateFilter(
@@ -291,6 +316,10 @@ export default function AdminSessionsPage() {
   const [now, setNow] = useState(() => Date.now());
 
   const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
+  const [periods, setPeriods] = useState<PeriodLike[]>([]);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [actionNote, setActionNote] = useState<string | null>(null);
 
   // Deep links from elsewhere in the app can preselect the live view.
   useEffect(() => {
@@ -327,6 +356,12 @@ export default function AdminSessionsPage() {
 
   useEffect(() => { void load(); }, []);
 
+  useEffect(() => {
+    api.get<PeriodLike[]>('/payroll/periods')
+      .then(setPeriods)
+      .catch(() => setPeriods([]));
+  }, []);
+
   // Keep open sessions honest: refetch and re-tick elapsed while they are visible.
   const showingLive = view !== 'history';
   useEffect(() => {
@@ -353,15 +388,24 @@ export default function AdminSessionsPage() {
           ? (rdpMap[s.rdp_resource_id]?.nickname ?? s.rdp_resource_id.slice(0, 8) + '…')
           : '—';
         const live = !s.end_time;
+        const covering = periodForSessionDay(s.start_time, periods, s.payroll_period_id);
+        const rdpMinutes = rdpUptimeMinutes(s, now);
+        const workerMinutes = enteredPayMinutes(s);
         return {
           id: s.id,
           date: new Date(s.start_time).toLocaleString(),
           start_time: s.start_time,
+          end_time: s.end_time,
           session_type: s.session_type,
+          worker_id: s.worker_id,
           worker: worker?.display_name ?? '—',
           email: worker?.email ?? '—',
           machine,
-          duration: live ? formatElapsed(s.start_time, now) : formatDuration(s.duration_minutes),
+          duration: live ? formatElapsed(s.start_time, now) : formatDuration(rdpMinutes),
+          rdp_minutes: rdpMinutes,
+          worker_minutes: workerMinutes,
+          logged_hours: workerMinutes > 0 ? formatLoggedHours(workerMinutes) : '—',
+          logged_minutes: workerMinutes,
           type: TYPE_LABELS[s.session_type] ?? s.session_type,
           status: s.close_status ?? (live ? 'active' : 'completed'),
           live,
@@ -374,9 +418,10 @@ export default function AdminSessionsPage() {
           image_end_at: s.image_end_at,
           duration_minutes: s.duration_minutes,
           evidence_complete: s.evidence_complete,
+          period: covering ? shortPeriodLabel(covering.label ?? '') : '—',
         };
       });
-  }, [sessions, workerMap, rdpMap, now]);
+  }, [sessions, workerMap, rdpMap, now, periods]);
 
   const liveCount = useMemo(() => allRows.filter((r) => r.live).length, [allRows]);
 
@@ -398,6 +443,42 @@ export default function AdminSessionsPage() {
     });
   }, [allRows, sessions, view, selectedWorkerId, dateRange, customFrom, customTo, statusFilter, typeFilter]);
 
+  const deletableRows = useMemo(() => filteredRows.filter((r) => !r.live), [filteredRows]);
+  const allDeletableSelected =
+    deletableRows.length > 0 && deletableRows.every((r) => selectedIds.has(r.id));
+
+  function toggleSessionRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllDeletable() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allDeletableSelected) deletableRows.forEach((r) => next.delete(r.id));
+      else deletableRows.forEach((r) => next.add(r.id));
+      return next;
+    });
+  }
+
+  const hourTotals = useMemo(() => {
+    let rdp = 0;
+    let worker = 0;
+    for (const r of filteredRows) {
+      rdp += r.rdp_minutes;
+      worker += r.worker_minutes;
+    }
+    return {
+      rdp,
+      worker,
+      idle: Math.max(0, rdp - worker),
+    };
+  }, [filteredRows]);
+
   const handleEyeClick = (rowId: string) => {
     const row = filteredRows.find((r) => r.id === rowId);
     if (!row) return;
@@ -413,9 +494,9 @@ export default function AdminSessionsPage() {
               image_end_at: full.image_end_at,
               duration_minutes: full.duration_minutes,
               evidence_complete: full.evidence_complete,
-              duration: full.end_time
-                ? formatDuration(full.duration_minutes)
-                : prev.duration,
+              start_time: full.start_time,
+              end_time: full.end_time,
+              rdp_minutes: rdpUptimeMinutes(full, Date.now()),
             }
           : prev,
       );
@@ -434,9 +515,20 @@ export default function AdminSessionsPage() {
   };
 
   const handleExportCsv = () => {
-    const headers = ['Date', 'Worker', 'Email', 'RDP / Platform', 'Duration', 'Type', 'Status'];
+    const headers = ['Date', 'Worker', 'Email', 'RDP / Platform', 'RDP hours', 'Worker hours', 'Idle gap', 'Type', 'Period', 'Status'];
     const csvRows = filteredRows.map((r) =>
-      [r.date, r.worker, r.email, r.machine, r.duration, r.type, r.status]
+      [
+        r.date,
+        r.worker,
+        r.email,
+        r.machine,
+        formatLoggedHours(r.rdp_minutes),
+        r.worker_minutes > 0 ? formatLoggedHours(r.worker_minutes) : '',
+        formatLoggedHours(Math.max(0, r.rdp_minutes - r.worker_minutes)),
+        r.type,
+        r.period,
+        r.status,
+      ]
         .map((v) => `"${String(v).replace(/"/g, '""')}"`)
         .join(','),
     );
@@ -463,9 +555,17 @@ export default function AdminSessionsPage() {
     <div>
       <PageHeader
         title="Sessions"
-        description="Every work session in time order — live now and completed history, with the RDP machine used."
         actions={
           <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5 text-danger border-danger/30 hover:bg-danger/10"
+              >
+                <Trash2 size={13} /> Delete ({selectedIds.size})
+              </button>
+            )}
             {liveCount > 0 && (
               <span className="flex items-center gap-2 text-xs font-mono text-emerald-accent mr-1">
                 <span className="w-2 h-2 rounded-full bg-emerald-accent animate-pulse" />
@@ -489,26 +589,41 @@ export default function AdminSessionsPage() {
         }
       />
 
-      {/* ── Live / History switch ── */}
-      <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit mb-5">
-        {VIEWS.map(({ key, label, count }) => (
-          <button
-            key={key}
-            type="button"
-            onClick={() => setView(key)}
-            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
-              view === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
-            }`}
-          >
-            {key === 'live' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-accent animate-pulse" />}
-            {label}
-            {count != null && count > 0 && (
-              <span className="px-1.5 py-0.5 rounded-full bg-emerald-accent/20 text-emerald-400 text-[10px] tabular-nums">
-                {count}
-              </span>
-            )}
-          </button>
-        ))}
+      {/* ── Live / History switch + hours KPIs ── */}
+      <div className="flex flex-wrap items-center gap-3 mb-5">
+        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
+          {VIEWS.map(({ key, label, count }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setView(key)}
+              className={`flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
+                view === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
+              }`}
+            >
+              {key === 'live' && <span className="w-1.5 h-1.5 rounded-full bg-emerald-accent animate-pulse" />}
+              {label}
+              {count != null && count > 0 && (
+                <span className="px-1.5 py-0.5 rounded-full bg-emerald-accent/20 text-emerald-400 text-[10px] tabular-nums">
+                  {count}
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        {!loading && !error && (
+          <div className="grid grid-cols-3 gap-2 min-w-[18rem] flex-1 max-w-xl">
+            <div title="Time the RDP was claimed and connected">
+              <KpiCard compact label="RDP uptime" value={formatLoggedHours(hourTotals.rdp)} icon={Server} accent="blue" />
+            </div>
+            <div title="Screenshot start/end times entered by the worker">
+              <KpiCard compact label="Work hours" value={formatLoggedHours(hourTotals.worker)} icon={Clock} accent="emerald" highlight />
+            </div>
+            <div title="RDP connected time minus worker hours — idle machine while claimed">
+              <KpiCard compact label="Idle gap" value={formatLoggedHours(hourTotals.idle)} icon={TimerOff} accent="gold" />
+            </div>
+          </div>
+        )}
       </div>
 
       {/* ── Filters ── */}
@@ -618,25 +733,64 @@ export default function AdminSessionsPage() {
       </div>
 
       {/* ── Table ── */}
+      {actionNote && (
+        <div className="mb-4 flex items-center gap-2 p-3 rounded-xl border border-emerald-accent/30 bg-emerald-accent/10 text-emerald-accent text-xs">
+          <CheckCircle size={13} />
+          <span className="flex-1">{actionNote}</span>
+          <button type="button" onClick={() => setActionNote(null)} className="opacity-70 hover:opacity-100"><X size={12} /></button>
+        </div>
+      )}
       {loading ? (
         <p className="text-theme-muted text-sm">Loading sessions…</p>
       ) : error ? (
         <p className="text-danger text-sm">{error}</p>
       ) : (
         <>
-          <p className="text-xs text-theme-muted mb-3">
-            {filteredRows.length} session{filteredRows.length !== 1 ? 's' : ''}
-            {selectedWorkerObj && (
-              <span className="ml-2 text-emerald-400">
-                · {workerPrimary(selectedWorkerObj)}
-              </span>
+          <div className="flex flex-wrap items-center gap-3 mb-3 text-xs text-theme-muted">
+            <span>
+              {filteredRows.length} session{filteredRows.length !== 1 ? 's' : ''}
+              {selectedWorkerObj && (
+                <span className="ml-2 text-emerald-400">
+                  · {workerPrimary(selectedWorkerObj)}
+                </span>
+              )}
+              {showingLive && (
+                <span className="ml-2">· live rows refresh every {LIVE_REFRESH_MS / 1000}s</span>
+              )}
+              {selectedIds.size > 0 && <span className="ml-2">· {selectedIds.size} selected</span>}
+            </span>
+            {deletableRows.length > 0 && (
+              <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+                <input type="checkbox" checked={allDeletableSelected} onChange={toggleAllDeletable} className="accent-emerald-400" />
+                Select all finished ({deletableRows.length})
+              </label>
             )}
-            {showingLive && (
-              <span className="ml-2">· live rows refresh every {LIVE_REFRESH_MS / 1000}s</span>
+            {selectedIds.size > 0 && (
+              <button type="button" onClick={() => setSelectedIds(new Set())} className="underline hover:text-theme-heading">
+                Clear
+              </button>
             )}
-          </p>
+          </div>
           <DataTable
             columns={[
+              {
+                key: 'select',
+                header: '',
+                render: (r) => {
+                  const live = Boolean(r.live);
+                  return (
+                    <input
+                      type="checkbox"
+                      checked={selectedIds.has(String(r.id))}
+                      disabled={live}
+                      title={live ? 'End the session before deleting' : undefined}
+                      onChange={() => toggleSessionRow(String(r.id))}
+                      aria-label={`Select session ${String(r.id)}`}
+                      className="accent-emerald-400 disabled:opacity-30"
+                    />
+                  );
+                },
+              },
               {
                 key: 'date',
                 header: 'Date & Time',
@@ -662,15 +816,43 @@ export default function AdminSessionsPage() {
               { key: 'machine', header: 'RDP / Platform' },
               {
                 key: 'duration',
-                header: 'Duration',
+                header: 'RDP uptime',
                 render: (r) => (
                   <span className={(r.live as boolean) ? 'text-emerald-accent font-semibold tabular-nums' : 'tabular-nums'}>
                     {r.duration as string}
-                    {(r.live as boolean) && <span className="text-[10px] text-theme-muted ml-1">elapsed</span>}
+                    {(r.live as boolean) && <span className="text-[10px] text-theme-muted ml-1">live</span>}
                   </span>
                 ),
               },
+              {
+                key: 'logged_hours',
+                header: 'Work hours',
+                render: (r) => (
+                  <span className="tabular-nums font-medium text-theme-heading">{r.logged_hours as string}</span>
+                ),
+              },
+              {
+                key: 'idle',
+                header: 'Idle',
+                render: (r) => {
+                  const idle = Math.max(0, (r.rdp_minutes as number) - (r.worker_minutes as number));
+                  return (
+                    <span className={`tabular-nums ${idle > 0 ? 'text-gold-accent font-medium' : 'text-theme-muted'}`}>
+                      {idle > 0 ? formatLoggedHours(idle) : '—'}
+                    </span>
+                  );
+                },
+              },
               { key: 'type', header: 'Type' },
+              {
+                key: 'period',
+                header: 'Period',
+                render: (r) => (
+                  <span className="whitespace-nowrap text-xs font-mono text-theme-heading" title={r.period as string}>
+                    {r.period as string}
+                  </span>
+                ),
+              },
               {
                 key: 'status',
                 header: 'Status',
@@ -720,6 +902,28 @@ export default function AdminSessionsPage() {
         allowUpload={false}
         allowEvidenceEdit={false}
       />
+
+      {deleteOpen && selectedIds.size > 0 && (
+        <BulkDeleteModal
+          kind="sessions"
+          ids={Array.from(selectedIds)}
+          labels={filteredRows
+            .filter((r) => selectedIds.has(r.id))
+            .map((r) => `${r.worker} · ${r.date}`)}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={(result) => {
+            setDeleteOpen(false);
+            setSelectedIds(new Set());
+            const blocked = result.blocked_active?.length ?? 0;
+            setActionNote(
+              `Deleted ${result.deleted_count} session${result.deleted_count === 1 ? '' : 's'}`
+              + (blocked ? ` · ${blocked} live session${blocked === 1 ? '' : 's'} skipped` : '')
+              + '.',
+            );
+            void load({ silent: true });
+          }}
+        />
+      )}
     </div>
   );
 }

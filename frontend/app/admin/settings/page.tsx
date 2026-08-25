@@ -98,9 +98,7 @@ function AlertEmailCard() {
         <div>
           <h2 className="text-sm font-bold text-theme-heading">Admin alert email</h2>
           <p className="text-xs text-theme-muted mt-1">
-            Receives confirmation codes for irreversible actions such as deleting a work period.
-            After you change it, the new address cannot receive those codes for 24 hours — the
-            previous inbox keeps getting them. (Password confirmation for this change is not required yet.)
+            Receives confirmation codes for irreversible actions. After a change, the new address cannot receive those codes for 24 hours.
           </p>
         </div>
       </div>
@@ -150,7 +148,6 @@ export default function SystemSettingsPage() {
     <div>
       <PageHeader
         title="Settings"
-        description="Platform status, the admin alert inbox, leaderboard scoring, and ops tool links."
       />
       <AdminSectionTabs tabs={SYSTEM_TABS} />
 
@@ -212,7 +209,7 @@ export default function SystemSettingsPage() {
           <div>
             <h2 className="text-sm font-bold text-theme-heading">Roles &amp; access</h2>
             <p className="text-xs text-theme-muted mt-1">
-              Operations Lead and Executive accounts, role changes, and pending approvals are managed on the Accounts page.
+              Role changes and pending approvals are on Accounts.
             </p>
             <Link
               href="/admin/accounts"

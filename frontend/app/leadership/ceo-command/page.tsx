@@ -1,131 +1,589 @@
 'use client';
 
-import { useEffect, useState } from 'react';
-import PageHeader from '@/components/platform/PageHeader';
-import KpiCard from '@/components/platform/KpiCard';
-import { Users, Activity, DollarSign, Star, Globe2, Server } from 'lucide-react';
-import StatusBadge from '@/components/platform/StatusBadge';
-import { api } from '@/lib/api';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import {
+  ArcElement,
+  BarElement,
+  CategoryScale,
+  Chart as ChartJS,
+  Filler,
+  Legend,
+  LinearScale,
+  Tooltip,
+  type ChartData,
+  type ChartOptions,
+} from 'chart.js';
+import { Bar, Doughnut } from 'react-chartjs-2';
+import {
+  Activity, Briefcase, Clock, DollarSign, Globe2, Monitor,
+  Server, Star, Users,
+} from 'lucide-react';
 
-interface Worker { id: string; status: string }
-interface WorkSession { id: string; end_time: string | null }
-interface RDPResource { id: string; nickname: string; status: string }
-interface LeaderboardEntry { id: string; worker_display_name: string; composite_score: number; global_rank: number | null }
-interface AuditLog { id: string; actor_id: string | null; action: string; target_type: string; target_id: string; created_at: string }
+import AnalyticsViewToggle, { type AnalyticsView } from '@/components/platform/AnalyticsViewToggle';
+import DataAlert from '@/components/platform/DataAlert';
+import KpiCard from '@/components/platform/KpiCard';
+import PageHeader from '@/components/platform/PageHeader';
+import PeriodFilter from '@/components/platform/PeriodFilter';
+import StatusBadge from '@/components/platform/StatusBadge';
+import SpinningDots from '@/components/shared/SpinningDots';
+import { api } from '@/lib/api';
+import { enteredPayMinutes, formatHoursLabel, rdpConnectedMinutes } from '@/lib/hours';
+import { coversDate, pickCurrentPeriod, type PeriodLike } from '@/lib/periods';
+
+ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Filler, Tooltip, Legend);
+
+interface Worker {
+  id: string;
+  status: string;
+  country?: string;
+  partner_entity_id?: string | null;
+  partner_entity_name?: string | null;
+}
+interface WorkSession {
+  id: string;
+  worker_id?: string;
+  rdp_resource_id?: string | null;
+  client_id?: string | null;
+  end_time: string | null;
+  start_time: string;
+  image_start_at?: string | null;
+  image_end_at?: string | null;
+}
+interface RdpResource {
+  id: string;
+  nickname: string;
+  status: string;
+  client_id?: string | null;
+  owner_name?: string | null;
+  owner_type?: string | null;
+}
+interface LeaderboardEntry {
+  id: string;
+  worker_display_name: string;
+  composite_score: number;
+  global_rank: number | null;
+}
 interface QualityScore { composite_score: number }
+interface Partner { id: string; name: string }
+interface Client {
+  id: string;
+  owner_type?: string;
+  owner_worker_id?: string | null;
+  owner_partner_entity_id?: string | null;
+  owner_name?: string | null;
+}
+interface PayrollPeriod extends PeriodLike { label: string; currency?: string }
+interface PayrollReportRow { final_net?: number | string }
+
+const EMERALD = '#3FC7A0';
+const GOLD = '#D4AF37';
+const BLUE = '#60A5FA';
+const TICK = 'rgba(148, 163, 184, 0.9)';
+const GRID = 'rgba(148, 163, 184, 0.12)';
+
+const barOptions: ChartOptions<'bar'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  indexAxis: 'y',
+  plugins: { legend: { display: false } },
+  scales: {
+    x: { beginAtZero: true, grid: { color: GRID }, ticks: { color: TICK } },
+    y: { grid: { display: false }, ticks: { color: TICK } },
+  },
+};
+
+const doughnutOptions: ChartOptions<'doughnut'> = {
+  responsive: true,
+  maintainAspectRatio: false,
+  cutout: '62%',
+  plugins: {
+    legend: { position: 'bottom', labels: { color: TICK, boxWidth: 10, usePointStyle: true } },
+  },
+};
+
+function settled<T>(r: PromiseSettledResult<T>, fallback: T): T {
+  return r.status === 'fulfilled' ? r.value : fallback;
+}
+
+function formatYmd(iso: string): string {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  if (!y || !m || !d) return iso.slice(0, 10);
+  return new Date(y, m - 1, d).toLocaleDateString(undefined, {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  });
+}
+
+function ownerKey(client: Client | undefined, rdp: RdpResource | undefined): string | null {
+  if (client) {
+    if (client.owner_type === 'worker' && client.owner_worker_id) return `worker:${client.owner_worker_id}`;
+    if (client.owner_type === 'partner_entity' && client.owner_partner_entity_id) {
+      return `partner:${client.owner_partner_entity_id}`;
+    }
+    return 'gs';
+  }
+  if (rdp?.owner_type === 'worker' || rdp?.owner_type === 'partner_entity') {
+    return rdp.owner_name ? `name:${rdp.owner_name}` : `type:${rdp.owner_type}:${rdp.id}`;
+  }
+  if (rdp?.owner_name) return rdp.owner_name === 'Global Solutions' ? 'gs' : `name:${rdp.owner_name}`;
+  return null;
+}
+
+function Section({
+  title,
+  icon: Icon,
+  children,
+  accent = 'emerald',
+}: {
+  title: string;
+  icon: typeof Globe2;
+  children: ReactNode;
+  accent?: 'emerald' | 'gold';
+}) {
+  const strip = accent === 'gold' ? 'bg-gold-accent' : 'bg-emerald-accent';
+  return (
+    <div className="rounded-2xl border border-theme bg-brand-card overflow-hidden">
+      <div className="flex items-center gap-2.5 px-4 py-3 border-b border-theme bg-brand-surface-low">
+        <span className={`w-1 h-4 rounded-full ${strip}`} />
+        <Icon size={14} className={accent === 'gold' ? 'text-gold-accent' : 'text-emerald-accent'} />
+        <h2 className="text-sm font-bold text-theme-heading">{title}</h2>
+      </div>
+      <div className="p-4">{children}</div>
+    </div>
+  );
+}
+
+function MiniStat({ label, value }: { label: string; value: number }) {
+  return (
+    <div className="rounded-xl border border-theme bg-brand-surface-low px-3 py-2.5 text-center">
+      <p className="text-lg font-black text-theme-heading tabular-nums leading-none">{value}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wide text-theme-muted mt-1">{label}</p>
+    </div>
+  );
+}
 
 export default function CeoCommandCenterPage() {
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [workersOnline, setWorkersOnline] = useState(0);
-  const [activeSessions, setActiveSessions] = useState(0);
-  const [revenue, setRevenue] = useState('—');
-  const [qualityIndex, setQualityIndex] = useState('—');
-  const [machines, setMachines] = useState<RDPResource[]>([]);
+  const [errors, setErrors] = useState<string[]>([]);
+  const [workers, setWorkers] = useState<Worker[]>([]);
+  const [sessions, setSessions] = useState<WorkSession[]>([]);
+  const [machines, setMachines] = useState<RdpResource[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
-  const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [scores, setScores] = useState<QualityScore[]>([]);
+  const [partners, setPartners] = useState<Partner[]>([]);
+  const [clients, setClients] = useState<Client[]>([]);
+  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
+  const [periodId, setPeriodId] = useState('');
+  const [payoutTotal, setPayoutTotal] = useState<number | null>(null);
+  const [payoutLoading, setPayoutLoading] = useState(false);
+  const [view, setView] = useState<AnalyticsView>('cards');
 
   useEffect(() => {
-    Promise.all([
-      api.get<Worker[]>('/workers'),
-      api.get<WorkSession[]>('/sessions?limit=200'),
-      api.get<RDPResource[]>('/rdp'),
-      api.get<LeaderboardEntry[]>('/leaderboard?limit=5'),
-      api.get<AuditLog[]>('/audit?limit=10'),
-      api.get<QualityScore[]>('/quality/scores'),
-      api.get<{ worker_net: number }[]>('/payroll/line-items'),
-    ])
-      .then(([workers, sessions, rdpList, leaders, logs, scores, lineItems]) => {
-        setWorkersOnline(workers.filter((w) => w.status === 'active').length);
-        setActiveSessions(sessions.filter((s) => !s.end_time).length);
-        setMachines(rdpList);
-        setLeaderboard(leaders);
-        setAuditLogs(logs);
-        if (scores.length > 0) {
-          const avg = scores.reduce((sum, s) => sum + Number(s.composite_score), 0) / scores.length;
-          setQualityIndex(`${avg.toFixed(1)}%`);
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      const results = await Promise.allSettled([
+        api.get<Worker[]>('/workers'),
+        api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'),
+        api.get<RdpResource[]>('/rdp'),
+        api.get<LeaderboardEntry[]>('/leaderboard?limit=5'),
+        api.get<QualityScore[]>('/quality/scores'),
+        api.get<Partner[]>('/partners'),
+        api.get<PayrollPeriod[]>('/payroll/periods'),
+        api.get<Client[]>('/clients'),
+      ]);
+      if (cancelled) return;
+
+      const fails: string[] = [];
+      const labels = ['workers', 'sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'payroll periods', 'clients'];
+      results.forEach((r, i) => {
+        if (r.status === 'rejected') {
+          fails.push(`${labels[i]}: ${r.reason instanceof Error ? r.reason.message : 'failed'}`);
         }
-        if (lineItems.length > 0) {
-          const total = lineItems.reduce((sum, i) => sum + Number(i.worker_net ?? 0), 0);
-          setRevenue(total >= 1000 ? `£${(total / 1000).toFixed(0)}K` : `£${total.toFixed(0)}`);
-        }
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
-      .finally(() => setLoading(false));
+      });
+
+      const periodRows = settled(results[6], [] as PayrollPeriod[]);
+      setWorkers(settled(results[0], [] as Worker[]));
+      setSessions(settled(results[1], [] as WorkSession[]));
+      setMachines(settled(results[2], [] as RdpResource[]));
+      setLeaderboard(settled(results[3], [] as LeaderboardEntry[]));
+      setScores(settled(results[4], [] as QualityScore[]));
+      setPartners(settled(results[5], [] as Partner[]));
+      setPeriods(periodRows);
+      setClients(settled(results[7], [] as Client[]));
+      setPeriodId(pickCurrentPeriod(periodRows)?.id ?? periodRows[0]?.id ?? '');
+      setErrors(fails);
+      setLoading(false);
+    })();
+    return () => { cancelled = true; };
   }, []);
 
-  if (loading) return <p className="text-theme-muted text-sm mt-4">Loading command center...</p>;
-  if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
+  useEffect(() => {
+    if (periods.length === 0) {
+      setPayoutTotal(null);
+      return;
+    }
+    let cancelled = false;
+    setPayoutLoading(true);
+    const scope = periodId ? periods.filter((period) => period.id === periodId) : periods;
+    Promise.allSettled(
+      scope.map((period) => api.get<PayrollReportRow[]>(`/payroll/periods/${period.id}/reports/payroll`)),
+    )
+      .then((results) => {
+        if (cancelled) return;
+        const reports = results.flatMap((result) => result.status === 'fulfilled' ? result.value : []);
+        if (results.every((result) => result.status === 'rejected')) {
+          throw new Error('No payroll reports loaded.');
+        }
+        setPayoutTotal(reports.reduce((sum, row) => sum + Number(row.final_net ?? 0), 0));
+        setErrors((prev) => prev.filter((e) => !e.startsWith('payroll report:')));
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        setPayoutTotal(null);
+        const msg = `payroll report: ${e instanceof Error ? e.message : 'failed'}`;
+        setErrors((prev) => (prev.includes(msg) ? prev : [...prev, msg]));
+      })
+      .finally(() => { if (!cancelled) setPayoutLoading(false); });
+    return () => { cancelled = true; };
+  }, [periodId, periods]);
+
+  const selectedPeriod = periods.find((p) => p.id === periodId) ?? null;
+  const currentPeriod = pickCurrentPeriod(periods);
+  const viewingAll = periodId === '';
+  const orderedPeriods = [...periods].sort((a, b) => a.start_date.localeCompare(b.start_date));
+  const scopeStart = viewingAll ? orderedPeriods[0]?.start_date : selectedPeriod?.start_date;
+  const scopeEnd = viewingAll ? orderedPeriods[orderedPeriods.length - 1]?.end_date : selectedPeriod?.end_date;
+  const scopeLabel = viewingAll ? 'All working months' : (selectedPeriod?.label ?? 'Working month');
+  const scopeCurrencies = Array.from(new Set(
+    (viewingAll ? periods : selectedPeriod ? [selectedPeriod] : []).map((period) => period.currency ?? 'USD'),
+  ));
+  const currency = scopeCurrencies.length === 1 ? scopeCurrencies[0] : 'Mixed';
+
+  const periodSessions = useMemo(() => {
+    if (viewingAll) return sessions;
+    if (!selectedPeriod) return [];
+    return sessions.filter((s) => coversDate(selectedPeriod, s.start_time.slice(0, 10)));
+  }, [sessions, selectedPeriod, viewingAll]);
+
+  const liveSessions = useMemo(
+    () => sessions.filter((s) => !s.end_time).length,
+    [sessions],
+  );
+  const activeWorkers = useMemo(
+    () => workers.filter((w) => w.status === 'active').length,
+    [workers],
+  );
+  const qualityIndex = useMemo(() => {
+    if (scores.length === 0) return null;
+    const avg = scores.reduce((sum, s) => sum + Number(s.composite_score), 0) / scores.length;
+    return `${avg.toFixed(1)}%`;
+  }, [scores]);
+
+  const periodHours = useMemo(() => {
+    let rdp = 0;
+    let work = 0;
+    for (const s of periodSessions) {
+      rdp += rdpConnectedMinutes(s) ?? 0;
+      work += enteredPayMinutes(s);
+    }
+    return { rdp, work };
+  }, [periodSessions]);
+
+  const census = useMemo(() => {
+    const workerIds = new Set<string>();
+    const rdpIds = new Set<string>();
+    const clientById = new Map(clients.map((c) => [c.id, c]));
+    const rdpById = new Map(machines.map((m) => [m.id, m]));
+    const owners = new Set<string>();
+
+    for (const s of periodSessions) {
+      if (s.worker_id) workerIds.add(s.worker_id);
+      if (s.rdp_resource_id) rdpIds.add(s.rdp_resource_id);
+      const rdp = s.rdp_resource_id ? rdpById.get(s.rdp_resource_id) : undefined;
+      const client = (s.client_id && clientById.get(s.client_id))
+        || (rdp?.client_id ? clientById.get(rdp.client_id) : undefined);
+      const key = ownerKey(client, rdp);
+      if (key) owners.add(key);
+    }
+
+    const workerById = new Map(workers.map((w) => [w.id, w]));
+    const partnerIds = new Set<string>();
+    for (const id of workerIds) {
+      const pid = workerById.get(id)?.partner_entity_id;
+      if (pid) partnerIds.add(pid);
+    }
+
+    return {
+      workers: workerIds.size,
+      rdps: rdpIds.size,
+      partners: partnerIds.size,
+      owners: owners.size,
+      sessions: periodSessions.length,
+    };
+  }, [periodSessions, workers, machines, clients]);
+
+  const countryViz = useMemo(() => {
+    const map = new Map<string, { label: string; count: number }>();
+    for (const w of workers) {
+      const raw = (w.country || '').trim() || 'Unassigned';
+      const key = raw.toLowerCase();
+      const prev = map.get(key);
+      if (prev) prev.count += 1;
+      else map.set(key, { label: raw[0].toUpperCase() + raw.slice(1), count: 1 });
+    }
+    return Array.from(map.values()).sort((a, b) => b.count - a.count).slice(0, 6);
+  }, [workers]);
+
+  const machineSummary = useMemo(() => {
+    const online = machines.filter((m) => ['online_free', 'assigned', 'active', 'idle'].includes(m.status)).length;
+    const inUse = machines.filter((m) => m.status === 'active' || m.status === 'assigned').length;
+    const free = machines.filter((m) => m.status === 'online_free').length;
+    const offline = machines.length - online;
+    return { online, inUse, free, offline, total: machines.length };
+  }, [machines]);
+
+  const payoutLabel = payoutLoading
+    ? '…'
+    : payoutTotal == null
+      ? '—'
+      : payoutTotal >= 1000
+        ? `${currency} ${(payoutTotal / 1000).toFixed(1)}K`
+        : `${currency} ${payoutTotal.toFixed(0)}`;
+
+  const countryChart: ChartData<'bar'> = {
+    labels: countryViz.map((r) => r.label),
+    datasets: [{
+      data: countryViz.map((r) => r.count),
+      backgroundColor: EMERALD,
+      borderRadius: 6,
+      borderSkipped: false,
+    }],
+  };
+
+  const machineChart: ChartData<'doughnut'> = {
+    labels: ['In use', 'Free', 'Offline'],
+    datasets: [{
+      data: [machineSummary.inUse, machineSummary.free, machineSummary.offline],
+      backgroundColor: [GOLD, EMERALD, 'rgba(148, 163, 184, 0.35)'],
+      borderWidth: 0,
+    }],
+  };
+
+  const leaderboardChart: ChartData<'bar'> = {
+    labels: leaderboard.map((w) => w.worker_display_name),
+    datasets: [{
+      data: leaderboard.map((w) => Number(w.composite_score)),
+      backgroundColor: GOLD,
+      borderRadius: 6,
+      borderSkipped: false,
+    }],
+  };
+
+  if (loading) {
+    return (
+      <div className="flex justify-center py-16">
+        <SpinningDots size="lg" className="text-emerald-accent" />
+      </div>
+    );
+  }
+
+  const periodChip = periods.length > 0 && scopeStart && scopeEnd ? (
+    <span className="text-xs text-theme-muted">
+      {formatYmd(scopeStart)} – {formatYmd(scopeEnd)}
+      {' · '}
+      {census.sessions} session{census.sessions === 1 ? '' : 's'}
+      {selectedPeriod?.id === currentPeriod?.id ? (
+        <span className="ml-1.5 text-[10px] font-bold uppercase text-gold-accent">Current</span>
+      ) : null}
+    </span>
+  ) : null;
 
   return (
     <div>
       <PageHeader
         title="CEO Command Center"
-        description="Executive command view — real-time organisation state across workers, sessions, revenue, and quality."
+        description={scopeLabel}
+        besideTitle={periodChip}
+        actions={
+          periods.length > 0 ? (
+            <>
+              <PeriodFilter
+                periods={periods}
+                value={periodId}
+                onChange={setPeriodId}
+                allowAll
+                allLabel="All working months"
+                variant="inline"
+                label="Working month"
+              />
+              <AnalyticsViewToggle value={view} onChange={setView} />
+            </>
+          ) : (
+            <AnalyticsViewToggle value={view} onChange={setView} />
+          )
+        }
       />
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
-        <KpiCard label="Workers Online" value={workersOnline} icon={Users} />
-        <KpiCard label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
-        <KpiCard label="Revenue" value={revenue} icon={DollarSign} accent="gold" />
-        <KpiCard label="Quality Index" value={qualityIndex} icon={Star} />
-      </div>
 
-      <div className="grid lg:grid-cols-3 gap-6 mb-8">
-        <div className="glass-panel p-6 lg:col-span-2">
-          <div className="flex items-center gap-2 mb-4"><Globe2 size={18} className="text-emerald-accent" /><h2 className="font-bold text-white">World Activity Map</h2></div>
-          <div className="h-48 rounded-xl bg-brand-primary-dark/50 border border-white/5 flex items-center justify-center">
-            <p className="text-sm text-brand-on-surface-variant">Geographic activity data not available yet.</p>
-          </div>
+      {errors.length > 0 && (
+        <div className="mb-4">
+          <DataAlert tone="warning">
+            Some data sources failed: {errors.slice(0, 2).join(' · ')}
+            {errors.length > 2 ? ` · +${errors.length - 2} more` : ''}.
+          </DataAlert>
         </div>
-        <div className="glass-panel p-6">
-          <div className="flex items-center gap-2 mb-4"><Server size={18} className="text-emerald-accent" /><h2 className="font-bold text-white">Machine Status</h2></div>
-          {machines.length === 0 ? (
-            <p className="text-sm text-brand-on-surface-variant">No machines configured.</p>
-          ) : (
-            <div className="space-y-2">
-              {machines.slice(0, 4).map((m) => (
-                <div key={m.id} className="flex items-center justify-between text-sm">
-                  <span className="text-white truncate">{m.nickname}</span>
-                  <StatusBadge status={m.status} />
-                </div>
-              ))}
+      )}
+
+      {periods.length === 0 && (
+        <div className="mb-4">
+          <DataAlert>No working months yet. Create one on Finance to scope hours and payouts.</DataAlert>
+        </div>
+      )}
+
+      {(viewingAll || selectedPeriod?.id !== currentPeriod?.id) && currentPeriod && (
+        <div className="mb-4 flex justify-end">
+          <button
+            type="button"
+            onClick={() => setPeriodId(currentPeriod.id)}
+            className="text-xs font-bold text-emerald-accent hover:underline"
+          >
+            Jump to current month
+          </button>
+        </div>
+      )}
+
+      <div className="rounded-2xl border border-theme bg-brand-surface-low/80 p-4 sm:p-6 space-y-6">
+        {view === 'cards' ? (
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+              <KpiCard compact label="Active workers" value={activeWorkers} icon={Users} />
+              <KpiCard compact label="Live sessions" value={liveSessions} icon={Activity} accent="blue" />
+              <KpiCard compact label="Quality" value={qualityIndex ?? '—'} icon={Star} accent="gold" />
+              <KpiCard compact label="Work hours" value={formatHoursLabel(periodHours.work)} icon={Clock} />
+              <KpiCard compact label="RDP time" value={formatHoursLabel(periodHours.rdp)} icon={Monitor} accent="blue" />
+              <KpiCard compact label="Payouts" value={payoutLabel} icon={DollarSign} accent="gold" />
             </div>
-          )}
-        </div>
-      </div>
 
-      <div className="grid lg:grid-cols-2 gap-6 mb-8">
-        <div className="glass-panel p-6">
-          <h2 className="font-bold text-white mb-4">Partner Performance</h2>
-          <p className="text-sm text-brand-on-surface-variant">No partner data available yet.</p>
-        </div>
-        <div className="glass-panel p-6">
-          <h2 className="font-bold text-white mb-4">Top Workers</h2>
-          {leaderboard.length === 0 ? (
-            <p className="text-sm text-brand-on-surface-variant">No leaderboard data yet.</p>
-          ) : (
-            leaderboard.map((w, i) => (
-              <div key={w.id} className="flex items-center justify-between py-2 border-b border-white/[0.03] last:border-0">
-                <span className="text-sm text-white">#{w.global_rank ?? i + 1} {w.worker_display_name}</span>
-                <span className="text-sm font-mono text-emerald-accent">{Number(w.composite_score).toFixed(1)}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+            <div className="grid grid-cols-4 gap-2 sm:gap-3">
+              <MiniStat label="Workers" value={census.workers} />
+              <MiniStat label="RDPs" value={census.rdps} />
+              <MiniStat label="Partners" value={census.partners} />
+              <MiniStat label="Owners" value={census.owners} />
+            </div>
 
-      <div className="glass-panel p-6">
-        <h2 className="font-bold text-white mb-4">Live Activity Feed</h2>
-        {auditLogs.length === 0 ? (
-          <p className="text-sm text-brand-on-surface-variant">No recent activity.</p>
+            <div className="grid lg:grid-cols-2 gap-4">
+              <Section title="Workforce by country" icon={Globe2}>
+                {countryViz.length === 0 ? (
+                  <DataAlert>No country data on worker profiles yet.</DataAlert>
+                ) : (
+                  <ul className="space-y-2">
+                    {countryViz.map((row) => (
+                      <li key={row.label} className="flex items-center justify-between text-sm gap-3 py-1.5 border-b border-theme last:border-0">
+                        <span className="text-theme-heading truncate">{row.label}</span>
+                        <span className="font-mono text-emerald-accent tabular-nums shrink-0">{row.count}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+
+              <Section title="Machines" icon={Server} accent="gold">
+                <p className="text-xs text-theme-muted mb-3">
+                  {machineSummary.inUse} in use · {machineSummary.online}/{machineSummary.total} online
+                </p>
+                {machines.length === 0 ? (
+                  <DataAlert>No machines configured.</DataAlert>
+                ) : (
+                  <ul className="space-y-1.5">
+                    {machines.slice(0, 6).map((m) => (
+                      <li
+                        key={m.id}
+                        className="flex items-center justify-between gap-2 rounded-lg border border-theme bg-brand-surface-low px-3 py-2"
+                      >
+                        <span className="text-sm text-theme-heading truncate">{m.nickname}</span>
+                        <StatusBadge status={m.status} />
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </Section>
+            </div>
+
+            <Section title="Top workers" icon={Briefcase} accent="gold">
+              {leaderboard.length === 0 ? (
+                <DataAlert>No leaderboard scores yet.</DataAlert>
+              ) : (
+                <ul className="divide-y divide-theme">
+                  {leaderboard.map((w, i) => {
+                    const rank = w.global_rank ?? i + 1;
+                    return (
+                      <li key={w.id} className="flex items-center justify-between py-2.5 gap-3 first:pt-0 last:pb-0">
+                        <div className="flex items-center gap-2.5 min-w-0">
+                          <span className={`w-7 h-7 rounded-lg text-xs font-black flex items-center justify-center shrink-0 ${
+                            rank === 1
+                              ? 'bg-gold-accent/15 text-gold-accent border border-gold-accent/30'
+                              : 'bg-brand-surface-high text-theme-muted border border-theme'
+                          }`}>
+                            {rank}
+                          </span>
+                          <span className="text-sm text-theme-heading truncate">{w.worker_display_name}</span>
+                        </div>
+                        <span className="text-sm font-mono font-semibold text-emerald-accent tabular-nums">
+                          {Number(w.composite_score).toFixed(1)}
+                        </span>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </Section>
+          </>
         ) : (
-          auditLogs.map((log) => (
-            <div key={log.id} className="text-sm py-2 border-b border-white/[0.03] last:border-0 text-brand-on-surface-variant">
-              <span className="font-mono text-xs">{new Date(log.created_at).toLocaleString()}</span>
-              {' — '}
-              {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'} {log.action} {log.target_type} {log.target_id.slice(0, 8)}…
+          <>
+            <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
+              <KpiCard compact label="Active workers" value={activeWorkers} icon={Users} />
+              <KpiCard compact label="Live sessions" value={liveSessions} icon={Activity} accent="blue" />
+              <KpiCard compact label="Quality" value={qualityIndex ?? '—'} icon={Star} accent="gold" />
+              <KpiCard compact label="Work hours" value={formatHoursLabel(periodHours.work)} icon={Clock} />
+              <KpiCard compact label="RDP time" value={formatHoursLabel(periodHours.rdp)} icon={Monitor} accent="blue" />
+              <KpiCard compact label="Payouts" value={payoutLabel} icon={DollarSign} accent="gold" />
             </div>
-          ))
+
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+              <div className="rounded-2xl border border-emerald-accent/15 bg-brand-card p-4 h-[260px]">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-accent mb-2">By country</p>
+                {countryViz.length === 0 ? (
+                  <DataAlert>No country data.</DataAlert>
+                ) : (
+                  <Bar data={countryChart} options={barOptions} />
+                )}
+              </div>
+              <div className="rounded-2xl border border-gold-accent/15 bg-brand-card p-4 h-[260px]">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gold-accent mb-2">Machine status</p>
+                {machines.length === 0 ? (
+                  <DataAlert>No machines.</DataAlert>
+                ) : (
+                  <Doughnut data={machineChart} options={doughnutOptions} />
+                )}
+              </div>
+              <div className="rounded-2xl border border-gold-accent/15 bg-brand-card p-4 h-[260px]">
+                <p className="text-[10px] font-bold uppercase tracking-wider text-gold-accent mb-2">Top workers</p>
+                {leaderboard.length === 0 ? (
+                  <DataAlert>No scores yet.</DataAlert>
+                ) : (
+                  <Bar data={leaderboardChart} options={barOptions} />
+                )}
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-2 sm:gap-3">
+              <MiniStat label="Workers" value={census.workers} />
+              <MiniStat label="RDPs" value={census.rdps} />
+              <MiniStat label="Partners" value={census.partners} />
+              <MiniStat label="Owners" value={census.owners} />
+            </div>
+          </>
         )}
       </div>
     </div>

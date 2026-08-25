@@ -266,7 +266,6 @@ export default function WalletsPage() {
     <div>
       <PageHeader
         title="Worker Wallets"
-        description="Wallets are credited when a payroll period is pushed; admins can make manual adjustments with a reason."
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />
 

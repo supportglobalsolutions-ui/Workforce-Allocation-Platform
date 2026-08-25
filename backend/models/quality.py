@@ -96,7 +96,7 @@ class QualityCompositeScore(SQLModel, table=True):
     mcq_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     subjective_component: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
     composite_score: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
-    # Confirmed 40/20/25/15 composite inputs (0-100 each).
+    # Confirmed 40/20/15/25 composite inputs (0-100 each).
     assessment_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
     rating_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
     reliability_component: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))

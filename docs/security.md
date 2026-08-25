@@ -81,9 +81,81 @@ The webhook at `POST /integrations/uptime-kuma/webhook` is authenticated by a sh
 
 ---
 
+## Security hardening (OWASP-aligned)
+
+Recent controls added to the codebase:
+
+| Control | Implementation |
+|---------|----------------|
+| Server-side auth on every route | Firebase Bearer + `require_user` / `require_admin` |
+| IDOR / BOLA | Row scoping in routers; Firebase Storage/Firestore rules tie `session_images` to `firebase_uid` |
+| SQL injection | SQLModel ORM + bound parameters only |
+| Password storage | Firebase Auth (bcrypt/scrypt handled by Google) — no local passwords |
+| Session / JWT | Short-lived Firebase ID tokens; `check_revoked=True`; signed HttpOnly `gs-session` cookie for Next.js middleware |
+| Secrets in Git | `.env` gitignored; production startup rejects default DB password and missing `OTP_PEPPER` |
+| Server validation | Pydantic schemas + `apply_update()` allow-lists; session image URLs must be Firebase Storage HTTPS links |
+| XSS | No user HTML rendering; Content-Security-Policy on frontend |
+| CSRF | Bearer tokens (not cookie auth to API) — low CSRF risk |
+| Rate limiting | Redis limits on register, account-status, session-token, RDP claim, and global per-IP traffic |
+| Mass assignment | Explicit update schemas per role |
+| File uploads | Client-side type/size checks; Storage rules enforce size + ownership |
+| Debug exposure | Generic 500 errors in production; `LOG_LEVEL=INFO`; `/docs` disabled in production |
+| Auth failure logs | `security.auth` logger on missing/invalid tokens |
+| RDP access audit | Append-only `rdp.logged_in` / `rdp.logged_out` audit rows |
+
+### Required before production launch
+
+1. Set strong secrets: `DATABASE_URL`, `SESSION_COOKIE_SECRET`, `OTP_PEPPER`, `UPTIME_KUMA_WEBHOOK_SECRET`, `GUACAMOLE_PASSWORD`.
+2. Set `ENVIRONMENT=production`, `DEV_AUTH_BYPASS=false`, `NEXT_PUBLIC_DEV_AUTH_BYPASS=false`.
+3. Deploy updated `firestore.rules` and `storage.rules` to Firebase Console.
+4. Match `SESSION_COOKIE_SECRET` in `backend/.env` and `frontend/.env.local`.
+5. Keep PostgreSQL on a private network with a least-privilege DB user (infra — not in app code).
+6. Enable automated DB backups and test restore (infra).
+7. Run dependency scanning in CI (`pip audit`, `npm audit`).
+8. Enable MFA for Firebase admin accounts in Google Cloud Console.
+
+
+---
+
 ## Audit log
 
 Every material admin action should be written to the `audit_log` table via `POST /audit`. The table is **append-only** — no UPDATE or DELETE is allowed at the application level. Fields recorded: `actor_id`, `action`, `target_type`, `target_id`, `previous_value`, `new_value`, `reason_note`, `ip_address`.
+
+Bulk worker/session deletes and payroll period deletes also write audit rows from the delete endpoints themselves.
+
+---
+
+## Destructive deletes and security risk score
+
+Admins can permanently delete **workers** and **finished sessions** from `/admin/workers` and `/admin/sessions` (select rows → **Delete**). Rules are enforced on the server:
+
+| Rule | Behavior |
+|------|----------|
+| Bulk **≤ 10** | Themed confirm only (no OTP) |
+| Bulk **> 10** | 6-digit OTP emailed to the **Settings alert email** (same OTP path as payroll period delete) |
+| Bulk **> 5** | Informational alert email to that same inbox (does not block the delete) |
+| Live sessions | Skipped — end the session first |
+| Hard cap | Max **200** ids per request |
+
+OTP purposes: `delete_workers`, `delete_sessions`, `delete_payroll_period`. Codes go to `platform_settings.alert_email` (or the previous inbox for 24 hours after an alert-email change).
+
+### Risk score
+
+Table `security_risk_events` stores per-admin points. A sliding **24-hour** sum is checked after destructive actions. When the score reaches **50**, the alert inbox is emailed (debounced to at most once per admin per hour).
+
+| Event | Points |
+|-------|--------|
+| Each worker deleted | 10 |
+| Each session deleted | 2 |
+| Payroll period deleted | 30 |
+| Bulk action with count > 5 | +15 once |
+
+Endpoints:
+
+- `POST /workers/delete/request-otp` · `POST /workers/delete/confirm`
+- `POST /sessions/delete/request-otp` · `POST /sessions/delete/confirm`
+
+Service code: `backend/services/security_risk.py`, `worker_purge.py`, `session_purge.py`.
 
 ---
 

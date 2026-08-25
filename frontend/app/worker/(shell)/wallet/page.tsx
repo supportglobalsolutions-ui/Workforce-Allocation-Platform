@@ -312,7 +312,7 @@ export default function WalletPage() {
   if (error) {
     return (
       <div className="max-w-4xl mx-auto">
-        <PageHeader title="Wallet & Payments" description="Balance, pay period, tier, and payment alerts." />
+        <PageHeader title="Wallet & Payments" />
         <div className="flex items-center gap-2 p-4 rounded-xl bg-danger/10 border border-danger/30 text-danger text-sm">
           <AlertCircle size={16} /> {error}
         </div>
@@ -333,7 +333,6 @@ export default function WalletPage() {
     <div className="max-w-4xl mx-auto space-y-6 pb-10">
       <PageHeader
         title="Wallet & Payments"
-        description="Your balance, current payroll period, pay tier, and payment notifications."
       />
 
       {/* Hero balance card */}

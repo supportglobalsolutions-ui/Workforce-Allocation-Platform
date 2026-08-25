@@ -4,9 +4,10 @@ import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle, Ban, CheckCircle, Clock, Eye, Mail, MousePointerClick,
-  RefreshCw, Send, ShieldAlert, X,
+  RefreshCw, Send, ShieldAlert, Trash2, X,
 } from 'lucide-react';
 
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -29,6 +30,7 @@ export interface EmailLogEntry {
   period_label: string | null;
   worker_id: string | null;
   worker_name: string | null;
+  can_resend: boolean;
   worker?: {
     id: string;
     display_name: string;
@@ -114,17 +116,20 @@ const when = (iso: string | null | undefined) => (iso ? new Date(iso).toLocaleSt
 
 /** Eye-click detail for one email: who, what, and every provider event since. */
 export default function EmailDetailModal({
-  logId, onClose, onUpdated,
+  logId, onClose, onUpdated, onAction,
 }: {
   logId: string;
   onClose: () => void;
   onUpdated?: () => void;
+  onAction?: (message: string, isError?: boolean) => void;
 }) {
   const [entry, setEntry] = useState<EmailLogEntry | null>(null);
   const [loading, setLoading] = useState(true);
   const [rechecking, setRechecking] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
+  const [acting, setActing] = useState<'resend' | 'delete' | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   const load = useCallback(async (refresh: boolean) => {
     try {
@@ -145,16 +150,55 @@ export default function EmailDetailModal({
   }, [load]);
 
   useEffect(() => {
-    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') onClose(); };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !acting && !confirmDelete) onClose();
+    };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [acting, confirmDelete, onClose]);
 
   async function recheck() {
     setRechecking(true);
     setError(null);
     await load(true);
     setRechecking(false);
+  }
+
+  async function resendFailed() {
+    if (!entry || entry.status !== 'failed' || !entry.can_resend) return;
+    setActing('resend');
+    setError(null);
+    try {
+      const result = await api.post<{
+        status: 'queued' | 'sent' | 'failed' | 'already_sent';
+        message: string;
+        error?: string | null;
+      }>(`/communications/log/${entry.id}/resend`, {});
+      onAction?.(result.error || result.message, result.status === 'failed');
+      onUpdated?.();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to resend this email.');
+    } finally {
+      setActing(null);
+    }
+  }
+
+  async function deleteFailed() {
+    if (!entry || entry.status !== 'failed') return;
+    setActing('delete');
+    setError(null);
+    try {
+      await api.delete<void>(`/communications/log/${entry.id}`);
+      onAction?.(`Deleted the failed email to ${entry.to_email}.`);
+      onUpdated?.();
+      onClose();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to delete this email.');
+      setConfirmDelete(false);
+    } finally {
+      setActing(null);
+    }
   }
 
   if (!mounted) return null;
@@ -165,6 +209,7 @@ export default function EmailDetailModal({
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" role="dialog" aria-modal="true">
       <button type="button" aria-label="Close email details"
+        disabled={Boolean(acting)}
         className="absolute inset-0 bg-black/60 backdrop-blur-md" onClick={onClose} />
 
       <div className="glass-modal relative z-10 flex w-full max-w-3xl max-h-[min(85vh,44rem)] flex-col overflow-hidden rounded-2xl">
@@ -193,8 +238,8 @@ export default function EmailDetailModal({
                 </div>
               </div>
             </div>
-            <button type="button" onClick={onClose} aria-label="Close"
-              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-theme-muted transition-colors hover:bg-white/5 hover:text-theme-heading">
+            <button type="button" onClick={onClose} disabled={Boolean(acting)} aria-label="Close"
+              className="inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-lg text-theme-muted transition-colors hover:bg-white/5 hover:text-theme-heading disabled:opacity-40">
               <X size={16} />
             </button>
           </div>
@@ -298,7 +343,48 @@ export default function EmailDetailModal({
             </div>
           )}
         </div>
+
+        {entry?.status === 'failed' && (
+          <footer className="shrink-0 border-t border-danger/20 bg-danger/[0.03] px-5 py-4 sm:px-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <p className="max-w-md text-xs text-theme-muted">
+                {entry.can_resend
+                  ? 'This message never left the platform. You can resend it or remove the failed record.'
+                  : 'The original content for this older failure is unavailable. You can still delete the record.'}
+              </p>
+              <div className="flex items-center gap-2">
+                <button type="button" disabled={Boolean(acting)} onClick={() => setConfirmDelete(true)}
+                  className="inline-flex items-center gap-1.5 rounded-xl border border-danger/30 px-3 py-2 text-xs font-semibold text-danger transition-colors hover:bg-danger/10 disabled:opacity-40">
+                  <Trash2 size={12} /> Delete
+                </button>
+                <button type="button" disabled={!entry.can_resend || Boolean(acting)}
+                  onClick={() => void resendFailed()}
+                  title={entry.can_resend ? 'Resend this email' : 'Original message content is unavailable.'}
+                  className="btn-primary inline-flex items-center gap-1.5 px-3 py-2 text-xs disabled:opacity-40">
+                  {acting === 'resend' ? <SpinningDots size="sm" /> : <Send size={12} />} Resend
+                </button>
+              </div>
+            </div>
+          </footer>
+        )}
       </div>
+
+      <ConfirmModal
+        open={confirmDelete}
+        title="Delete failed email?"
+        body={entry ? (
+          <>
+            This removes the failed attempt to <span className="font-semibold text-theme-heading">{entry.to_email}</span>
+            {' '}from email history. It will not send the message.
+          </>
+        ) : null}
+        confirmLabel="Delete failure"
+        tone="danger"
+        icon={Trash2}
+        busy={acting === 'delete'}
+        onConfirm={() => void deleteFailed()}
+        onCancel={() => { if (!acting) setConfirmDelete(false); }}
+      />
     </div>,
     document.body,
   );

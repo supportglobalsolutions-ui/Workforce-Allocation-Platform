@@ -4,9 +4,9 @@ from sqlmodel import Session
 
 from core.database import get_db
 from core.permissions import require_admin
-from models.audit_log import AuditLog
 from routers.deps import get_admin_user
 from services.admin_otp import get_platform_settings, mask_email, otp_recipient, set_alert_email
+from services.audit_service import record_audit
 from services.email_resend import blocked_recipient_reason
 
 router = APIRouter()
@@ -68,7 +68,8 @@ def update_alert_email(
     previous = row.alert_email
     row = set_alert_email(db, row, body.alert_email)
     admin = get_admin_user(db, current_user)
-    db.add(AuditLog(
+    record_audit(
+        db,
         actor_id=admin.id,
         action="settings.alert_email_changed",
         target_type="platform_settings",
@@ -76,6 +77,6 @@ def update_alert_email(
         previous_value={"alert_email": previous},
         new_value={"alert_email": row.alert_email},
         reason_note="Admin alert email updated; OTP cooldown 24 hours",
-    ))
+    )
     db.commit()
     return _settings_payload(row)

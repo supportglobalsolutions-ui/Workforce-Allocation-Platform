@@ -21,6 +21,7 @@ interface ClientOption {
   id: string;
   name: string;
   platform: string;
+  owner_name: string | null;
 }
 
 interface MachineForm {
@@ -208,9 +209,16 @@ export default function RdpManagementPage() {
         >
           <option value="">None</option>
           {clients.map((c) => (
-            <option key={c.id} value={c.id}>{c.name} — {c.platform}</option>
+            <option key={c.id} value={c.id}>
+              {c.name} — {c.platform}{c.owner_name ? ` · owner ${c.owner_name}` : ''}
+            </option>
           ))}
         </select>
+        {form.client_id && (
+          <span className="mt-1 block text-[11px] text-theme-muted">
+            Owner: {clients.find((c) => c.id === form.client_id)?.owner_name ?? '—'}
+          </span>
+        )}
       </label>
       <label className="block">
         <span className="text-xs text-brand-on-surface-variant mb-1 block">Monitor host (IP) *</span>
@@ -261,7 +269,6 @@ export default function RdpManagementPage() {
     <div>
       <PageHeader
         title="RDP Resource Management"
-        description="Add machines, set monitor IPs, and control status — lock, maintenance, and force release."
         actions={
           <button
             type="button"
@@ -334,6 +341,8 @@ export default function RdpManagementPage() {
                       <p className="text-xs text-brand-on-surface-variant">
                         {m.country} · {m.client_group}
                         {clientName(m.client_id) ? ` · ${clientName(m.client_id)}` : ''}
+                        {m.owner_name ? ` · owner ${m.owner_name}` : ''}
+                        {m.assigned_worker_name ? ` · worker ${m.assigned_worker_name}` : ''}
                         {m.monitor_host ? ` · ${m.monitor_host}:${m.monitor_port ?? 3389}` : ' · no monitor IP'}
                         {m.health_notes ? ` · ${m.health_notes}` : ''}
                       </p>

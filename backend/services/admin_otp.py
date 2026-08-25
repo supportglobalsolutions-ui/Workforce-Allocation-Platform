@@ -15,7 +15,7 @@ import logging
 import secrets
 from datetime import datetime, timedelta, timezone
 from typing import Optional
-from uuid import UUID
+from uuid import UUID, uuid5, NAMESPACE_OID
 
 from fastapi import HTTPException
 from sqlmodel import Session, select
@@ -37,6 +37,14 @@ OTP_COOLDOWN = timedelta(hours=24)
 OTP_MAX_ATTEMPTS = 5
 OTP_RESEND_SECONDS = 30
 PURPOSE_DELETE_PERIOD = "delete_payroll_period"
+PURPOSE_DELETE_WORKERS = "delete_workers"
+PURPOSE_DELETE_SESSIONS = "delete_sessions"
+
+
+def bulk_delete_target_id(purpose: str, ids: list[UUID]) -> UUID:
+    """Stable OTP target for a bulk delete set (order-independent)."""
+    raw = ",".join(str(i) for i in sorted(ids, key=str))
+    return uuid5(NAMESPACE_OID, f"{purpose}:{raw}")
 
 
 def _utcnow() -> datetime:
@@ -123,7 +131,12 @@ def set_alert_email(db: Session, row: PlatformSettings, new_email: str) -> Platf
 
 
 def _pepper() -> bytes:
-    return (settings.OTP_PEPPER or settings.RESEND_API_KEY or "gs-otp-dev").encode()
+    raw = settings.OTP_PEPPER or settings.RESEND_API_KEY
+    if not raw:
+        if settings.is_production:
+            raise RuntimeError("OTP_PEPPER or RESEND_API_KEY is required in production")
+        raw = "gs-otp-dev"
+    return raw.encode()
 
 
 def hash_otp(challenge_id: UUID, code: str) -> str:

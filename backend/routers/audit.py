@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import require_admin
 from models.audit_log import AuditLog
-from schemas.audit_log import AuditLogCreate, AuditLogResponse
+from schemas.audit_log import AuditLogResponse
 
 router = APIRouter()
 
@@ -39,14 +39,25 @@ def get_audit_log(
     return entry
 
 
-@router.post("", response_model=AuditLogResponse, status_code=status.HTTP_201_CREATED)
-def create_audit_log(
-    body: AuditLogCreate,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    entry = AuditLog(**body.model_dump())
-    db.add(entry)
-    db.commit()
-    db.refresh(entry)
-    return entry
+@router.post("", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+def create_audit_log_forbidden():
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Audit log is append-only. Events are recorded by the server, not by API clients.",
+    )
+
+
+@router.patch("/{entry_id}", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+def update_audit_log_forbidden(entry_id: UUID):
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Audit log entries cannot be changed.",
+    )
+
+
+@router.delete("/{entry_id}", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)
+def delete_audit_log_forbidden(entry_id: UUID):
+    raise HTTPException(
+        status_code=status.HTTP_405_METHOD_NOT_ALLOWED,
+        detail="Audit log entries cannot be deleted.",
+    )

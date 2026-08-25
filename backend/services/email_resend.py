@@ -82,6 +82,21 @@ def close_http_client() -> None:
     _http = None
 
 
+def _failed_retry_payload(
+    *,
+    status: str,
+    template: str,
+    html: str,
+    text: Optional[str],
+    attachments: Optional[list[dict[str, Any]]],
+    email_job_id: Optional[UUID],
+) -> Optional[dict[str, Any]]:
+    """Keep only the minimum content needed to replay a failed direct send."""
+    if status != "failed" or template == "otp" or attachments or email_job_id:
+        return None
+    return {"html": html, "text": text}
+
+
 def send_email_detailed(
     db: Session,
     *,
@@ -143,6 +158,14 @@ def send_email_detailed(
         error=error,
         resend_id=resend_id,
         last_event="sent" if status == "sent" else None,
+        retry_payload=_failed_retry_payload(
+            status=status,
+            template=template,
+            html=html,
+            text=text,
+            attachments=attachments,
+            email_job_id=email_job_id,
+        ),
         payroll_period_id=payroll_period_id,
         worker_id=worker_id,
         email_job_id=email_job_id,
@@ -314,6 +337,7 @@ def send_email_batch(
 # Hex values match frontend/lib/theme/tokens.ts (dark). Email clients ignore
 # CSS variables, so these are inlined. Tables, not divs, for Outlook.
 
+_CANVAS = "#FFFFFF"
 _BG = "#021D17"
 _HEADER = "#032F25"
 _CARD = "#0A241E"
@@ -327,10 +351,10 @@ _MUTED = "#bbcac2"
 
 
 def _email_shell(*, eyebrow: str, heading: str, body: str, footer: str) -> str:
-    """Shared GlobalSolutions chrome: gold rule, forest header, emerald accents.
+    """Shared GlobalSolutions chrome: white canvas around the dark brand card.
 
     Hex values are inlined (email clients ignore CSS variables). `bgcolor` is
-    set alongside CSS so Outlook still shows the dark green canvas.
+    set alongside CSS so Outlook also preserves the white outer canvas.
     """
     return f"""<!DOCTYPE html>
 <html lang="en" xmlns="http://www.w3.org/1999/xhtml">
@@ -341,9 +365,9 @@ def _email_shell(*, eyebrow: str, heading: str, body: str, footer: str) -> str:
   <meta name="supported-color-schemes" content="dark"/>
   <title>{heading}</title>
 </head>
-<body bgcolor="{_BG}" style="margin:0; padding:0; background-color:{_BG};">
+<body bgcolor="{_CANVAS}" style="margin:0; padding:0; background-color:{_CANVAS};">
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
-         bgcolor="{_BG}" style="background-color:{_BG}; padding:28px 12px;">
+         bgcolor="{_CANVAS}" style="background-color:{_CANVAS}; padding:28px 12px;">
     <tr>
       <td align="center">
         <table role="presentation" width="640" cellpadding="0" cellspacing="0" border="0"

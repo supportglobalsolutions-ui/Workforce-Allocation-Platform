@@ -8,6 +8,7 @@ export interface PeriodFilterOption {
   start_date?: string;
   end_date?: string;
   status?: string;
+  is_current?: boolean;
 }
 
 const STATUS_CHIP: Record<string, string> = {
@@ -38,7 +39,7 @@ export default function PeriodFilter({
   value,
   onChange,
   allowAll = false,
-  allLabel = 'All',
+  allLabel = 'All working months',
   variant = 'select',
   label = 'Working month',
 }: {
@@ -47,7 +48,7 @@ export default function PeriodFilter({
   onChange: (id: string) => void;
   allowAll?: boolean;
   allLabel?: string;
-  variant?: 'select' | 'chips';
+  variant?: 'select' | 'chips' | 'inline';
   label?: string;
 }) {
   if (variant === 'chips') {
@@ -81,9 +82,38 @@ export default function PeriodFilter({
             >
               {p.label}
               {p.status ? <StatusChip status={p.status} /> : null}
+              {p.is_current ? (
+                <span className="text-[9px] font-bold uppercase tracking-wider text-gold-accent">current</span>
+              ) : null}
             </button>
           ))}
         </div>
+      </div>
+    );
+  }
+
+  if (variant === 'inline') {
+    return (
+      <div className="relative min-w-[15rem] max-w-[22rem]">
+        <select
+          aria-label={label}
+          value={value}
+          onChange={(e) => onChange(e.target.value)}
+          className="input-field appearance-none h-10 pr-8 text-sm"
+          disabled={periods.length === 0 && !allowAll}
+        >
+          {allowAll && <option value="">{allLabel}</option>}
+          {periods.length === 0 && !allowAll ? (
+            <option value="">No periods available</option>
+          ) : (
+            periods.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.label}{p.status ? ` · ${p.status}` : ''}{p.is_current ? ' · current' : ''}
+              </option>
+            ))
+          )}
+        </select>
+        <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
       </div>
     );
   }
@@ -104,7 +134,7 @@ export default function PeriodFilter({
           ) : (
             periods.map((p) => (
               <option key={p.id} value={p.id}>
-                {formatRange(p)}{p.status ? ` — ${p.status}` : ''}
+                {formatRange(p)}{p.status ? ` — ${p.status}` : ''}{p.is_current ? ' — current' : ''}
               </option>
             ))
           )}

@@ -146,7 +146,6 @@ export default function RdpClaimBoard() {
     <div className="max-w-6xl">
       <PageHeader
         title="RDP Claim Board"
-        description="Claim an available machine to start your session."
         actions={
           <span className="flex items-center gap-2 text-xs font-mono text-emerald-accent">
             <span className="w-2 h-2 rounded-full bg-emerald-accent animate-pulse" />

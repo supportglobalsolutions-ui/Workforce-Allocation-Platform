@@ -24,6 +24,11 @@ export default function AppShell({ children, role }: AppShellProps) {
     setMobileSidebarOpen(false);
   }, [pathname]);
 
+  useEffect(() => {
+    document.body.classList.toggle('nav-scroll-lock', mobileSidebarOpen);
+    return () => document.body.classList.remove('nav-scroll-lock');
+  }, [mobileSidebarOpen]);
+
   const toggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setMobileSidebarOpen((prev) => !prev);
@@ -36,7 +41,8 @@ export default function AppShell({ children, role }: AppShellProps) {
     });
   };
 
-  const collapsed = sidebarCollapsed;
+  const closeMobileSidebar = () => setMobileSidebarOpen(false);
+  const effectiveCollapsed = mobileSidebarOpen ? false : sidebarCollapsed;
 
   return (
     <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-clip">
@@ -45,31 +51,37 @@ export default function AppShell({ children, role }: AppShellProps) {
           type="button"
           aria-label="Close navigation"
           className="fixed inset-0 bg-black/50 z-30 md:hidden"
-          onClick={() => setMobileSidebarOpen(false)}
+          onClick={closeMobileSidebar}
         />
       )}
 
       <div
-        className={`fixed inset-y-0 left-0 z-40 transition-transform duration-300 md:translate-x-0 ${
+        className={`fixed inset-y-0 left-0 z-40 w-[min(280px,88vw)] md:w-auto transition-transform duration-300 md:translate-x-0 ${
           mobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
         }`}
       >
-        <CollapsibleSidebar role={role} collapsed={collapsed} />
+        <CollapsibleSidebar
+          role={role}
+          collapsed={effectiveCollapsed}
+          onClose={closeMobileSidebar}
+          mobileOpen={mobileSidebarOpen}
+        />
       </div>
 
       <div
         className={`flex-1 relative min-h-screen z-10 flex flex-col w-full min-w-0 transition-[margin] duration-300 ease-in-out ${
-          collapsed ? 'md:ml-[72px]' : 'md:ml-[240px]'
+          sidebarCollapsed ? 'md:ml-[72px]' : 'md:ml-[240px]'
         }`}
       >
         <TopNav
           variant="portal"
           role={role}
-          sidebarCollapsed={collapsed}
+          sidebarCollapsed={sidebarCollapsed}
+          mobileSidebarOpen={mobileSidebarOpen}
           onToggleSidebar={toggleSidebar}
           showSidebarToggle
         />
-        <main className="p-4 md:p-6 lg:p-8 flex-1 w-full min-w-0 max-w-[1600px]">{children}</main>
+        <main className="p-4 sm:p-5 md:p-6 lg:p-8 flex-1 w-full min-w-0 max-w-[1600px] mx-auto">{children}</main>
         <SiteFooter />
       </div>
     </div>

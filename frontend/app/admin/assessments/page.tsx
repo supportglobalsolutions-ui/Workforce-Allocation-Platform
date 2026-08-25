@@ -77,11 +77,12 @@ function ModalShell({
 
 interface AssessmentSet {
   id: string; title: string; category: string; passing_score_pct: number;
-  is_active: boolean; created_by: string; question_count: number; result_count: number;
+  is_active: boolean; allow_retakes?: boolean; max_attempts?: number;
+  created_by: string; question_count: number; result_count: number; marks_total?: number;
 }
 interface McqQuestion {
   id: string; assessment_set_id: string; prompt: string;
-  options: { key: string; text: string }[]; correct_option_key: string; sort_order: number;
+  options: { key: string; text: string }[]; correct_option_key: string; sort_order: number; marks: number;
 }
 interface McqResult {
   id: string; worker_id: string; assessment_set_id: string; score_pct: number;
@@ -98,6 +99,7 @@ function QuestionModal({
   const [prompt, setPrompt]   = useState(existing?.prompt ?? '');
   const [options, setOptions] = useState(existing?.options ?? OPTION_KEYS.map((k) => ({ key: k, text: '' })));
   const [correct, setCorrect] = useState(existing?.correct_option_key ?? 'A');
+  const [marks, setMarks]     = useState(String(existing?.marks ?? ''));
   const [saving, setSaving]   = useState(false);
   const [error, setError]     = useState('');
 
@@ -111,10 +113,10 @@ function QuestionModal({
     setSaving(true); setError('');
     try {
       if (existing) {
-        onSaved(await api.patch<McqQuestion>(`/assessments/questions/${existing.id}`, { prompt, options, correct_option_key: correct }));
+        onSaved(await api.patch<McqQuestion>(`/assessments/questions/${existing.id}`, { prompt, options, correct_option_key: correct, marks: Number(marks) }));
       } else {
         onSaved(await api.post<McqQuestion>(`/assessments/${assessmentId}/questions`, {
-          assessment_set_id: assessmentId, prompt, options, correct_option_key: correct, sort_order: nextOrder,
+          assessment_set_id: assessmentId, prompt, options, correct_option_key: correct, sort_order: nextOrder, marks: Number(marks),
         }));
       }
     } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed to save.'); }
@@ -153,6 +155,9 @@ function QuestionModal({
             </div>
             <p className="text-[10px] text-theme-muted mt-2">Click the letter to mark the correct answer.</p>
           </div>
+          <Field label="Marks (all questions must total 100)">
+            <input required type="number" min={0.01} max={100} step="0.01" value={marks} onChange={(e) => setMarks(e.target.value)} className="input-field" />
+          </Field>
           {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
           <div className="flex gap-3 justify-end pt-1">
             <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
@@ -175,13 +180,18 @@ function McqFormModal({
   const [title,    setTitle]    = useState(existing?.title ?? '');
   const [category, setCategory] = useState(existing?.category ?? '');
   const [passing,  setPassing]  = useState(String(existing?.passing_score_pct ?? 70));
-  const [active,   setActive]   = useState(existing?.is_active ?? true);
+  const [active,   setActive]   = useState(existing?.is_active ?? false);
+  const [retakes,  setRetakes]  = useState(existing?.allow_retakes ?? false);
+  const [maxAttempts, setMaxAttempts] = useState(String(existing?.max_attempts ?? 1));
   const [saving,   setSaving]   = useState(false);
   const [error,    setError]    = useState('');
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
-    const body = { title, category, passing_score_pct: Number(passing), is_active: active };
+    const body = {
+      title, category, passing_score_pct: Number(passing), is_active: active,
+      allow_retakes: retakes, max_attempts: retakes ? Number(maxAttempts) : 1,
+    };
     try {
       if (existing) { onSaved(await api.patch<AssessmentSet>(`/assessments/${existing.id}`, body)); }
       else { onSaved(await api.post<AssessmentSet>('/assessments', body)); }
@@ -206,6 +216,17 @@ function McqFormModal({
               <Toggle value={active} onChange={setActive} />
               <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
             </div>
+            <p className="text-[10px] text-theme-muted mt-1">Activate only when question marks add up to 100.</p>
+          </Field>
+          <Field label="Retakes">
+            <div className="flex items-center gap-3">
+              <Toggle value={retakes} onChange={setRetakes} />
+              <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
+            </div>
+            {retakes && (
+              <input type="number" min={2} max={10} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)}
+                className="input-field mt-2" placeholder="Max attempts" />
+            )}
           </Field>
           {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
           <div className="flex gap-3 justify-end">
@@ -285,7 +306,7 @@ function McqDetailModal({
         <div className="px-5 pt-2 pb-0 shrink-0">
           <div className="flex items-center gap-2">
             <StatusBadge active={localSet.is_active} />
-            <span className="text-[10px] text-theme-muted">{localSet.category} · Pass at {Number(localSet.passing_score_pct).toFixed(0)}% · {questions.length} questions</span>
+            <span className="text-[10px] text-theme-muted">{localSet.category} · Pass at {Number(localSet.passing_score_pct).toFixed(0)}% · {questions.length} questions · {questions.reduce((s, q) => s + Number(q.marks || 0), 0).toFixed(1)}/100 marks</span>
           </div>
         </div>
         {/* Tabs */}
@@ -320,6 +341,7 @@ function McqDetailModal({
                         <span className="text-[10px] font-bold text-theme-muted mt-0.5 w-5 shrink-0">Q{idx + 1}</span>
                         <div className="flex-1 min-w-0">
                           <p className="text-sm text-white font-medium">{q.prompt}</p>
+                          <p className="text-[10px] text-gold-accent mt-1">{Number(q.marks).toFixed(1)} marks</p>
                           <div className="mt-2 grid grid-cols-2 gap-1">
                             {q.options.map((opt) => (
                               <div key={opt.key}
@@ -414,10 +436,9 @@ function McqDetailModal({
                 <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-2">
                   <p className="text-xs text-theme-muted">Passing contributes to the <span className="text-white">MCQ component</span> of the composite leaderboard score.</p>
                   {[
-                    { label: 'MCQ weight', value: '20% of composite' },
-                    { label: 'Pass threshold', value: `${Number(localSet.passing_score_pct).toFixed(0)}%` },
-                    { label: 'Passed credit', value: 'Full score_pct' },
-                    { label: 'Failed credit', value: 'score_pct × 0.5' },
+                  { label: 'Assessment 40%', value: 'Worker average out of 100; leaderboard applies 40%' },
+                  { label: 'Pass threshold', value: `${Number(localSet.passing_score_pct).toFixed(0)}%` },
+                  { label: 'Failed attempts', value: 'Still stored; retake overwrites the score' },
                   ].map(({ label, value }) => (
                     <div key={label} className="flex items-center justify-between py-1 border-b border-white/[0.04] last:border-0">
                       <span className="text-xs text-theme-muted">{label}</span>
@@ -431,7 +452,7 @@ function McqDetailModal({
                 {deleteErr && <p className="text-xs text-red-400 mb-2">{deleteErr}</p>}
                 {confirmDel ? (
                   <div className="glass-panel rounded-xl p-4 border border-red-500/30 bg-red-500/5">
-                    <p className="text-xs text-red-300 mb-3">Permanently deletes the assessment and all questions. Cannot be undone.</p>
+                    <p className="text-xs text-red-300 mb-3">Deletes questions for this test. Worker scores stay on the Scores page with this test name.</p>
                     <div className="flex gap-2">
                       <button type="button" onClick={handleDelete} disabled={deleting}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-bold disabled:opacity-60">
@@ -473,7 +494,15 @@ function McqDetailModal({
 // Task Assessment section
 // ════════════════════════════════════════════════════════════════════════════════
 
-type TaskDetailTab = 'overview' | 'results' | 'settings';
+type TaskDetailTab = 'overview' | 'activities' | 'results' | 'settings';
+
+interface TaskActivity {
+  id: string;
+  task_assessment_id: string;
+  prompt: string;
+  max_marks: number;
+  sort_order: number;
+}
 
 // ── Media uploader ─────────────────────────────────────────────────────────────
 
@@ -567,7 +596,9 @@ function TaskFormModal({
   const [isTimed,     setIsTimed]     = useState(existing?.is_timed ?? false);
   const [timeLimit,   setTimeLimit]   = useState(String(existing?.time_limit_minutes ?? 30));
   const [passing,     setPassing]     = useState(String(existing?.passing_score_pct ?? 70));
-  const [active,      setActive]      = useState(existing?.is_active ?? true);
+  const [active,      setActive]      = useState(existing?.is_active ?? false);
+  const [retakes,     setRetakes]     = useState(existing?.allow_retakes ?? false);
+  const [maxAttempts, setMaxAttempts] = useState(String(existing?.max_attempts ?? 1));
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState('');
 
@@ -580,6 +611,8 @@ function TaskFormModal({
       time_limit_minutes: isTimed ? Number(timeLimit) : null,
       passing_score_pct: Number(passing),
       is_active: active,
+      allow_retakes: retakes,
+      max_attempts: retakes ? Number(maxAttempts) : 1,
     };
     try {
       if (existing) { onSaved(await api.patch<TaskAssessment>(`/task-assessments/${existing.id}`, body)); }
@@ -645,7 +678,19 @@ function TaskFormModal({
                 <Toggle value={active} onChange={setActive} />
                 <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
               </div>
+              <p className="text-[10px] text-theme-muted mt-1">Activate when activity marks total 100.</p>
             </Field>
+            <Field label="Retakes">
+              <div className="flex items-center gap-2 mt-1">
+                <Toggle value={retakes} onChange={setRetakes} />
+                <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
+              </div>
+            </Field>
+            {retakes && (
+              <Field label="Max attempts">
+                <input type="number" min={2} max={10} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} className="input-field" />
+              </Field>
+            )}
           </div>
 
           {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
@@ -668,18 +713,40 @@ function TaskFormModal({
 function GradePanel({
   result, onGraded,
 }: { result: TaskResult; onGraded: (r: TaskResult) => void }) {
+  const [activities, setActivities] = useState<TaskActivity[]>([]);
+  const [awarded, setAwarded] = useState<Record<string, string>>({});
   const [score, setScore]   = useState(String(result.score_pct ?? ''));
   const [passed, setPassed] = useState(result.passed ?? false);
   const [notes, setNotes]   = useState(result.grader_notes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');
 
+  useEffect(() => {
+    if (!result.task_assessment_id) return;
+    api.get<TaskActivity[]>(`/task-assessments/${result.task_assessment_id}/activities`)
+      .then((list) => {
+        setActivities(list);
+        const next: Record<string, string> = {};
+        list.forEach((a) => { next[a.id] = ''; });
+        setAwarded(next);
+      })
+      .catch(() => setActivities([]));
+  }, [result.task_assessment_id]);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
     try {
-      const r = await api.patch<TaskResult>(`/task-assessments/results/${result.id}/grade`, {
-        score_pct: Number(score), passed, grader_notes: notes || null,
-      });
+      const body = activities.length
+        ? {
+            activity_scores: activities.map((a) => ({
+              activity_id: a.id,
+              marks_awarded: Number(awarded[a.id] || 0),
+            })),
+            passed,
+            grader_notes: notes || null,
+          }
+        : { score_pct: Number(score), passed, grader_notes: notes || null };
+      const r = await api.patch<TaskResult>(`/task-assessments/results/${result.id}/grade`, body);
       onGraded(r);
     } catch (err: unknown) { setError(err instanceof Error ? err.message : 'Failed.'); }
     finally { setSaving(false); }
@@ -688,27 +755,24 @@ function GradePanel({
   return (
     <form onSubmit={handleSubmit} className="mt-3 glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
       <p className="text-[10px] font-bold uppercase tracking-wider text-gold-accent">Grade Submission</p>
-      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+      {activities.length > 0 ? (
+        <div className="space-y-2">
+          {activities.map((a) => (
+            <div key={a.id} className="flex items-center gap-2">
+              <p className="text-xs text-white flex-1 min-w-0 truncate">{a.prompt}</p>
+              <input type="number" min={0} max={a.max_marks} step="0.01" required
+                value={awarded[a.id] ?? ''} onChange={(e) => setAwarded((p) => ({ ...p, [a.id]: e.target.value }))}
+                className="input-field w-20" />
+              <span className="text-[10px] text-theme-muted w-12">/ {Number(a.max_marks)}</span>
+            </div>
+          ))}
+        </div>
+      ) : (
         <div>
           <label className="text-[10px] text-theme-muted mb-1 block">Score (%)</label>
           <input type="number" required min={0} max={100} value={score} onChange={(e) => setScore(e.target.value)} className="input-field" />
         </div>
-        <div>
-          <label className="text-[10px] text-theme-muted mb-1 block">Outcome</label>
-          <div className="flex gap-2 mt-1">
-            {[true, false].map((v) => (
-              <button key={String(v)} type="button" onClick={() => setPassed(v)}
-                className={`flex-1 py-1.5 rounded-lg text-xs font-bold border transition-colors ${
-                  passed === v
-                    ? v ? 'bg-emerald-accent/20 text-emerald-400 border-emerald-accent/40' : 'bg-red-500/20 text-red-400 border-red-500/40'
-                    : 'border-white/10 text-theme-muted hover:border-white/20'
-                }`}>
-                {v ? 'Pass' : 'Fail'}
-              </button>
-            ))}
-          </div>
-        </div>
-      </div>
+      )}
       <div>
         <label className="text-[10px] text-theme-muted mb-1 block">Grader Notes (optional)</label>
         <textarea rows={2} value={notes} onChange={(e) => setNotes(e.target.value)}
@@ -738,6 +802,11 @@ function TaskDetailModal({
   const [deleting, setDeleting] = useState(false);
   const [deleteErr, setDeleteErr] = useState('');
   const [confirmDel, setConfirmDel] = useState(false);
+  const [activities, setActivities] = useState<TaskActivity[]>([]);
+  const [actPrompt, setActPrompt] = useState('');
+  const [actMarks, setActMarks] = useState('');
+  const [actSaving, setActSaving] = useState(false);
+  const [actErr, setActErr] = useState('');
 
   const loadR = useCallback(async () => {
     setRLoading(true); setRError('');
@@ -747,6 +816,12 @@ function TaskDetailModal({
   }, [localA.id]);
 
   useEffect(() => { if (tab === 'results') loadR(); }, [tab, loadR]);
+  useEffect(() => {
+    if (tab !== 'activities') return;
+    api.get<TaskActivity[]>(`/task-assessments/${localA.id}/activities`)
+      .then(setActivities)
+      .catch(() => setActivities([]));
+  }, [tab, localA.id]);
 
   async function handleDelete() {
     setDeleting(true);
@@ -763,6 +838,7 @@ function TaskDetailModal({
 
   const TABS = [
     { key: 'overview' as TaskDetailTab, label: 'Overview', icon: <Eye size={13} /> },
+    { key: 'activities' as TaskDetailTab, label: 'Activities', icon: <FileQuestion size={13} /> },
     { key: 'results'  as TaskDetailTab, label: 'Results',  icon: <BarChart3 size={13} /> },
     { key: 'settings' as TaskDetailTab, label: 'Settings', icon: <Settings size={13} /> },
   ];
@@ -794,6 +870,44 @@ function TaskDetailModal({
         </div>
 
         <div className="flex-1 overflow-y-auto">
+          {tab === 'activities' && (
+            <div className="p-5 space-y-4">
+              <p className="text-xs text-theme-muted">
+                Activity marks must add to 100 before this task can be activated.
+                Total now: {activities.reduce((s, a) => s + Number(a.max_marks), 0).toFixed(1)}/100
+              </p>
+              {activities.map((a) => (
+                <div key={a.id} className="flex items-center gap-2 glass-panel rounded-xl p-3 border border-white/[0.06]">
+                  <p className="text-sm text-white flex-1">{a.prompt}</p>
+                  <span className="text-xs text-gold-accent">{Number(a.max_marks).toFixed(1)}</span>
+                  <button type="button" onClick={async () => {
+                    await api.delete(`/task-assessments/activities/${a.id}`);
+                    setActivities((p) => p.filter((x) => x.id !== a.id));
+                  }} className="text-theme-muted hover:text-red-400"><Trash2 size={12} /></button>
+                </div>
+              ))}
+              <form className="space-y-2" onSubmit={async (e) => {
+                e.preventDefault(); setActSaving(true); setActErr('');
+                try {
+                  const created = await api.post<TaskActivity>(`/task-assessments/${localA.id}/activities`, {
+                    prompt: actPrompt, max_marks: Number(actMarks), sort_order: activities.length,
+                  });
+                  setActivities((p) => [...p, created]);
+                  setActPrompt(''); setActMarks('');
+                } catch (err: unknown) { setActErr(err instanceof Error ? err.message : 'Failed.'); }
+                finally { setActSaving(false); }
+              }}>
+                <Field label="New activity">
+                  <input required value={actPrompt} onChange={(e) => setActPrompt(e.target.value)} className="input-field" placeholder="What the worker must do" />
+                </Field>
+                <Field label="Max marks">
+                  <input required type="number" min={0.01} max={100} step="0.01" value={actMarks} onChange={(e) => setActMarks(e.target.value)} className="input-field" />
+                </Field>
+                {actErr && <p className="text-xs text-red-400">{actErr}</p>}
+                <button type="submit" disabled={actSaving} className="btn-primary text-xs py-1.5 px-3">Add activity</button>
+              </form>
+            </div>
+          )}
           {/* Overview */}
           {tab === 'overview' && (
             <div className="p-5 space-y-5">
@@ -927,11 +1041,11 @@ function TaskDetailModal({
               <div>
                 <SectionTitle>Leaderboard Contribution</SectionTitle>
                 <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-2">
-                  <p className="text-xs text-theme-muted">Graded task results contribute to the <span className="text-white">subjective component</span> of composite leaderboard scoring.</p>
+                  <p className="text-xs text-theme-muted">Graded task results go into the <span className="text-white">assessment 40%</span> (latest sitting average).</p>
                   {[
-                    { label: 'Subjective component weight', value: '20% of composite' },
+                    { label: 'Assessment slice', value: '40% of composite' },
                     { label: 'Pass threshold', value: `${Number(localA.passing_score_pct).toFixed(0)}%` },
-                    { label: 'Score contribution', value: 'score_pct / 100 × weight' },
+                    { label: 'Score', value: 'Activity marks summing to 100' },
                   ].map(({ label, value }) => (
                     <div key={label} className="flex items-center justify-between py-1 border-b border-white/[0.04] last:border-0">
                       <span className="text-xs text-theme-muted">{label}</span>
@@ -945,7 +1059,7 @@ function TaskDetailModal({
                 {deleteErr && <p className="text-xs text-red-400 mb-2">{deleteErr}</p>}
                 {confirmDel ? (
                   <div className="glass-panel rounded-xl p-4 border border-red-500/30 bg-red-500/5">
-                    <p className="text-xs text-red-300 mb-3">Permanently deletes this task and all submissions. Cannot be undone.</p>
+                    <p className="text-xs text-red-300 mb-3">Deletes this task, activities, and media. Worker scores stay on the Scores page with this task name.</p>
                     <div className="flex gap-2">
                       <button type="button" onClick={handleDelete} disabled={deleting}
                         className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-red-500 hover:bg-red-600 text-white text-xs font-bold disabled:opacity-60">
@@ -1023,7 +1137,6 @@ export default function AssessmentsPage() {
     <div>
       <PageHeader
         title="Assessment Builder"
-        description="Manage MCQ exams and task-based assessments. Results map to leaderboard scores."
         actions={
           <div className="flex items-center gap-2">
             <div className="flex gap-1 glass-panel p-1 rounded-xl">

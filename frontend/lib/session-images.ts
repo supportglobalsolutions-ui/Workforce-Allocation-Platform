@@ -1,6 +1,6 @@
 import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { storage, db } from './firebase';
+import { storage, db, auth } from './firebase';
 import { api } from './api';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -117,6 +117,16 @@ export async function uploadSessionImage(
   // 1 — compress in browser  (0 → 30 %)
   const compressed = await compressImage(file, onProgress);
 
+  const firebaseUid = auth.currentUser?.uid;
+  if (!firebaseUid) throw new Error('You must be signed in to upload session images');
+
+  // Register ownership before Storage rules check the Firestore doc.
+  await setDoc(
+    doc(db, 'session_images', sessionId),
+    { firebase_uid: firebaseUid, updated_at: serverTimestamp() },
+    { merge: true },
+  );
+
   // 2 — upload to Firebase Storage  (30 → 85 %)
   const downloadUrl = await uploadToStorage(sessionId, imageType, compressed, onProgress);
 
@@ -125,7 +135,7 @@ export async function uploadSessionImage(
   const field = `${imageType}_image_url` as const;
   await setDoc(
     doc(db, 'session_images', sessionId),
-    { [field]: downloadUrl, updated_at: serverTimestamp() },
+    { firebase_uid: firebaseUid, [field]: downloadUrl, updated_at: serverTimestamp() },
     { merge: true },
   );
 

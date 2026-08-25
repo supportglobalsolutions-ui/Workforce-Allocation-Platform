@@ -19,6 +19,18 @@ dist/
 .DS_Store
 *.pem
 
+# Python bytecode — never commit
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Local scratch / generated output
+output/
+tmp/
+backend/email-template-server*.log
+backend/email-template-server*.stdout.log
+
 # Debug
 npm-debug.log*
 yarn-debug.log*
@@ -26,6 +38,11 @@ yarn-error.log*
 diag_*.txt
 backend/server.stdout.log
 backend/server.stderr.log
+backend/email-template-server2.stderr.log
+**/*.stderr.log
+
+# Generated payslip PDFs
+backend/data/payslips/
 
 # Local env files — never commit secrets
 .env

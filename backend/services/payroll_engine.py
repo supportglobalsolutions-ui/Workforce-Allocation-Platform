@@ -8,8 +8,7 @@ Calculation rules (confirmed by client):
 - GS workers: approved session hours × hourly rate → base pay.
 - Partner workers: the worker's-hours portion of platform earnings, split by the
   partner arrangement (worker % / GS % / partner %); worker share is their pay.
-- Bonus is manual only. Transfer cost is set per worker and/or via country pools
-  (pool allocated across the country's workers proportional to hours).
+- Bonus, transfer cost and external cost are set per worker.
 - Client revenue splits (GS vs account owner) apply only AFTER worker costs.
 """
 import logging
@@ -21,7 +20,7 @@ from uuid import UUID
 from sqlalchemy import update as sa_update
 from sqlmodel import Session, delete, select
 
-from models.client import Client, ClientRevenueAgreement
+from models.client import Client, ClientPeriodEarning, ClientRevenueAgreement
 from models.email_job import EmailJob, EmailJobItem
 from models.email_log import EmailLog
 from models.enums import (
@@ -33,12 +32,14 @@ from models.enums import (
 )
 from models.notification import Notification
 from models.partner import PartnerArrangement
-from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
+from models.payroll import PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
 from models.quality import QualityCompositeScore, QualityIndicatorRating
 from models.rate_table import RateTableEntry
+from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
+from services.client_owners import client_owner_name, owner_rollup_key
 from services.fx import currency_for_country, get_rate
 from services.session_evidence import effective_duration_minutes, evidence_hours_for_worker
 
@@ -236,13 +237,6 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
     for s in sessions:
         by_worker.setdefault(s.worker_id, []).append(s)
 
-    pools = {
-        p.country: p
-        for p in db.exec(
-            select(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id)
-        ).all()
-    }
-
     # First pass: hours + base pay per worker, and line items per session.
     calc: dict[UUID, dict] = {}
     for worker_id, worker_sessions in by_worker.items():
@@ -337,27 +331,16 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
             "flags": flags,
         }
 
-    # Second pass: allocate country cost pools proportional to hours.
-    country_hours: dict[str, Decimal] = {}
-    for data in calc.values():
-        country_hours[data["worker"].country] = (
-            country_hours.get(data["worker"].country, Decimal("0")) + data["hours"]
-        )
-
+    # Second pass: convert earnings and update per-worker summaries.
     for worker_id, data in calc.items():
         worker: Worker = data["worker"]
-        pool = pools.get(worker.country)
-        transfer_cost = external_cost = Decimal("0")
-        if pool and country_hours.get(worker.country, Decimal("0")) > 0:
-            share = data["hours"] / country_hours[worker.country]
-            transfer_cost = _q(pool.transfer_cost_total * share)
-            external_cost = _q(pool.external_cost_total * share)
-
         flags = list(data["flags"])
+        summary = existing_summaries.get(worker_id)
+        transfer_cost = summary.transfer_cost if summary else Decimal("0")
+        external_cost = summary.external_cost if summary else Decimal("0")
 
-        # Sessions, rates and cost pools are all in the period's base currency
-        # (USD/GBP). Summaries store LOCAL amounts, so convert base → local here;
-        # bonus and manual cost overrides are entered in local currency already.
+        # Sessions and rates use the period's base currency. Summaries store local
+        # amounts, while bonus and per-worker costs are already entered locally.
         local_currency = currency_for_country(db, worker.country) or period.currency
         fx = _fx_to_local(db, period, local_currency)
         if fx is None or fx <= 0:
@@ -370,10 +353,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
 
         rate_local = _q(data["rate"] * fx_used)
         base_pay_local = _q(data["base_pay"] * fx_used)
-        transfer_cost = _q(transfer_cost * fx_used)
-        external_cost = _q(external_cost * fx_used)
 
-        summary = existing_summaries.get(worker_id)
         bonus = summary.bonus if summary else Decimal("0")
         # Locked rows keep admin rate/bonus/costs, but hours always follow sessions.
         if summary and getattr(summary, "admin_locked", False):
@@ -391,11 +371,6 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
             summary.updated_at = datetime.now(timezone.utc)
             db.add(summary)
             continue
-
-        # Manual per-worker cost overrides survive recalculation when no pool exists.
-        if summary and not pool:
-            transfer_cost = summary.transfer_cost
-            external_cost = summary.external_cost
 
         gross = _q(base_pay_local + bonus)
         deductions = _q(transfer_cost + external_cost)
@@ -563,6 +538,39 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
 
 # ── Reports ────────────────────────────────────────────────────────────────────
 
+def _revenue_split(db: Session, client: Client | None, period: PayrollPeriod) -> tuple[Decimal, Decimal]:
+    gs_pct = Decimal("100.00")
+    owner_pct = Decimal("0.00")
+    if client:
+        agreement = db.exec(
+            select(ClientRevenueAgreement)
+            .where(
+                ClientRevenueAgreement.client_id == client.id,
+                ClientRevenueAgreement.effective_from <= period.end_date,
+            )
+            .order_by(ClientRevenueAgreement.effective_from.desc())
+        ).first()
+        if agreement:
+            gs_pct, owner_pct = agreement.gs_pct, agreement.owner_pct
+    return gs_pct, owner_pct
+
+
+def _rdp_session_minutes(session: WorkSession) -> int:
+    """Payroll screenshot minutes first; otherwise connected start→finish."""
+    minutes = effective_duration_minutes(session)
+    if minutes > 0:
+        return minutes
+    if session.start_time and session.end_time:
+        start = session.start_time
+        end = session.end_time
+        if start.tzinfo is None:
+            start = start.replace(tzinfo=timezone.utc)
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return max(0, int((end - start).total_seconds() // 60))
+    return 0
+
+
 def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     """
     Per-client earnings + revenue share for a period.
@@ -577,7 +585,13 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     line_items = db.exec(
         select(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id)
     ).all()
-    if not line_items:
+    entered_earnings = {
+        row.client_id: row.amount
+        for row in db.exec(
+            select(ClientPeriodEarning).where(ClientPeriodEarning.payroll_period_id == period_id)
+        ).all()
+    }
+    if not line_items and not entered_earnings:
         return []
 
     session_ids = [li.session_id for li in line_items]
@@ -596,14 +610,26 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     for li in line_items:
         worker_gross_totals[li.worker_id] = worker_gross_totals.get(li.worker_id, Decimal("0")) + li.gross_amount
 
-    per_client: dict[Optional[UUID], dict] = {}
+    per_client: dict[Optional[UUID], dict] = {
+        client_id: {
+            "earnings": amount,
+            "worker_cost": Decimal("0"),
+            "earnings_entered": True,
+        }
+        for client_id, amount in entered_earnings.items()
+    }
     for li in line_items:
         session = sessions.get(li.session_id)
         client_id = session.client_id if session else None
         bucket = per_client.setdefault(client_id, {
-            "earnings": Decimal("0"), "worker_cost": Decimal("0"),
+            "earnings": Decimal("0"),
+            "worker_cost": Decimal("0"),
+            "earnings_entered": False,
         })
-        bucket["earnings"] += li.gross_amount
+        # Explicit client earnings entered on the Clients page are authoritative.
+        # Existing periods without an entry retain the calculated legacy fallback.
+        if not bucket["earnings_entered"]:
+            bucket["earnings"] += li.gross_amount
 
         worker_cost = li.worker_net
         summary = summaries.get(li.worker_id)
@@ -620,19 +646,7 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     rows: list[dict] = []
     for client_id, bucket in per_client.items():
         client = clients.get(client_id) if client_id else None
-        gs_pct = Decimal("100.00")
-        owner_pct = Decimal("0.00")
-        if client:
-            agreement = db.exec(
-                select(ClientRevenueAgreement)
-                .where(
-                    ClientRevenueAgreement.client_id == client.id,
-                    ClientRevenueAgreement.effective_from <= period.end_date,
-                )
-                .order_by(ClientRevenueAgreement.effective_from.desc())
-            ).first()
-            if agreement:
-                gs_pct, owner_pct = agreement.gs_pct, agreement.owner_pct
+        gs_pct, owner_pct = _revenue_split(db, client, period)
 
         earnings = _q(bucket["earnings"])
         worker_cost = _q(bucket["worker_cost"])
@@ -650,9 +664,170 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
             "owner_pct": str(owner_pct),
             "gs_share": str(gs_share),
             "owner_share": str(owner_share),
+            "earnings_source": "entered" if bucket["earnings_entered"] else "calculated",
         })
     rows.sort(key=lambda r: Decimal(r["earnings"]), reverse=True)
     return rows
+
+
+def rdp_earnings_report(db: Session, period_id: UUID) -> dict:
+    """
+    What each RDP produced in a payment month: session hours × worker rate,
+    rolled up per machine and per owner. Owner/GS shares use the client's
+    current revenue agreement.
+    """
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise ValueError("Payroll period not found")
+
+    sessions = [s for s in _sessions_for_period(db, period) if s.rdp_resource_id]
+    workers = {w.id: w for w in db.exec(select(Worker)).all()}
+    machines = {r.id: r for r in db.exec(select(RDPResource)).all()}
+    clients = {c.id: c for c in db.exec(select(Client)).all()}
+    line_by_session = {
+        li.session_id: li
+        for li in db.exec(
+            select(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id)
+        ).all()
+    }
+
+    buckets: dict[UUID, dict] = {}
+    for session in sessions:
+        rdp_id = session.rdp_resource_id
+        if not rdp_id:
+            continue
+        worker = workers.get(session.worker_id)
+        minutes = _rdp_session_minutes(session)
+        hours = _q(Decimal(minutes) / Decimal(60))
+        line = line_by_session.get(session.id)
+        rate = Decimal("0")
+        if line is not None:
+            produced = _q(line.gross_amount)
+            if hours > 0:
+                rate = _q(produced / hours)
+        else:
+            if worker:
+                found = _hourly_rate_for(db, worker, period)
+                rate = found if found is not None else Decimal("0")
+            produced = _q(hours * rate)
+
+        bucket = buckets.setdefault(rdp_id, {
+            "hours": Decimal("0"),
+            "produced": Decimal("0"),
+            "sessions": 0,
+            "workers": {},
+        })
+        bucket["hours"] += hours
+        bucket["produced"] += produced
+        bucket["sessions"] += 1
+        worker_row = bucket["workers"].setdefault(session.worker_id, {
+            "worker_id": str(session.worker_id),
+            "worker_name": worker.display_name if worker else "Unknown",
+            "hours": Decimal("0"),
+            "produced": Decimal("0"),
+            "sessions": 0,
+            "rate": rate,
+        })
+        worker_row["hours"] += hours
+        worker_row["produced"] += produced
+        worker_row["sessions"] += 1
+        worker_row["rate"] = rate
+
+    rdp_rows: list[dict] = []
+    owner_buckets: dict[str, dict] = {}
+
+    rdp_ids = set(buckets) | {
+        r.id for r in machines.values() if r.client_id
+    }
+    for rdp_id in sorted(rdp_ids, key=lambda i: (machines[i].nickname if i in machines else str(i))):
+        machine = machines.get(rdp_id)
+        bucket = buckets.get(rdp_id, {
+            "hours": Decimal("0"), "produced": Decimal("0"), "sessions": 0, "workers": {},
+        })
+        client = clients.get(machine.client_id) if machine and machine.client_id else None
+        gs_pct, owner_pct = _revenue_split(db, client, period)
+        hours = _q(bucket["hours"])
+        produced = _q(bucket["produced"])
+        gs_share = _q(produced * gs_pct / 100)
+        owner_share = _q(produced - gs_share)
+        owner_name = client_owner_name(db, client) if client else None
+        owner_type = client.owner_type.value if client else None
+        key = owner_rollup_key(client)
+
+        worker_list = []
+        for w in bucket["workers"].values():
+            worker_list.append({
+                **w,
+                "hours": str(_q(w["hours"])),
+                "produced": str(_q(w["produced"])),
+                "rate": str(_q(w["rate"])),
+            })
+        worker_list.sort(key=lambda w: Decimal(w["produced"]), reverse=True)
+
+        row = {
+            "rdp_id": str(rdp_id),
+            "nickname": machine.nickname if machine else "Unknown RDP",
+            "country": machine.country if machine else "—",
+            "client_id": str(client.id) if client else None,
+            "client_name": client.name if client else "Unlinked",
+            "owner_key": key,
+            "owner_name": owner_name or ("Unlinked" if not client else "—"),
+            "owner_type": owner_type or "unlinked",
+            "hours": str(hours),
+            "produced": str(produced),
+            "session_count": bucket["sessions"],
+            "worker_count": len(worker_list),
+            "workers": worker_list,
+            "gs_pct": str(gs_pct),
+            "owner_pct": str(owner_pct),
+            "gs_share": str(gs_share),
+            "owner_share": str(owner_share),
+        }
+        rdp_rows.append(row)
+
+        owner = owner_buckets.setdefault(key, {
+            "owner_key": key,
+            "owner_name": row["owner_name"],
+            "owner_type": row["owner_type"],
+            "client_ids": set(),
+            "rdp_count": 0,
+            "hours": Decimal("0"),
+            "produced": Decimal("0"),
+            "gs_share": Decimal("0"),
+            "owner_share": Decimal("0"),
+            "gs_pct": gs_pct,
+            "owner_pct": owner_pct,
+        })
+        if client:
+            owner["client_ids"].add(str(client.id))
+        owner["rdp_count"] += 1
+        owner["hours"] += hours
+        owner["produced"] += produced
+        owner["gs_share"] += gs_share
+        owner["owner_share"] += owner_share
+
+    rdp_rows.sort(key=lambda r: Decimal(r["produced"]), reverse=True)
+    owners = []
+    for owner in owner_buckets.values():
+        owners.append({
+            "owner_key": owner["owner_key"],
+            "owner_name": owner["owner_name"],
+            "owner_type": owner["owner_type"],
+            "client_ids": sorted(owner["client_ids"]),
+            "rdp_count": owner["rdp_count"],
+            "hours": str(_q(owner["hours"])),
+            "produced": str(_q(owner["produced"])),
+            "gs_share": str(_q(owner["gs_share"])),
+            "owner_share": str(_q(owner["owner_share"])),
+            "gs_pct": str(owner["gs_pct"]),
+            "owner_pct": str(owner["owner_pct"]),
+        })
+    owners.sort(key=lambda r: Decimal(r["owner_share"]), reverse=True)
+    return {
+        "currency": period.currency,
+        "rdps": rdp_rows,
+        "owners": owners,
+    }
 
 
 def purge_payroll_period(db: Session, period: PayrollPeriod) -> dict:
@@ -671,7 +846,6 @@ def purge_payroll_period(db: Session, period: PayrollPeriod) -> dict:
     }
 
     db.exec(delete(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id))
-    db.exec(delete(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id))
     db.exec(
         delete(QualityCompositeScore).where(QualityCompositeScore.payroll_period_id == period_id)
     )

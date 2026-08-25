@@ -7,6 +7,7 @@ import {
   type User,
 } from 'firebase/auth';
 import { auth } from '@/lib/firebase';
+import { syncSessionCookie, clearSessionCookie } from './session-cookie';
 import {
   AuthRole,
   AuthSession,
@@ -39,6 +40,8 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
     return session;
   }
   const { user } = await signInWithEmailAndPassword(auth, email, password);
+  const idToken = await user.getIdToken(true);
+  await syncSessionCookie(idToken);
   return sessionFromUser(user);
 }
 
@@ -47,6 +50,7 @@ export async function signOut(): Promise<void> {
     localStorage.removeItem(DEV_KEY);
     return;
   }
+  await clearSessionCookie();
   await fbSignOut(auth);
 }
 
@@ -72,9 +76,18 @@ export function subscribeAuthState(
     return () => {};
   }
   return onAuthStateChanged(auth, async (user) => {
-    if (!user) { callback(null); return; }
-    try { callback(await sessionFromUser(user)); }
-    catch { callback(null); }
+    if (!user) {
+      await clearSessionCookie();
+      callback(null);
+      return;
+    }
+    try {
+      const idToken = await user.getIdToken(true);
+      await syncSessionCookie(idToken);
+      callback(await sessionFromUser(user));
+    } catch {
+      callback(null);
+    }
   });
 }
 
@@ -140,7 +153,7 @@ export const apiUnbanUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/unban`, {});
 
 export const apiGetAccountStatus = (email: string) =>
-  api.get<{ status: AccountStatus | 'not_found' }>(`/auth/account-status?email=${encodeURIComponent(email)}`);
+  api.get<{ status: AccountStatus | 'unknown' }>(`/auth/account-status?email=${encodeURIComponent(email)}`);
 
 export const apiBanWorker = (workerId: string) =>
   api.patch<{ banned: boolean }>(`/workers/${workerId}/ban`, {});

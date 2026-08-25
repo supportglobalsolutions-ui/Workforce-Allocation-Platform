@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { AlertCircle, Star, X } from 'lucide-react';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { pickCurrentPeriod } from '@/lib/periods';
 
 export interface RateWorkerOption {
   id: string;
@@ -20,6 +21,10 @@ interface QualityIndicator {
 interface PayrollPeriodOption {
   id: string;
   label: string;
+  start_date: string;
+  end_date: string;
+  status?: string;
+  is_current?: boolean;
 }
 
 interface RateWorkerModalProps {
@@ -61,7 +66,7 @@ export default function RateWorkerModal({
         if (list.length > 0) {
           const preferred = initialPeriodId && list.some((p) => p.id === initialPeriodId)
             ? list.find((p) => p.id === initialPeriodId)!
-            : list[0];
+            : pickCurrentPeriod(list) ?? list[0];
           setPeriodId(preferred.id);
           setPeriodLabel(preferred.label);
         }

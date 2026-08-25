@@ -10,6 +10,7 @@ import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
+import { pickCurrentPeriod } from '@/lib/periods';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -24,6 +25,8 @@ interface PayrollPeriod {
 
 interface PayrollReportRow {
   id: string;
+  period_id?: string;
+  period_label?: string;
   worker_display_name: string;
   worker_country: string;
   worker_type: string;
@@ -37,6 +40,8 @@ interface PayrollReportRow {
 
 interface RevenueShareRow {
   client_id: string;
+  period_id?: string;
+  period_label?: string;
   client_name: string;
   platform: string;
   earnings: string;
@@ -46,6 +51,7 @@ interface RevenueShareRow {
   owner_pct: string;
   gs_share: string;
   owner_share: string;
+  earnings_source?: 'entered' | 'calculated';
 }
 
 const fmt = (x: string | number | null | undefined) =>
@@ -95,27 +101,44 @@ export default function ReportsPage() {
     api.get<PayrollPeriod[]>('/payroll/periods')
       .then((list) => {
         setPeriods(list);
-        if (list.length > 0) setPeriodId(list[0].id);
+        if (list.length > 0) setPeriodId(pickCurrentPeriod(list)?.id ?? list[0].id);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load payroll periods.'))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    if (!periodId) return;
+    if (periods.length === 0) return;
     setReportsLoading(true); setReportsError(null);
-    Promise.all([
-      api.get<PayrollReportRow[]>(`/payroll/periods/${periodId}/reports/payroll`),
-      api.get<RevenueShareRow[]>(`/payroll/periods/${periodId}/reports/revenue-share`),
-    ])
-      .then(([payroll, revenue]) => { setPayrollRows(payroll); setRevenueRows(revenue); })
+    const scope = periodId ? periods.filter((period) => period.id === periodId) : periods;
+    Promise.allSettled(scope.map(async (period) => {
+      const [payroll, revenue] = await Promise.all([
+        api.get<PayrollReportRow[]>(`/payroll/periods/${period.id}/reports/payroll`),
+        api.get<RevenueShareRow[]>(`/payroll/periods/${period.id}/reports/revenue-share`),
+      ]);
+      return {
+        payroll: payroll.map((row) => ({ ...row, period_id: period.id, period_label: period.label })),
+        revenue: revenue.map((row) => ({ ...row, period_id: period.id, period_label: period.label })),
+      };
+    }))
+      .then((results) => {
+        const loaded = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
+        if (loaded.length === 0) throw new Error('Failed to load reports.');
+        setPayrollRows(loaded.flatMap((row) => row.payroll));
+        setRevenueRows(loaded.flatMap((row) => row.revenue));
+        const failed = results.length - loaded.length;
+        if (failed > 0) setReportsError(`${failed} working month${failed === 1 ? '' : 's'} did not load.`);
+      })
       .catch((e) => setReportsError(e instanceof Error ? e.message : 'Failed to load reports.'))
       .finally(() => setReportsLoading(false));
-  }, [periodId]);
+  }, [periodId, periods]);
 
   const selectedPeriod = periods.find((p) => p.id === periodId) ?? null;
-  const baseCur = selectedPeriod?.currency ?? 'USD';
-  const slug = (selectedPeriod?.label ?? 'period').replace(/\s+/g, '-').toLowerCase();
+  const currencies = Array.from(new Set(
+    (selectedPeriod ? [selectedPeriod] : periods).map((period) => period.currency),
+  ));
+  const baseCur = currencies.length === 1 ? currencies[0] : 'Mixed';
+  const slug = (selectedPeriod?.label ?? 'all-working-months').replace(/\s+/g, '-').toLowerCase();
 
   const payrollTotals = useMemo(() => ({
     hours: payrollRows.reduce((s, r) => s + Number(r.hours_logged ?? 0), 0),
@@ -156,7 +179,6 @@ export default function ReportsPage() {
     <div>
       <PageHeader
         title="Reports"
-        description="Payroll report, revenue sharing breakdown, and bulk payslip downloads per payroll period."
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />
 
@@ -174,6 +196,8 @@ export default function ReportsPage() {
             periods={periods}
             value={periodId}
             onChange={setPeriodId}
+            allowAll
+            allLabel="All working months"
             variant="select"
             label="Working month"
           />
@@ -216,8 +240,11 @@ export default function ReportsPage() {
                       ) : (
                         <>
                           {payrollRows.map((r) => (
-                            <tr key={r.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                              <td className={`${td} font-medium text-theme-heading`}>{r.worker_display_name}</td>
+                            <tr key={`${r.period_id ?? periodId}:${r.id}`} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                              <td className={`${td} font-medium text-theme-heading`}>
+                                {r.worker_display_name}
+                                {!periodId && r.period_label ? <span className="block text-[10px] font-normal text-theme-muted mt-0.5">{r.period_label}</span> : null}
+                              </td>
                               <td className={td}>{r.worker_country}</td>
                               <td className={tdRight}>{Number(r.hours_logged ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
                               <td className={tdRight}>{fmt(r.gross_earned)}</td>
@@ -243,7 +270,7 @@ export default function ReportsPage() {
                 </div>
                 {payrollRows.length > 0 && (
                   <p className="px-5 py-3 text-[11px] text-theme-muted border-t border-white/[0.06]">
-                    Gross, deductions and net are shown in each worker&apos;s local currency; the {baseCur} equivalent column uses the period&apos;s FX rates.
+                    Gross, deductions and net are shown in each worker&apos;s local currency; the {baseCur} equivalent column uses each working month&apos;s FX rates.
                   </p>
                 )}
               </div>
@@ -280,10 +307,18 @@ export default function ReportsPage() {
                       ) : (
                         <>
                           {revenueRows.map((r) => (
-                            <tr key={r.client_id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                              <td className={`${td} font-medium text-theme-heading`}>{r.client_name}</td>
+                            <tr key={`${r.period_id ?? periodId}:${r.client_id}`} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
+                              <td className={`${td} font-medium text-theme-heading`}>
+                                {r.client_name}
+                                {!periodId && r.period_label ? <span className="block text-[10px] font-normal text-theme-muted mt-0.5">{r.period_label}</span> : null}
+                              </td>
                               <td className={td}>{r.platform}</td>
-                              <td className={tdRight}>{fmt(r.earnings)}</td>
+                              <td className={tdRight}>
+                                <div>{fmt(r.earnings)}</div>
+                                <span className={`text-[9px] font-sans uppercase tracking-wider ${r.earnings_source === 'entered' ? 'text-emerald-accent' : 'text-theme-muted'}`}>
+                                  {r.earnings_source === 'entered' ? 'Client entry' : 'Calculated fallback'}
+                                </span>
+                              </td>
                               <td className={tdRight}>{fmt(r.worker_cost)}</td>
                               <td className={tdRight}>{fmt(r.distributable)}</td>
                               <td className={tdRight}>{Number(r.gs_pct).toLocaleString(undefined, { maximumFractionDigits: 1 })}%</td>
@@ -308,7 +343,7 @@ export default function ReportsPage() {
                   </table>
                 </div>
                 <p className="px-5 py-3 text-[11px] text-theme-muted border-t border-white/[0.06]">
-                  Owner splits are applied after worker costs are deducted.
+                  Client earnings entered on the Clients page are authoritative. If no entry exists, calculated payroll gross is shown as a fallback. Owner splits are applied after worker costs are deducted.
                 </p>
               </div>
 

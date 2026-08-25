@@ -2,7 +2,7 @@ from datetime import date, datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlmodel import Session, or_, select
+from sqlmodel import Session, col, func, or_, select
 
 from core.database import get_db
 from core.permissions import require_admin
@@ -15,6 +15,7 @@ from schemas.payment_tier import (
     PaymentTierAssignResponse,
     PaymentTierCreate,
     PaymentTierResponse,
+    PaymentTierUnassignResponse,
     PaymentTierUpdate,
 )
 from .deps import get_admin_user
@@ -22,9 +23,19 @@ from .deps import get_admin_user
 router = APIRouter()
 
 
-def _tier_response(tier: PaymentTier) -> PaymentTierResponse:
+def _member_counts(db: Session) -> dict[str, int]:
+    rows = db.exec(
+        select(Worker.pay_tier, func.count())
+        .where(Worker.status == WorkerStatusEnum.active)
+        .group_by(col(Worker.pay_tier))
+    ).all()
+    return {name: n for name, n in rows if name}
+
+
+def _tier_response(tier: PaymentTier, member_count: int = 0) -> PaymentTierResponse:
     resp = PaymentTierResponse.model_validate(tier)
     resp.hourly_equivalent = hourly_equivalent(tier.rate, tier.unit)
+    resp.member_count = member_count
     return resp
 
 
@@ -76,7 +87,8 @@ def list_payment_tiers(
     stmt = select(PaymentTier).order_by(PaymentTier.name)
     if active_only:
         stmt = stmt.where(PaymentTier.is_active.is_(True))
-    return [_tier_response(t) for t in db.exec(stmt).all()]
+    counts = _member_counts(db)
+    return [_tier_response(t, counts.get(t.name, 0)) for t in db.exec(stmt).all()]
 
 
 @router.post("", response_model=PaymentTierResponse, status_code=status.HTTP_201_CREATED)
@@ -108,7 +120,7 @@ def create_payment_tier(
     _sync_rate_table(db, tier, admin.id)
     db.commit()
     db.refresh(tier)
-    return _tier_response(tier)
+    return _tier_response(tier, 0)
 
 
 @router.patch("/{tier_id}", response_model=PaymentTierResponse)
@@ -145,13 +157,17 @@ def update_payment_tier(
         for w in db.exec(select(Worker).where(Worker.pay_tier == old_name)).all():
             w.pay_tier = tier.name
             db.add(w)
+        for row in db.exec(select(RateTableEntry).where(RateTableEntry.pay_tier == old_name)).all():
+            row.pay_tier = tier.name
+            db.add(row)
 
     admin = get_admin_user(db, current_user)
     if tier.is_active:
         _sync_rate_table(db, tier, admin.id)
     db.commit()
     db.refresh(tier)
-    return _tier_response(tier)
+    counts = _member_counts(db)
+    return _tier_response(tier, counts.get(tier.name, 0))
 
 
 @router.post("/{tier_id}/assign", response_model=PaymentTierAssignResponse)
@@ -167,6 +183,15 @@ def assign_payment_tier(
     if not tier.is_active:
         raise HTTPException(status_code=400, detail="Cannot assign an inactive tier.")
 
+    workers = _workers_for_assign(db, body)
+    for w in workers:
+        w.pay_tier = tier.name
+        db.add(w)
+    db.commit()
+    return PaymentTierAssignResponse(assigned=len(workers), tier_name=tier.name)
+
+
+def _workers_for_assign(db: Session, body: PaymentTierAssignRequest) -> list[Worker]:
     stmt = select(Worker).where(Worker.status == WorkerStatusEnum.active)
     if body.worker_ids:
         stmt = stmt.where(Worker.id.in_(body.worker_ids))
@@ -179,7 +204,6 @@ def assign_payment_tier(
             status_code=400,
             detail="Provide worker_ids, a filter, or apply_all_active.",
         )
-
     if body.worker_type:
         stmt = stmt.where(Worker.worker_type == body.worker_type)
     if body.partner_entity_id:
@@ -196,10 +220,49 @@ def assign_payment_tier(
                 Worker.pay_tier.ilike(q),
             )
         )
+    return db.exec(stmt).all()
 
-    workers = db.exec(stmt).all()
+
+@router.post("/{tier_id}/unassign", response_model=PaymentTierUnassignResponse)
+def unassign_payment_tier(
+    tier_id: UUID,
+    body: PaymentTierAssignRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    tier = db.get(PaymentTier, tier_id)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Payment tier not found")
+    workers = [w for w in _workers_for_assign(db, body) if w.pay_tier == tier.name]
     for w in workers:
-        w.pay_tier = tier.name
+        w.pay_tier = "unassigned"
         db.add(w)
     db.commit()
-    return PaymentTierAssignResponse(assigned=len(workers), tier_name=tier.name)
+    return PaymentTierUnassignResponse(removed=len(workers), tier_name=tier.name)
+
+
+@router.delete("/{tier_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_payment_tier(
+    tier_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    tier = db.get(PaymentTier, tier_id)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Payment tier not found")
+    for w in db.exec(select(Worker).where(Worker.pay_tier == tier.name)).all():
+        w.pay_tier = "unassigned"
+        db.add(w)
+    today = date.today()
+    for row in db.exec(
+        select(RateTableEntry).where(
+            RateTableEntry.worker_id.is_(None),
+            RateTableEntry.pay_tier == tier.name,
+            RateTableEntry.effective_to.is_(None),
+        )
+    ).all():
+        row.effective_to = today
+        db.add(row)
+    db.delete(tier)
+    db.commit()
+    return None

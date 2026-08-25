@@ -337,7 +337,6 @@ export default function AdminNotificationsPage() {
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <PageHeader
         title="Notification Center"
-        description="Send in-app alerts, emails, or both — pick workers from the database or type addresses."
       />
 
       <div className="glass-panel rounded-2xl border border-white/5 p-6 space-y-5">

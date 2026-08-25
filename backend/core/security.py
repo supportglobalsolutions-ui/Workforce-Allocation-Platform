@@ -1,13 +1,12 @@
 from typing import Optional
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
-from passlib.context import CryptContext
 
+from .auth_logging import log_auth_failure
 from .config import settings
 from .firebase_admin import verify_firebase_token
 
-pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 bearer_scheme = HTTPBearer(auto_error=False)
 
 ROLES = {"user", "partner", "admin", "super_admin"}
@@ -31,15 +30,8 @@ def _dev_user() -> dict:
     }
 
 
-def hash_password(password: str) -> str:
-    return pwd_context.hash(password)
-
-
-def verify_password(plain: str, hashed: str) -> bool:
-    return pwd_context.verify(plain, hashed)
-
-
 def get_current_user(
+    request: Request,
     credentials: Optional[HTTPAuthorizationCredentials] = Depends(bearer_scheme),
 ) -> dict:
     """
@@ -50,6 +42,7 @@ def get_current_user(
     if not credentials:
         if _dev_bypass_enabled():
             return _dev_user()
+        log_auth_failure(request, reason="missing_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
@@ -61,17 +54,19 @@ def get_current_user(
     except ValueError as exc:
         if _dev_bypass_enabled():
             return _dev_user()
+        log_auth_failure(request, reason="invalid_token", detail=str(exc))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail=str(exc),
+            detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
     role = decoded.get("role", "user")
     if role not in ROLES:
+        log_auth_failure(request, reason="unknown_role", detail=role)
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Unknown role '{role}' in token claims",
+            detail="Access denied",
         )
 
     return {

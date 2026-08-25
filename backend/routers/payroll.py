@@ -1,11 +1,12 @@
 import csv
 import io
+import logging
 import zipfile
 from datetime import date, datetime, time, timezone
 from decimal import Decimal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
 from pydantic import BaseModel
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -13,14 +14,12 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import require_admin, require_user
 from models.admin_users import AdminUser
-from models.audit_log import AuditLog
 from models.enums import PayrollPeriodStatusEnum, WorkerStatusEnum
-from models.payroll import CountryCostPool, PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
+from models.payroll import PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
 from schemas.payroll import (
-    CountryCostPoolResponse,
-    CountryCostPoolUpsert,
     LedgerSheetRow,
+    PayrollHistoryRow,
     PayrollLineItemCreate,
     PayrollLineItemResponse,
     PayrollLineItemUpdate,
@@ -34,14 +33,18 @@ from schemas.payroll import (
 )
 from services import payroll_engine
 from services.admin_otp import PURPOSE_DELETE_PERIOD, issue_otp, verify_otp
+from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
 from services.fx import currency_for_country
+from services.period_current import pin_current_period, resolve_current_period
 from services.period_labels import period_label_from_date
-from services.payslip_pdf import build_payslip_pdf, payslip_rows
+from services.payslip_pdf import generate_period_pdfs, render_payslip_pdf
+from services.security_risk import maybe_notify_threshold, record_event
 from services.session_evidence import evidence_hours_for_worker
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/periods", response_model=list[PayrollPeriodResponse])
@@ -79,8 +82,14 @@ def create_payroll_period(
         )
     data = body.model_dump()
     data["label"] = label
+    today = date.today()
+    covers_today = body.start_date <= today <= body.end_date
+    existing_pin = db.exec(select(PayrollPeriod).where(PayrollPeriod.is_current == True)).first()  # noqa: E712
     period = PayrollPeriod(**data)
     db.add(period)
+    db.flush()
+    if covers_today or existing_pin is None:
+        pin_current_period(db, period)
     try:
         db.commit()
     except IntegrityError:
@@ -118,7 +127,31 @@ def update_payroll_period(
             )
         body.label = label
 
-    apply_update(period, body)
+    fields = body.model_dump(exclude_unset=True)
+    pin = fields.pop("is_current", None)
+    new_start = fields.get("start_date", period.start_date)
+    new_end = fields.get("end_date", period.end_date)
+    if "start_date" in fields or "end_date" in fields:
+        if period.status in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid):
+            raise HTTPException(
+                status_code=400,
+                detail="Dates cannot be changed after this period is approved or paid.",
+            )
+        if new_end < new_start:
+            raise HTTPException(status_code=400, detail="End date must be on or after the start date.")
+        period.start_date = new_start
+        period.end_date = new_end
+        fields.pop("start_date", None)
+        fields.pop("end_date", None)
+
+    for field, value in fields.items():
+        setattr(period, field, value)
+    db.add(period)
+    if pin is True:
+        pin_current_period(db, period)
+    elif pin is False:
+        period.is_current = False
+        db.add(period)
     db.add(period)
     try:
         db.commit()
@@ -154,7 +187,7 @@ def request_period_delete_otp(
             f"An administrator asked to permanently delete the work period "
             f"<strong>{period.label}</strong>. Enter this code in the platform to continue."
         ),
-        warning="This cannot be undone. Payslips, cost pools and period quality scores will be removed.",
+        warning="This cannot be undone. Payslips and period quality scores will be removed.",
     )
     text = render_otp_text(
         title="Confirm work period deletion",
@@ -197,15 +230,22 @@ def confirm_period_delete(
     admin = get_admin_user(db, current_user)
     label = period.label
     snapshot = payroll_engine.purge_payroll_period(db, period)
-    db.add(AuditLog(
+    record_audit(
+        db,
         actor_id=admin.id,
         action="payroll_period.deleted",
         target_type="payroll_period",
         target_id=period_id,
         previous_value=snapshot,
-        new_value=None,
         reason_note="Deleted after email confirmation code",
-    ))
+    )
+    record_event(
+        db,
+        admin_user_id=admin.id,
+        event_type="payroll_period_deleted",
+        payload={"period_id": str(period_id), "label": label},
+    )
+    maybe_notify_threshold(db, admin_user_id=admin.id, admin_email=admin.email)
     db.commit()
     return {"deleted": True, "id": str(period_id), "label": label}
 
@@ -265,9 +305,16 @@ def calculate_period(
     _: dict = Depends(require_admin),
 ):
     try:
-        return payroll_engine.calculate_period(db, period_id)
+        result = payroll_engine.calculate_period(db, period_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        pdfs = generate_period_pdfs(db, period_id, force=True)
+        result["pdfs"] = pdfs["generated"]
+    except Exception:
+        logger.exception("Payslip PDF generation after calculate failed")
+        result["pdfs"] = 0
+    return result
 
 
 @router.post("/periods/{period_id}/approve", response_model=PayrollPeriodResponse)
@@ -278,9 +325,14 @@ def approve_period(
 ):
     admin = get_admin_user(db, current_user)
     try:
-        return payroll_engine.approve_period(db, period_id, admin.id)
+        period = payroll_engine.approve_period(db, period_id, admin.id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    try:
+        generate_period_pdfs(db, period_id, force=True)
+    except Exception:
+        logger.exception("Payslip PDF generation after approve failed")
+    return period
 
 
 @router.post("/periods/{period_id}/reopen", response_model=PayrollPeriodResponse)
@@ -359,6 +411,41 @@ def _summary_response(db: Session, summary: PayrollWorkerSummary, period: Payrol
         resp.evidence_incomplete = incomplete
         resp.session_count = session_count
     return resp
+
+
+@router.get("/history", response_model=list[PayrollHistoryRow])
+def payroll_history(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """All saved payslip rows across every working month, newest first."""
+    rows = db.exec(
+        select(PayrollWorkerSummary, PayrollPeriod, Worker)
+        .join(PayrollPeriod, PayrollPeriod.id == PayrollWorkerSummary.payroll_period_id)
+        .join(Worker, Worker.id == PayrollWorkerSummary.worker_id)
+        .order_by(PayrollPeriod.start_date.desc(), Worker.display_name)
+    ).all()
+    return [
+        PayrollHistoryRow(
+            worker_id=worker.id,
+            worker_display_name=worker.display_name,
+            worker_country=worker.country,
+            worker_type=worker.worker_type.value if worker.worker_type else None,
+            worker_pay_tier=worker.pay_tier,
+            partner_entity_id=worker.partner_entity_id,
+            suggested_hours=summary.hours_logged,
+            evidence_incomplete=False,
+            session_count=0,
+            summary=PayrollWorkerSummaryResponse.model_validate(summary),
+            period_id=period.id,
+            period_label=period.label,
+            period_currency=period.currency,
+            period_status=period.status,
+            period_start_date=period.start_date,
+            period_end_date=period.end_date,
+        )
+        for summary, period, worker in rows
+    ]
 
 
 def _apply_currency_switch(
@@ -484,6 +571,7 @@ def bulk_upsert_summaries(
             existing[item.worker_id] = summary
 
         data = item.model_dump(exclude_unset=True, exclude={"worker_id", "local_currency", "hours_logged"})
+        dumped = item.model_dump(exclude_unset=True)
         for key, value in data.items():
             if value is not None:
                 setattr(summary, key, value)
@@ -494,6 +582,15 @@ def bulk_upsert_summaries(
         )
         summary.hours_logged = item.hours_logged if item.hours_logged is not None else session_hours
         _apply_currency_switch(summary, period, item.local_currency, item.fx_rate, db)
+        if "rate_per_hour" not in dumped:
+            worker = db.get(Worker, item.worker_id)
+            if worker:
+                rate_base = payroll_engine._hourly_rate_for(db, worker, period)
+                if rate_base is not None:
+                    fx = summary.fx_rate or payroll_engine._fx_to_local(
+                        db, period, summary.local_currency or period.currency,
+                    ) or Decimal("1")
+                    summary.rate_per_hour = payroll_engine._q(rate_base * fx)
         if item.admin_locked is None:
             summary.admin_locked = True
         db.add(summary)
@@ -584,16 +681,7 @@ def my_payroll_overview(
     """Current payroll period, pay tier, and applicable rate for the worker payments page."""
     worker = get_worker_for_user(db, current_user)
     periods = db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).all()
-    today = date.today()
-
-    current = next((p for p in periods if p.start_date <= today <= p.end_date), None)
-    if not current:
-        current = next(
-            (p for p in periods if p.status != PayrollPeriodStatusEnum.paid),
-            None,
-        )
-    if not current and periods:
-        current = periods[0]
+    current = resolve_current_period(db)
 
     rate_amount = None
     rate_currency = None
@@ -628,68 +716,35 @@ def my_payroll_overview(
     )
 
 
-# ── Country cost pools ─────────────────────────────────────────────────────────
-
-@router.get("/periods/{period_id}/cost-pools", response_model=list[CountryCostPoolResponse])
-def list_cost_pools(
-    period_id: UUID,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    return db.exec(
-        select(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id)
-    ).all()
-
-
-@router.put("/periods/{period_id}/cost-pools", response_model=list[CountryCostPoolResponse])
-def upsert_cost_pools(
-    period_id: UUID,
-    body: list[CountryCostPoolUpsert],
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    if not db.get(PayrollPeriod, period_id):
-        raise HTTPException(status_code=404, detail="Payroll period not found")
-    existing = {
-        p.country: p
-        for p in db.exec(
-            select(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id)
-        ).all()
-    }
-    for item in body:
-        pool = existing.get(item.country)
-        if pool:
-            pool.transfer_cost_total = item.transfer_cost_total
-            pool.external_cost_total = item.external_cost_total
-            pool.note = item.note
-        else:
-            pool = CountryCostPool(payroll_period_id=period_id, **item.model_dump())
-        db.add(pool)
-    db.commit()
-    return db.exec(
-        select(CountryCostPool).where(CountryCostPool.payroll_period_id == period_id)
-    ).all()
-
 
 # ── Payslip PDFs ───────────────────────────────────────────────────────────────
 
 def _pdf_for_summary(db: Session, summary: PayrollWorkerSummary, period: PayrollPeriod) -> tuple[str, bytes]:
     worker = db.get(Worker, summary.worker_id)
     name = worker.display_name if worker else "Worker"
-    pdf = build_payslip_pdf(
-        worker_name=name,
-        period_label=period.label,
-        local_currency=summary.local_currency,
-        base_currency=summary.base_currency or period.currency,
-        rows=payslip_rows(summary),
-    )
-    filename = f"payslip-{period.label.replace(' ', '-')}-{name.replace(' ', '-')}.pdf"
-    return filename, pdf
+    return render_payslip_pdf(summary=summary, period=period, worker_name=name)
+
+
+@router.post("/periods/{period_id}/payslips/generate")
+def generate_period_payslip_pdfs(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Build cached PDFs for every payslip in the period so email/preview can reuse them."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    try:
+        return generate_period_pdfs(db, period_id, force=True)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 @router.get("/summaries/{summary_id}/payslip.pdf")
 def download_payslip_pdf(
     summary_id: UUID,
+    inline: bool = Query(False),
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
@@ -698,10 +753,11 @@ def download_payslip_pdf(
         raise HTTPException(status_code=404, detail="Payroll summary not found")
     period = db.get(PayrollPeriod, summary.payroll_period_id)
     filename, pdf = _pdf_for_summary(db, summary, period)
+    disposition = "inline" if inline else "attachment"
     return Response(
         content=pdf,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+        headers={"Content-Disposition": f'{disposition}; filename="{filename}"'},
     )
 
 
@@ -833,12 +889,12 @@ def revenue_share_report(
         out = io.StringIO()
         writer = csv.writer(out)
         writer.writerow([
-            "Client", "Platform", "Earnings", "Worker Cost", "Distributable",
+            "Client", "Platform", "Earnings", "Earnings Source", "Worker Cost", "Distributable",
             "GS %", "Owner %", "GS Share", "Owner Share",
         ])
         for r in rows:
             writer.writerow([
-                r["client_name"], r["platform"], r["earnings"], r["worker_cost"],
+                r["client_name"], r["platform"], r["earnings"], r["earnings_source"], r["worker_cost"],
                 r["distributable"], r["gs_pct"], r["owner_pct"], r["gs_share"], r["owner_share"],
             ])
         return Response(
@@ -847,3 +903,16 @@ def revenue_share_report(
             headers={"Content-Disposition": f'attachment; filename="revenue-share-{period.label.replace(" ", "-")}.csv"'},
         )
     return rows
+
+
+@router.get("/periods/{period_id}/reports/rdp-earnings")
+def rdp_earnings_report(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Hours × worker rate per RDP, rolled up per owner for the payment month."""
+    try:
+        return payroll_engine.rdp_earnings_report(db, period_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))

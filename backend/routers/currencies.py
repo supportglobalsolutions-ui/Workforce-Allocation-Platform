@@ -9,6 +9,7 @@ from core.database import get_db
 from core.permissions import require_admin, require_user
 from models.currency import Country, Currency, FxRate
 from schemas.currency import (
+    AvailableCurrency,
     CountryCreate,
     CountryResponse,
     CountryUpdate,
@@ -18,7 +19,13 @@ from schemas.currency import (
     FxRateCreate,
     FxRateResponse,
 )
-from services.fx import BASE_CURRENCIES, fetch_api_rates, resolve_rate
+from services.fx import (
+    BASE_CURRENCIES,
+    fetch_api_rates,
+    list_api_quotes,
+    resolve_rate,
+    store_api_rates_for_codes,
+)
 from .deps import apply_update
 
 router = APIRouter()
@@ -62,6 +69,21 @@ def _currency_response(db: Session, currency: Currency) -> CurrencyResponse:
     return resp
 
 
+@router.get("/available", response_model=list[AvailableCurrency])
+def list_available_currencies(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """FX API quote codes that are not already in the payout catalog."""
+    try:
+        quotes = list_api_quotes()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Could not load currencies from the FX API: {exc}") from exc
+
+    existing = {c.code for c in db.exec(select(Currency)).all()}
+    return [q for q in quotes if q["code"] not in existing]
+
+
 @router.get("/list", response_model=list[CurrencyResponse])
 def list_currencies(
     active_only: bool = False,
@@ -97,6 +119,8 @@ def create_currency(
     db.add(currency)
     if body.usd_rate is not None and code != "USD":
         _upsert_manual_usd_rate(db, code, body.usd_rate)
+    elif code != "USD":
+        store_api_rates_for_codes(db, {code}, commit=False)
     db.commit()
     db.refresh(currency)
     return _currency_response(db, currency)
@@ -125,6 +149,24 @@ def update_currency(
     db.commit()
     db.refresh(currency)
     return _currency_response(db, currency)
+
+
+@router.delete("/list/{currency_id}")
+def delete_currency(
+    currency_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Remove a currency from the payout catalog. USD and GBP cannot be removed."""
+    currency = db.get(Currency, currency_id)
+    if not currency:
+        raise HTTPException(status_code=404, detail="Currency not found")
+    code = (currency.code or "").upper()
+    if code in {"USD", "GBP"}:
+        raise HTTPException(status_code=400, detail=f"{code} is a base currency and cannot be removed.")
+    db.delete(currency)
+    db.commit()
+    return {"deleted": True, "code": code}
 
 
 # ── Countries ──────────────────────────────────────────────────────────────────

@@ -69,11 +69,12 @@ Handlers, country managers, and operations leads. Role: `admin` or `super_admin`
 | Page | URL | Description |
 |------|-----|-------------|
 | Admin Dashboard | `/admin/dashboard` | Operations command center — worker KPIs, session overview, payroll status, system health |
-| Worker Management | `/admin/workers` | Create, edit, and deactivate worker profiles. Assign roles and partner entities |
+| Worker Management | `/admin/workers` | Create, edit, ban, and **bulk-delete** workers (select all / OTP when deleting more than 10) |
 | User Management | `/admin/users` | Manage Firebase user accounts — approve, reject, change roles |
 | Partner Management | `/admin/partners` | Manage partner entities, split percentages, client overrides, and revenue breakdowns |
 | RDP Management | `/admin/rdp` | Full control of RDP machines — status changes, maintenance mode, lock, force release |
 | Live Session Monitor | `/admin/live-sessions` | Real-time feed of all active sessions. Force-end capability. Full audit view |
+| Sessions | `/admin/sessions` | All / live / history sessions — filters, CSV export, **bulk-delete** finished sessions |
 | Quality Management | `/admin/quality` | Enter subjective quality ratings with mandatory reason notes per worker |
 | Assessment Builder | `/admin/assessments` | Manage MCQ question bank, categories, difficulty levels, and assign assessments to workers |
 | Payroll Dashboard | `/admin/payroll` | Current payroll period overview — pending reviews and exception alerts |
@@ -82,7 +83,7 @@ Handlers, country managers, and operations leads. Role: `admin` or `super_admin`
 | Send Payroll Receipts | `/admin/payroll/receipts` | Deliver approved payslips to workers via email and WhatsApp |
 | Notification Center | `/admin/notifications` | Hub for payroll, machine, and quality alerts |
 | Audit Logs | `/admin/audit-logs` | Append-only log of every material action in the system — actor, entity, old/new values |
-| System Settings | `/admin/settings` | Roles, permissions, feature toggles, integrations, and environment settings |
+| System Settings | `/admin/settings` | Alert email for OTP / security alerts, and other platform settings |
 
 ---
 
@@ -135,3 +136,16 @@ Guacamole admin: `http://localhost:8080/guacamole`
 | `super_admin` | Everything including Leadership Portal |
 
 Roles are set as Firebase custom claims. The backend verifies the claim on every request.
+
+---
+
+## Security deletes and risk alerts
+
+Destructive admin deletes (workers, finished sessions, payroll periods) are gated and scored. Summary:
+
+- **≤ 10** deletes → confirm in-app
+- **> 10** deletes → OTP to the Settings **alert email**
+- **> 5** deletes → alert email to that inbox
+- Per-admin **24h risk score**; at **50+** points the alert email is notified
+
+Full rules: [`docs/security.md`](docs/security.md) (section *Destructive deletes and security risk score*). Alert email is configured under Admin → Settings.

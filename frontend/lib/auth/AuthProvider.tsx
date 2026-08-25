@@ -4,11 +4,12 @@ import { createContext, useCallback, useContext, useEffect, useState } from 'rea
 import { useRouter } from 'next/navigation';
 import { AuthSession, canAccessPortal } from './config';
 import { signIn, signOut, subscribeAuthState, apiGetAccountStatus } from './firebase-auth';
-import { clearAuthRoleCookie, setAuthRoleCookie } from './cookies';
+import { clearAuthRoleCookie } from './cookies';
 import { getFirebaseAuthErrorMessage } from './errors';
 import { FirebaseError } from 'firebase/app';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
+import { logoutBlockReason } from '@/lib/logout-guard';
 
 const DEV_AUTH_BYPASS =
   process.env.NODE_ENV !== 'production' &&
@@ -41,7 +42,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     if (DEV_AUTH_BYPASS) {
       setSession(DEV_SESSION);
-      setAuthRoleCookie(DEV_SESSION.authRole);
       setIsLoading(false);
       return;
     }
@@ -49,11 +49,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = subscribeAuthState((s) => {
       setSession(s);
       setIsLoading(false);
-      if (s) {
-        setAuthRoleCookie(s.authRole);
-      } else {
-        clearAuthRoleCookie();
-      }
+      if (!s) clearAuthRoleCookie();
     });
     return unsub;
   }, []);
@@ -61,7 +57,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(async (email: string, password: string) => {
     if (DEV_AUTH_BYPASS) {
       setSession(DEV_SESSION);
-      setAuthRoleCookie(DEV_SESSION.authRole);
       router.replace(ROLE_LANDING[DEV_SESSION.primaryPortal]);
       return { ok: true as const };
     }
@@ -69,7 +64,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const s = await signIn(email, password);
       setSession(s);
-      setAuthRoleCookie(s.authRole);
       router.replace(ROLE_LANDING[s.primaryPortal]);
       return { ok: true as const };
     } catch (err: unknown) {
@@ -100,6 +94,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, [router]);
 
   const logout = useCallback(async () => {
+    const blocked = logoutBlockReason();
+    if (blocked) {
+      window.alert(blocked);
+      return;
+    }
+
     if (DEV_AUTH_BYPASS) {
       router.replace(ROLE_LANDING[DEV_SESSION.primaryPortal]);
       return;

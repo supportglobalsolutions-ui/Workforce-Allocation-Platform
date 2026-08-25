@@ -122,7 +122,6 @@ export default function MySchedulePage() {
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
       <PageHeader
         title="My Schedule"
-        description="Submit your weekly availability. Each selected day creates a shift pending admin approval."
       />
 
       {loading ? (

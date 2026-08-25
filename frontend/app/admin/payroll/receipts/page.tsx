@@ -1,49 +1,26 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
+import { createPortal } from 'react-dom';
 import Link from 'next/link';
 import {
-  AlertCircle, AtSign, CheckCircle, ChevronDown, FileText, Mail, Megaphone,
-  RefreshCw, ScrollText, Send, Users, X,
+  AlertCircle, Check, CheckCircle, Mail, Megaphone, ScrollText, Search, Send, Users, X,
 } from 'lucide-react';
-import PageHeader from '@/components/platform/PageHeader';
-import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
-import EmailJobProgress, { RecentEmailJobs } from '@/components/admin/EmailJobProgress';
-import EmailRecipientsInput, { isValidRecipient } from '@/components/admin/EmailRecipientsInput';
+import EmailJobProgress from '@/components/admin/EmailJobProgress';
+import ConfirmModal from '@/components/platform/ConfirmModal';
+import { isValidRecipient } from '@/components/admin/EmailRecipientsInput';
 import { api } from '@/lib/api';
-import { downloadFile } from '@/lib/download';
+import { notifyEmailJobsChanged } from '@/lib/email-jobs';
 
-// ── Types ──────────────────────────────────────────────────────────────────────
-
-interface PayrollPeriod {
+interface WorkerRow {
   id: string;
-  label: string;
-  start_date: string;
-  end_date: string;
+  display_name: string;
+  email: string | null;
+  country: string;
   status: string;
+  worker_type?: string | null;
 }
-
-interface PayrollSummary {
-  id: string;
-  worker_id: string;
-  worker_display_name: string;
-  worker_email: string | null;
-  worker_country: string;
-  final_net: string | number;
-  local_currency: string;
-}
-
-function slug(s: string) {
-  return s.trim().replace(/\s+/g, '-');
-}
-
-interface Country { name: string; currency_code: string; is_active: boolean; }
-
-type CommsTab = 'payslips' | 'broadcast';
-
-const fmt = (x: string | number | null | undefined) =>
-  Number(x ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 function Banner({ kind, children, onDismiss }: { kind: 'success' | 'error'; children: React.ReactNode; onDismiss?: () => void }) {
   const styles = kind === 'success'
@@ -51,469 +28,446 @@ function Banner({ kind, children, onDismiss }: { kind: 'success' | 'error'; chil
     : 'bg-danger/10 border-danger/30 text-danger';
   const Icon = kind === 'success' ? CheckCircle : AlertCircle;
   return (
-    <div className={`flex items-center gap-2 p-3 rounded-xl border text-xs mb-4 ${styles}`}>
+    <div className={`flex items-center gap-2 p-3 rounded-xl border text-xs ${styles}`}>
       <Icon size={14} className="shrink-0" />
       <span className="flex-1">{children}</span>
       {onDismiss && (
-        <button type="button" onClick={onDismiss} className="opacity-70 hover:opacity-100"><X size={12} /></button>
+        <button type="button" onClick={onDismiss} className="text-theme-muted hover:text-theme-heading"><X size={12} /></button>
       )}
     </div>
   );
 }
 
-function PayslipsTab({ periods }: { periods: PayrollPeriod[] }) {
-  const [periodId, setPeriodId] = useState(periods[0]?.id ?? '');
-  const [summaries, setSummaries] = useState<PayrollSummary[]>([]);
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [attachPdf, setAttachPdf] = useState(false);
-  const [overrideEmail, setOverrideEmail] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [sending, setSending] = useState(false);
-  const [downloadingId, setDownloadingId] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [queuedNote, setQueuedNote] = useState<string | null>(null);
-  const [jobsKey, setJobsKey] = useState(0);
-  const [forceResend, setForceResend] = useState(false);
+function RecipientPickerModal({
+  workers,
+  selectedIds,
+  customEmails,
+  onClose,
+  onApply,
+}: {
+  workers: WorkerRow[];
+  selectedIds: Set<string>;
+  customEmails: string[];
+  onClose: () => void;
+  onApply: (ids: Set<string>, customs: string[]) => void;
+}) {
+  const [ids, setIds] = useState(() => new Set(selectedIds));
+  const [customs, setCustoms] = useState<string[]>(customEmails);
+  const [draft, setDraft] = useState('');
+  const [draftError, setDraftError] = useState<string | null>(null);
+  const [query, setQuery] = useState('');
+  const [country, setCountry] = useState('');
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
-    if (!periodId) return;
-    setLoading(true); setError(null); setJobId(null); setQueuedNote(null);
-    api.get<PayrollSummary[]>(`/payroll/periods/${periodId}/summaries`)
-      .then((rows) => {
-        setSummaries(rows);
-        setSelected(new Set(rows.map((r) => r.worker_id)));
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load payslip rows.'))
-      .finally(() => setLoading(false));
-  }, [periodId]);
+    setMounted(true);
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    return () => { document.body.style.overflow = prev; };
+  }, []);
 
-  const allSelected = summaries.length > 0 && selected.size === summaries.length;
-
-  function toggle(workerId: string) {
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(workerId)) next.delete(workerId); else next.add(workerId);
-      return next;
-    });
-  }
-
-  async function handleDownload(s: PayrollSummary) {
-    const period = periods.find((p) => p.id === periodId);
-    const filename = `payslip-${slug(period?.label ?? 'period')}-${slug(s.worker_display_name)}.pdf`;
-    setDownloadingId(s.id); setError(null);
-    try {
-      await downloadFile(`/payroll/summaries/${s.id}/payslip.pdf`, filename);
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to generate PDF receipt.');
-    } finally { setDownloadingId(null); }
-  }
-
-  async function handleSend() {
-    if (selected.size === 0) return;
-    setSending(true); setError(null); setQueuedNote(null);
-    try {
-      const override = overrideEmail.trim();
-      if (override && !isValidRecipient(override)) {
-        setError('That redirect address is not a valid inbox. Clear it to email each worker instead.');
-        return;
-      }
-      // The request only queues the job; progress arrives from polling below.
-      const res = await api.post<{
-        job_id: string; queued: number; skipped_no_email: number; skipped_already_sent: number;
-      }>('/communications/payslips/send', {
-        payroll_period_id: periodId,
-        ...(allSelected ? {} : { worker_ids: Array.from(selected) }),
-        attach_pdf: attachPdf,
-        force_resend: forceResend,
-        ...(override ? { override_email: override } : {}),
-      });
-      setJobId(res.job_id);
-      setJobsKey((k) => k + 1);
-      const notes: string[] = [`Sending ${res.queued} payslip${res.queued === 1 ? '' : 's'} now.`];
-      if (res.skipped_already_sent > 0) {
-        notes.push(`${res.skipped_already_sent} already emailed for this period (tick “Re-send” to include them).`);
-      }
-      if (res.skipped_no_email > 0) {
-        notes.push(`${res.skipped_no_email} skipped with no valid email address.`);
-      }
-      setQueuedNote(notes.join(' '));
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : 'Failed to queue payslips.');
-    } finally { setSending(false); }
-  }
-
-  if (periods.length === 0) {
-    return <p className="text-theme-muted text-sm">No payroll periods available. Create and calculate a period first.</p>;
-  }
-
-  return (
-    <div>
-      <div className="flex flex-wrap items-end gap-4 mb-5">
-        <div className="flex-1 min-w-[16rem]">
-          <PeriodFilter
-            periods={periods}
-            value={periodId}
-            onChange={setPeriodId}
-            variant="select"
-            label="Working month"
-          />
-        </div>
-        <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none pb-2.5">
-          <input type="checkbox" checked={attachPdf} onChange={(e) => setAttachPdf(e.target.checked)}
-            className="accent-emerald-400 w-3.5 h-3.5" />
-          <span className="flex items-center gap-1"><FileText size={12} /> Attach PDF payslip</span>
-        </label>
-        <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none pb-2.5">
-          <input type="checkbox" checked={forceResend} onChange={(e) => setForceResend(e.target.checked)}
-            className="accent-emerald-400 w-3.5 h-3.5" />
-          <span className="flex items-center gap-1"><RefreshCw size={12} /> Re-send to already emailed</span>
-        </label>
-        <button type="button" onClick={handleSend} disabled={sending || selected.size === 0}
-          className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-50">
-          {sending ? <SpinningDots size="sm" /> : <Send size={14} />}
-          Email payslips to {selected.size} worker{selected.size !== 1 ? 's' : ''}
-        </button>
-      </div>
-
-      {attachPdf && (
-        <p className="text-[11px] text-gold-accent mb-4 flex items-start gap-1.5">
-          <AlertCircle size={12} className="shrink-0 mt-0.5" />
-          PDF attachments send one email per worker instead of 100 per call, so large runs take
-          noticeably longer. Leave it off unless the attachment is required — workers can always
-          download the PDF from their wallet.
-        </p>
-      )}
-
-      <div className="mb-4 max-w-md">
-        <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
-          Redirect all payslips to one address (optional)
-        </label>
-        <input
-          type="email"
-          value={overrideEmail}
-          onChange={(e) => setOverrideEmail(e.target.value)}
-          placeholder="finance@company.com"
-          className="input-field"
-        />
-        <p className="text-[11px] text-theme-muted mt-1">
-          Leave empty to email each worker their own payslip. When set, every selected payslip goes
-          to this address instead — used for finance review or verifying delivery.
-        </p>
-      </div>
-
-      <p className="text-[11px] text-theme-muted mb-4 flex items-center gap-1.5">
-        <Mail size={12} className="text-gold-accent" />
-        Payslip emails send from gsdeck.com via Resend. Sending runs in the background, so you can
-        leave this page — progress keeps updating when you come back.
-      </p>
-
-      {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
-      {queuedNote && <Banner kind="success" onDismiss={() => setQueuedNote(null)}>{queuedNote}</Banner>}
-
-      {jobId && <EmailJobProgress jobId={jobId} onDismiss={() => setJobId(null)} />}
-      <RecentEmailJobs kind="payslip" onSelect={setJobId} refreshKey={jobsKey} />
-
-      {loading ? (
-        <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
-      ) : (
-        <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b border-white/5 bg-white/[0.02]">
-                  <th className="px-4 py-3 w-10">
-                    <input type="checkbox" checked={allSelected}
-                      onChange={() => setSelected(allSelected ? new Set() : new Set(summaries.map((s) => s.worker_id)))}
-                      className="accent-emerald-400 w-3.5 h-3.5" />
-                  </th>
-                  {['Worker', 'Email', 'Country', 'Final Net'].map((h) => (
-                    <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">{h}</th>
-                  ))}
-                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">Receipt</th>
-                </tr>
-              </thead>
-              <tbody>
-                {summaries.length === 0 ? (
-                  <tr>
-                    <td colSpan={6} className="px-4 py-8 text-center text-brand-on-surface-variant">
-                      No payslip rows for this period. Run Calculate on the Payroll page first.
-                    </td>
-                  </tr>
-                ) : (
-                  summaries.map((s) => (
-                    <tr key={s.id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors cursor-pointer"
-                      onClick={() => toggle(s.worker_id)}>
-                      <td className="px-4 py-3">
-                        <input type="checkbox" checked={selected.has(s.worker_id)} onChange={() => toggle(s.worker_id)}
-                          onClick={(e) => e.stopPropagation()} className="accent-emerald-400 w-3.5 h-3.5" />
-                      </td>
-                      <td className="px-4 py-3 font-medium text-theme-heading">{s.worker_display_name}</td>
-                      <td className="px-4 py-3 text-theme-muted">{s.worker_email ?? <span className="text-danger text-xs">no email</span>}</td>
-                      <td className="px-4 py-3 text-theme-muted">{s.worker_country}</td>
-                      <td className="px-4 py-3 font-bold text-emerald-accent">{fmt(s.final_net)} {s.local_currency}</td>
-                      <td className="px-4 py-3 text-right">
-                        <button type="button"
-                          onClick={(e) => { e.stopPropagation(); void handleDownload(s); }}
-                          disabled={downloadingId === s.id}
-                          className="btn-secondary text-xs py-1.5 px-2.5 inline-flex items-center gap-1.5 disabled:opacity-50">
-                          {downloadingId === s.id ? <SpinningDots size="sm" /> : <FileText size={12} />}
-                          PDF
-                        </button>
-                      </td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-    </div>
+  const countries = useMemo(
+    () => [...new Set(workers.map((w) => w.country).filter(Boolean))].sort(),
+    [workers],
   );
-}
 
-// ── Broadcast tab ──────────────────────────────────────────────────────────────
+  const withEmail = useMemo(
+    () => workers.filter((w) => w.email && isValidRecipient(w.email)),
+    [workers],
+  );
 
-type Audience = 'workers' | 'custom';
+  const visible = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return withEmail.filter((w) => {
+      if (country && w.country !== country) return false;
+      if (!q) return true;
+      return (
+        w.display_name.toLowerCase().includes(q)
+        || (w.email ?? '').toLowerCase().includes(q)
+        || w.country.toLowerCase().includes(q)
+      );
+    });
+  }, [withEmail, query, country]);
 
-function BroadcastTab({ countries }: { countries: Country[] }) {
-  const [title, setTitle] = useState('');
-  const [message, setMessage] = useState('');
-  const [audience, setAudience] = useState<Audience>('workers');
-  const [selectedCountries, setSelectedCountries] = useState<Set<string>>(new Set());
-  const [workerType, setWorkerType] = useState<'' | 'gs_registered' | 'partner_worker'>('');
-  const [activeOnly, setActiveOnly] = useState(true);
-  const [extraEmails, setExtraEmails] = useState<string[]>([]);
-  const [sending, setSending] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [queuedNote, setQueuedNote] = useState<string | null>(null);
-  const [jobsKey, setJobsKey] = useState(0);
+  const allVisibleSelected = visible.length > 0 && visible.every((w) => ids.has(w.id));
 
-  const customOnly = audience === 'custom';
-
-  function toggleCountry(name: string) {
-    setSelectedCountries((prev) => {
+  function toggle(id: string) {
+    setIds((prev) => {
       const next = new Set(prev);
-      if (next.has(name)) next.delete(name); else next.add(name);
+      if (next.has(id)) next.delete(id); else next.add(id);
       return next;
     });
   }
 
-  async function handleSend(e: React.FormEvent) {
-    e.preventDefault();
-    if (customOnly && extraEmails.length === 0) {
-      setError('Add at least one email address, or switch the audience back to workers.');
+  function toggleAllVisible() {
+    setIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) visible.forEach((w) => next.delete(w.id));
+      else visible.forEach((w) => next.add(w.id));
+      return next;
+    });
+  }
+
+  function addCustom() {
+    const addr = draft.trim();
+    if (!addr) return;
+    if (!isValidRecipient(addr)) {
+      setDraftError('Enter a full address like name@gmail.com');
       return;
     }
-
-    const scope = selectedCountries.size > 0
-      ? `${selectedCountries.size} selected countr${selectedCountries.size === 1 ? 'y' : 'ies'}`
-      : 'all countries';
-    const typeLabel = workerType === 'gs_registered' ? 'GS Members'
-      : workerType === 'partner_worker' ? 'Partners' : 'all worker types';
-    const extraNote = extraEmails.length
-      ? ` plus ${extraEmails.length} typed address${extraEmails.length === 1 ? '' : 'es'}`
-      : '';
-    const confirmMsg = customOnly
-      ? `Send "${title}" to ${extraEmails.length} typed address${extraEmails.length === 1 ? '' : 'es'}? Workers will not be emailed.`
-      : `Send "${title}" to ${typeLabel} in ${scope}${activeOnly ? ' (active only)' : ''}${extraNote}?`;
-    if (!window.confirm(confirmMsg)) return;
-
-    setSending(true); setError(null); setQueuedNote(null);
-    try {
-      const res = await api.post<{ job_id: string; queued: number; skipped_no_email: number }>('/communications/broadcast', {
-        title,
-        message,
-        ...(!customOnly && selectedCountries.size > 0 ? { countries: Array.from(selectedCountries) } : {}),
-        ...(!customOnly && workerType ? { worker_type: workerType } : {}),
-        active_only: customOnly ? false : activeOnly,
-        ...(extraEmails.length ? { extra_emails: extraEmails } : {}),
-        ...(customOnly ? { skip_workers: true } : {}),
-      });
-      setJobId(res.job_id);
-      setJobsKey((k) => k + 1);
-      setQueuedNote(
-        `Sending to ${res.queued} recipient${res.queued === 1 ? '' : 's'} now.`
-        + (res.skipped_no_email > 0 ? ` ${res.skipped_no_email} skipped with no valid email address.` : ''),
-      );
-      setTitle(''); setMessage(''); setExtraEmails([]);
-    } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Failed to send the announcement.');
-    } finally { setSending(false); }
+    const key = addr.toLowerCase();
+    if (customs.some((c) => c.toLowerCase() === key)) {
+      setDraft('');
+      setDraftError(null);
+      return;
+    }
+    setCustoms((prev) => [...prev, addr]);
+    setDraft('');
+    setDraftError(null);
   }
 
-  return (
-    <div className="max-w-3xl">
-      {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
-      {queuedNote && <Banner kind="success" onDismiss={() => setQueuedNote(null)}>{queuedNote}</Banner>}
+  if (!mounted) return null;
 
-      {jobId && <EmailJobProgress jobId={jobId} onDismiss={() => setJobId(null)} />}
-      <RecentEmailJobs kind="broadcast" onSelect={setJobId} refreshKey={jobsKey} />
-
-      <form onSubmit={handleSend} className="glass-panel p-6 space-y-5">
-        <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Title</label>
-          <input required value={title} onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Payroll schedule update" className="input-field" />
-        </div>
-        <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Message</label>
-          <textarea required rows={5} value={message} onChange={(e) => setMessage(e.target.value)}
-            placeholder="Write the announcement…" className="input-field resize-none" />
+  return createPortal(
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-4" role="dialog" aria-modal="true">
+      <button type="button" aria-label="Close" className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
+      <div className="glass-modal relative z-10 flex flex-col w-full max-w-lg max-h-[min(88vh,36rem)] overflow-hidden rounded-2xl">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-theme shrink-0">
+          <div>
+            <h2 className="text-sm font-bold text-theme-heading">Recipients</h2>
+            <p className="text-[11px] text-theme-muted mt-0.5">
+              {ids.size} selected · {customs.length} custom
+            </p>
+          </div>
+          <button type="button" onClick={onClose} className="h-8 w-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/5">
+            <X size={16} />
+          </button>
         </div>
 
-        <div>
-          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 block">Audience</label>
-          <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
-            {([
-              { key: 'workers', label: 'Workers', icon: <Users size={12} /> },
-              { key: 'custom', label: 'Typed addresses only', icon: <AtSign size={12} /> },
-            ] as { key: Audience; label: string; icon: React.ReactNode }[]).map(({ key, label, icon }) => (
-              <button key={key} type="button" onClick={() => setAudience(key)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-[11px] font-semibold transition-colors ${
-                  audience === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
-                }`}>
-                {icon} {label}
+        <div className="px-4 py-3 border-b border-theme shrink-0 space-y-2">
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-theme-muted" />
+            <input
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search name or email…"
+              className="input-field !pl-9 !py-2 text-sm"
+            />
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setCountry('')}
+              className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                country === ''
+                  ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
+                  : 'border-theme text-theme-muted hover:text-theme-heading'
+              }`}
+            >
+              All countries
+            </button>
+            {countries.map((c) => (
+              <button
+                key={c}
+                type="button"
+                onClick={() => setCountry(c === country ? '' : c)}
+                className={`px-2.5 py-1 rounded-lg text-[11px] font-semibold border transition-colors ${
+                  country === c
+                    ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
+                    : 'border-theme text-theme-muted hover:text-theme-heading'
+                }`}
+              >
+                {c}
               </button>
             ))}
           </div>
         </div>
 
-        {!customOnly && (
-          <>
-            <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-2 block">
-                Countries {selectedCountries.size === 0 && <span className="normal-case font-normal">(none selected = all countries)</span>}
-              </label>
-              <div className="flex flex-wrap gap-1.5">
-                {countries.map((c) => {
-                  const on = selectedCountries.has(c.name);
-                  return (
-                    <button key={c.name} type="button" onClick={() => toggleCountry(c.name)}
-                      className={`px-2.5 py-1 rounded-full text-[11px] font-semibold border transition-all ${
-                        on
-                          ? 'border-emerald-accent/40 bg-emerald-accent/15 text-emerald-accent'
-                          : 'border-white/10 text-theme-muted hover:border-emerald-accent/20 hover:text-theme-heading'
-                      }`}>
-                      {c.name}
-                    </button>
-                  );
-                })}
-                {countries.length === 0 && <span className="text-xs text-theme-muted">No countries configured.</span>}
-              </div>
+        <div className="flex-1 min-h-0 overflow-auto">
+          <div className="sticky top-0 z-10 px-4 py-2 bg-theme-card border-b border-theme flex items-center gap-2">
+            <input
+              type="checkbox"
+              checked={allVisibleSelected}
+              onChange={toggleAllVisible}
+              className="accent-emerald-accent"
+              aria-label="Select all visible"
+            />
+            <span className="text-[11px] text-theme-muted">{visible.length} with email</span>
+          </div>
+          {visible.length === 0 ? (
+            <p className="px-4 py-10 text-center text-sm text-theme-muted">No matches</p>
+          ) : (
+            <ul className="divide-y divide-white/[0.04]">
+              {visible.map((w) => (
+                <li key={w.id}>
+                  <label className="flex items-center gap-3 px-4 py-2.5 cursor-pointer hover:bg-white/[0.02]">
+                    <input
+                      type="checkbox"
+                      checked={ids.has(w.id)}
+                      onChange={() => toggle(w.id)}
+                      className="accent-emerald-accent shrink-0"
+                    />
+                    <span className="min-w-0 flex-1">
+                      <span className="block text-sm font-medium text-theme-heading truncate">{w.display_name}</span>
+                      <span className="block text-[11px] text-theme-muted truncate">{w.email} · {w.country}</span>
+                    </span>
+                  </label>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+
+        <div className="px-4 py-3 border-t border-theme shrink-0 space-y-2">
+          <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Custom email</p>
+          <div className="flex gap-2">
+            <input
+              type="email"
+              value={draft}
+              onChange={(e) => { setDraft(e.target.value); setDraftError(null); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addCustom(); } }}
+              placeholder="name@company.com"
+              className="input-field !py-2 text-sm flex-1"
+            />
+            <button type="button" onClick={addCustom} className="btn-secondary text-sm py-2 px-3 shrink-0">Add</button>
+          </div>
+          {draftError && <p className="text-[11px] text-danger">{draftError}</p>}
+          {customs.length > 0 && (
+            <div className="flex flex-wrap gap-1.5 pt-1">
+              {customs.map((email) => (
+                <span key={email} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold bg-gold-accent/15 text-gold-accent border border-gold-accent/30">
+                  {email}
+                  <button type="button" aria-label={`Remove ${email}`} onClick={() => setCustoms((prev) => prev.filter((c) => c !== email))}>
+                    <X size={10} />
+                  </button>
+                </span>
+              ))}
             </div>
+          )}
+        </div>
 
-            <div className="flex flex-wrap items-center gap-5">
-              <div>
-                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Worker Type</label>
-                <div className="relative">
-                  <select value={workerType} onChange={(e) => setWorkerType(e.target.value as typeof workerType)}
-                    className="input-field appearance-none pr-8 w-44">
-                    <option value="">All</option>
-                    <option value="gs_registered">GS Members</option>
-                    <option value="partner_worker">Partners</option>
-                  </select>
-                  <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted pointer-events-none" />
-                </div>
-              </div>
-              <label className="flex items-center gap-2 text-xs text-theme-muted cursor-pointer select-none mt-4">
-                <input type="checkbox" checked={activeOnly} onChange={(e) => setActiveOnly(e.target.checked)}
-                  className="accent-emerald-400 w-3.5 h-3.5" />
-                Active workers only
-              </label>
-            </div>
-          </>
-        )}
-
-        <EmailRecipientsInput
-          value={extraEmails}
-          onChange={setExtraEmails}
-          label={customOnly ? 'Email addresses' : 'Also send to these addresses (optional)'}
-          placeholder="name@company.com"
-          hint={
-            customOnly
-              ? 'Type an address and press Enter to add another. Paste a comma-separated list to add several at once. Only these addresses receive the email.'
-              : 'Anyone here receives the same email alongside the matching workers — useful for finance, partners or an ops inbox.'
-          }
-        />
-
-        <div className="flex items-center justify-between gap-3 pt-1">
-          <p className="text-[11px] text-theme-muted">
-            Sends run in the background, 100 recipients per call, so you can leave this page.
-          </p>
-          <button type="submit"
-            disabled={sending || (customOnly && extraEmails.length === 0)}
-            className="btn-primary text-sm py-2 px-5 flex items-center gap-2 disabled:opacity-60">
-            {sending ? <SpinningDots size="sm" /> : <Megaphone size={14} />}
-            {customOnly
-              ? `Send to ${extraEmails.length} address${extraEmails.length === 1 ? '' : 'es'}`
-              : 'Send Announcement'}
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-theme shrink-0">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+          <button
+            type="button"
+            onClick={() => onApply(ids, customs)}
+            className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-1.5"
+          >
+            <Check size={14} /> Done
           </button>
         </div>
-      </form>
-    </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
-// ── Page ───────────────────────────────────────────────────────────────────────
-
 export default function CommunicationsPage() {
-  const [tab, setTab] = useState<CommsTab>('payslips');
-  const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
-  const [countries, setCountries] = useState<Country[]>([]);
+  const [workers, setWorkers] = useState<WorkerRow[]>([]);
   const [loading, setLoading] = useState(true);
+  const [title, setTitle] = useState('');
+  const [message, setMessage] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [customEmails, setCustomEmails] = useState<string[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+  const [jobId, setJobId] = useState<string | null>(null);
+  const [confirmOpen, setConfirmOpen] = useState(false);
 
   useEffect(() => {
-    Promise.all([
-      api.get<PayrollPeriod[]>('/payroll/periods'),
-      api.get<Country[]>('/currencies/countries'),
-    ])
-      .then(([p, c]) => { setPeriods(p); setCountries(c); })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load data.'))
+    api.get<WorkerRow[]>('/workers')
+      .then(setWorkers)
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load accounts.'))
       .finally(() => setLoading(false));
   }, []);
 
-  const TABS: { key: CommsTab; label: string; icon: React.ReactNode }[] = [
-    { key: 'payslips', label: 'Payslips', icon: <Mail size={13} /> },
-    { key: 'broadcast', label: 'Announcements', icon: <Megaphone size={13} /> },
-  ];
+  const selectedWorkers = useMemo(
+    () => workers.filter((w) => selectedIds.has(w.id) && w.email),
+    [workers, selectedIds],
+  );
+
+  const recipientCount = selectedWorkers.length + customEmails.length;
+
+  function handleSend(e: React.FormEvent) {
+    e.preventDefault();
+    if (recipientCount === 0) {
+      setError('Choose at least one recipient.');
+      return;
+    }
+    setConfirmOpen(true);
+  }
+
+  async function confirmSend() {
+    const emails = [
+      ...selectedWorkers.map((w) => w.email!).filter(Boolean),
+      ...customEmails,
+    ];
+    const unique = [...new Map(emails.map((a) => [a.toLowerCase(), a])).values()];
+
+    setSending(true);
+    setError(null);
+    setNote(null);
+    try {
+      const res = await api.post<{ job_id: string; queued: number; skipped_no_email: number }>('/communications/broadcast', {
+        title: title.trim(),
+        message: message.trim(),
+        skip_workers: true,
+        extra_emails: unique,
+      });
+      setJobId(res.job_id);
+      notifyEmailJobsChanged();
+      setNote(`Sending ${res.queued}`);
+      setTitle('');
+      setMessage('');
+      setSelectedIds(new Set());
+      setCustomEmails([]);
+      setConfirmOpen(false);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Send failed.');
+      setConfirmOpen(false);
+    } finally {
+      setSending(false);
+    }
+  }
 
   return (
-    <div>
-      <PageHeader
-        title="Communications"
-        description="Email each worker their payslip, send announcements to a group, and audit every delivery."
-      />
-      <div className="flex flex-wrap items-center gap-3 mb-6">
-        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
-          {TABS.map(({ key, label, icon }) => (
-            <button key={key} type="button" onClick={() => setTab(key)}
-              className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-semibold transition-colors ${
-                tab === key ? 'bg-emerald-accent/20 text-emerald-400' : 'text-theme-muted hover:text-theme-heading'
-              }`}>
-              {icon} {label}
-            </button>
-          ))}
-        </div>
-        <Link href="/admin/payroll/receipts/history"
-          className="btn-secondary text-xs py-2 px-3 flex items-center gap-1.5">
-          <ScrollText size={13} /> Email history
+    <div className="min-h-[70vh] flex flex-col">
+      <div className="flex items-center justify-between gap-4 mb-10">
+        <h1 className="text-2xl md:text-3xl font-black text-theme-heading tracking-tight">Send email</h1>
+        <Link
+          href="/admin/payroll/receipts/history?from=comms"
+          className="btn-secondary text-sm py-2 px-3.5 inline-flex items-center gap-1.5"
+        >
+          <ScrollText size={14} /> History
         </Link>
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
-      ) : error ? (
-        <Banner kind="error">{error}</Banner>
+        <div className="flex-1 flex justify-center items-center py-24">
+          <SpinningDots size="lg" className="text-emerald-accent" />
+        </div>
       ) : (
-        <>
-          {tab === 'payslips' && <PayslipsTab periods={periods} />}
-          {tab === 'broadcast' && <BroadcastTab countries={countries} />}
-        </>
+        <div className="flex-1 flex items-start justify-center px-2">
+          <form onSubmit={handleSend} className="w-full max-w-md space-y-4">
+            {error && <Banner kind="error" onDismiss={() => setError(null)}>{error}</Banner>}
+            {note && <Banner kind="success" onDismiss={() => setNote(null)}>{note}</Banner>}
+            {jobId && <EmailJobProgress jobId={jobId} onDismiss={() => setJobId(null)} />}
+
+            <div className="glass-panel rounded-2xl p-6 sm:p-8 space-y-5 border border-theme">
+              <div className="text-center">
+                <span className="inline-flex h-11 w-11 items-center justify-center rounded-2xl bg-emerald-accent/15 text-emerald-accent mb-3">
+                  <Megaphone size={20} />
+                </span>
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Subject</label>
+                <input
+                  required
+                  value={title}
+                  onChange={(e) => setTitle(e.target.value)}
+                  placeholder="Subject"
+                  className="input-field"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Message</label>
+                <textarea
+                  required
+                  rows={6}
+                  value={message}
+                  onChange={(e) => setMessage(e.target.value)}
+                  placeholder="Write your message…"
+                  className="input-field resize-none"
+                />
+              </div>
+
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">To</label>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen(true)}
+                  className="w-full input-field !py-3 flex items-center gap-3 text-left hover:border-emerald-accent/30 transition-colors"
+                >
+                  <Users size={16} className="text-emerald-accent shrink-0" />
+                  <span className="flex-1 min-w-0">
+                    {recipientCount === 0 ? (
+                      <span className="text-theme-muted text-sm">Choose recipients…</span>
+                    ) : (
+                      <span className="text-sm text-theme-heading font-medium">
+                        {recipientCount} recipient{recipientCount === 1 ? '' : 's'}
+                      </span>
+                    )}
+                  </span>
+                  <Mail size={14} className="text-theme-muted shrink-0" />
+                </button>
+                {recipientCount > 0 && (
+                  <div className="mt-2 flex flex-wrap gap-1.5">
+                    {selectedWorkers.slice(0, 6).map((w) => (
+                      <span key={w.id} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-emerald-accent/15 text-emerald-accent border border-emerald-accent/25 truncate max-w-[10rem]">
+                        {w.display_name}
+                      </span>
+                    ))}
+                    {customEmails.slice(0, 4).map((email) => (
+                      <span key={email} className="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-gold-accent/15 text-gold-accent border border-gold-accent/25 truncate max-w-[10rem]">
+                        {email}
+                      </span>
+                    ))}
+                    {recipientCount > 10 && (
+                      <span className="px-2 py-0.5 text-[10px] text-theme-muted">+{recipientCount - 10}</span>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="submit"
+                disabled={sending || recipientCount === 0}
+                className="btn-primary w-full text-sm py-3 flex items-center justify-center gap-2 disabled:opacity-40"
+              >
+                {sending ? <SpinningDots size="sm" /> : <Megaphone size={15} />}
+                Send
+              </button>
+            </div>
+          </form>
+        </div>
       )}
+
+      {pickerOpen && (
+        <RecipientPickerModal
+          workers={workers}
+          selectedIds={selectedIds}
+          customEmails={customEmails}
+          onClose={() => setPickerOpen(false)}
+          onApply={(ids, customs) => {
+            setSelectedIds(ids);
+            setCustomEmails(customs);
+            setPickerOpen(false);
+          }}
+        />
+      )}
+      <ConfirmModal
+        open={confirmOpen}
+        title="Send this email?"
+        body={
+          <>
+            Send “{title.trim() || 'this message'}” to{' '}
+            <span className="text-theme-heading font-semibold">
+              {recipientCount} recipient{recipientCount === 1 ? '' : 's'}
+            </span>
+            ? This cannot be undone once the queue starts.
+          </>
+        }
+        confirmLabel="Send"
+        tone="gold"
+        icon={Send}
+        busy={sending}
+        onCancel={() => { if (!sending) setConfirmOpen(false); }}
+        onConfirm={() => void confirmSend()}
+      />
     </div>
   );
 }

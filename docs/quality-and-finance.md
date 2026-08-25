@@ -9,7 +9,7 @@
 
 This is the operational logic behind two systems that share a **work period** (payroll period) but calculate independently:
 
-1. **Quality** — how a worker is scored and ranked (assessments, admin ratings, session reliability, hour consistency).
+1. **Quality** — how a worker is scored and ranked (assessments, admin ratings, session finish-rate, hours/days/weeks present).
 2. **Finance** — how a work period is opened, how hours and earnings become pay, how costs and FX are applied, and how money reaches wallets.
 
 Quality scores do **not** automatically change pay. Bonus on a payslip is always a manual admin amount. Rankings and payroll share the same period calendar so ops can rate people for a month and pay them for that month, but the two engines do not multiply each other.
@@ -29,7 +29,7 @@ flowchart LR
     Sessions --> PayrollEngine
     Tiers[Payment tiers + rate table] --> PayrollEngine
     Arrangements[Partner split %] --> PayrollEngine
-    Costs[Country cost pools + bonus] --> PayrollEngine
+    Costs[Per-worker costs + bonus] --> PayrollEngine
     FX[FX rates] --> PayrollEngine
 
     QualityEngine --> Leaderboard
@@ -50,25 +50,26 @@ Confirmed weights (in `quality_engine.WEIGHTS`):
 
 | Component | Weight | What it measures | Time window |
 | :--- | :--- | :--- | :--- |
-| **Assessment** | 40% | Average of all MCQ results and all *graded* task-assessment scores | All time (not limited to the period) |
+| **Assessment** | 40% | Average of the **current** score on each named test (MCQ and graded task). A retake **overwrites** that test’s row. | Tests whose current completion/grade date falls in the view window; **All periods** averages every current test |
 | **Admin rating** | 20% | Manual 1–5 ratings, normalized to 0–100 | **All** payroll periods (one score per period, then averaged) |
-| **Reliability** | 25% | Share of closed sessions that ended `completed` | Current view window only |
-| **Consistency** | 15% | Stability of weekly hours (low variance = higher score) | Current view window only |
+| **Reliability** | 15% | Did they **finish** closed sessions (`completed` vs abandoned / timed out / force released) | Current view window only |
+| **Consistency** | 25% | Paid screenshot **hours** + unique **days** present + **weeks** with paid hours (average of three 0–100s) | Current view window only |
 
 A fifth display field, **session streak**, is stored but is **not** part of the composite. It is the number of consecutive calendar days (ending on the latest session day in the window) that had at least one session.
 
 ## Two leaderboard views
 
-`recalculate_all()` writes a calendar-month snapshot and a snapshot for the **latest** payroll period. Recalculating a named period (`POST /quality/recalculate?payroll_period_id=`) replaces **only that period’s rows**, so March 2026 stays available after April is created.
+`recalculate_all()` writes a calendar-month snapshot, a snapshot for the **latest** payroll period, and an **All periods** snapshot (`period_type=all`). Recalculating a named period (`POST /quality/recalculate?payroll_period_id=`) replaces **only that period’s rows**, so March 2026 stays available after April is created.
 
 | `period_type` | Window | `period_label` | `payroll_period_id` |
 | :--- | :--- | :--- | :--- |
 | `calendar` | First–last day of the current calendar month | e.g. `August 2026` | null |
 | `payroll` | Start/end of a specific payroll period | That period’s unique `label` | That period’s id |
+| `all` | All sessions to date; every current test score | `All periods` | null |
 
 If there is no payroll period yet, the payroll view falls back to the same calendar month.
 
-The admin Quality page loads `/leaderboard?period=payroll`. An **All** filter uses the latest period; a named month (e.g. `March 2026`) passes `payroll_period_id`. The page itself is a compact worker list (score + period rating + eye). The eye opens a detail modal with component point slices and an editable 1–5 rating for that period. Workers see the latest payroll board. GS and partner workers sit on the **same** board.
+The admin Quality page loads `/leaderboard?period=payroll` for a named month (`payroll_period_id`) and `/leaderboard?period=all` for **All periods**. The page itself is a compact worker list (score + period rating + eye). The eye opens a detail modal with component point slices and an editable 1–5 rating for that period. Workers see the latest payroll board. GS and partner workers sit on the **same** board.
 
 Recalculation is triggered by `POST /quality/recalculate` (admin). Firestore is then mirrored every 5 minutes by `leaderboard_sync`.
 
@@ -78,16 +79,24 @@ All money-like decimals in quality are quantized to 2 decimal places with `ROUND
 
 ### 1. Assessment (40%)
 
+Each worker has **one current score per named test**. The Scores table shows the test name and that percentage. If Test 1 was 60 and they retake it and get 89, the same row is updated to 89 — 60 is gone. Attempt limits still apply; extra rows are not stored.
+
+Quality then **averages those current scores**. Ten tests → average of those ten percentages, then × 0.40.
+
 ```
-assessment = average( all McqResult.score_pct for worker
-                    + all TaskAssessmentResult.score_pct that are not null )
+n = number of current test scores in scope
+assessment_raw = (score1 + score2 + … + scoren) / n     # e.g. (80+90+70)/3 = 80.00
+assessment_points = assessment_raw × 0.40               # 32.00 of 40
 ```
 
-- MCQ score = `correct answers / question count × 100`. Pass/fail against `passing_score_pct` is stored on the result but **does not** change the composite — failed attempts still average in.
-- Task assessments only count once an admin has graded them (`score_pct` set). Ungraded submissions are ignored.
-- There is **no date filter**. Old assessments stay in the average forever.
+- **Named period:** include a test if its current completion (MCQ) or grade (task) date sits in that period.
+- **All periods:** include every current test score, with no date filter.
+- **MCQ:** each question has `marks`; marks on a set must total **100** before it can be activated. Auto-score = sum of marks for correct answers.
+- **Task:** each activity has `max_marks`; those must total **100**. Grade = sum of marks awarded.
+- Training **content** is not a percentage. A quiz/task **linked** on the module is a normal test.
+- Deleting an MCQ/task removes questions, activities, and media. **The current result stays**, with `title_snapshot` + `source_id`, on the Scores page.
 
-If the worker has no MCQ results and no graded tasks, this component is `None` and is dropped from the weighted mix.
+If the worker has no current MCQ/task scores in scope, this component is `None` → 0 of 40.
 
 ### 2. Admin rating (20%)
 
@@ -119,7 +128,9 @@ Example: ratings 4, 5, 3 on a 1–5 scale → `(80 + 100 + 60) / 3 = 80.00`.
 
 Ops are prompted each month: `GET /quality/pending-ratings` feeds a **Pending** notification button on the Admin Quality page. Clicking it opens a dark, blurred-backdrop modal listing workers still missing an `admin_overall` rating for the selected or latest period.
 
-### 3. Reliability (25%)
+### 3. Reliability (15%)
+
+Did they **finish** the sessions they started? Hours and login count are **not** in this grade.
 
 Uses sessions whose `start_time` falls inside the view window.
 
@@ -128,35 +139,57 @@ closed = sessions with close_status set
 reliability = completed_count / closed_count × 100
 ```
 
-`completed` is `SessionCloseEnum.completed`. `force_released`, `abandoned`, and `timed_out` all count as closed-but-not-completed, so they lower the score. Open sessions (no `close_status`) are ignored. If there are no closed sessions in the window, the component is dropped.
+`completed` is `SessionCloseEnum.completed`. `force_released`, `abandoned`, and `timed_out` all count as closed-but-not-completed, so they lower the score. Open sessions (no `close_status`) are ignored. If there are no closed sessions in the window, the component is dropped (0 of 15).
 
-### 4. Consistency (15%)
+**Honesty note:** RDP release currently stamps `close_status = completed` on almost every close. Idle timeout and force-release are stored on the allocation `release_reason`, so reliability often sits at 100 until session close reasons are written correctly.
 
-Uses the same windowed sessions, summing `duration_minutes / 60` into ISO week buckets.
+Logged hours still appear as KPIs on Sessions, Command Center, CEO Command, and Quality. Those hours **do** feed consistency (below), not reliability.
+
+### 4. Consistency (25%)
+
+Hourly platform work (many short RDP logins, paid on screenshot times). A heavy day is about 6–8 hours. **3 logins/day and 40-hour office weeks are not the grade scale.**
+
+Same windowed sessions. Hours = screenshot start/end only. Several sessions on the same calendar day count as **one day**.
+
+Each piece is **0–100**. Consistency is the **average of the three**, then × 0.25 for the board.
 
 ```
-cv = population_stdev(weekly_hours) / mean(weekly_hours)
-consistency = clamp(100 × (1 − cv), 0, 100)
+D = (period_end − period_start).days + 1
+hours_cap = 40 × D / 30          # 40 paid hours in 30 days is a full hours score
+days_cap  = 3 × D / 7            # 3 unique session-days per 7 calendar days
+                                 # 30-day month: 3×30/7 ≈ 12.86 days (not a magic 13)
+
+hours_raw = min(100, paid_hours / hours_cap × 100)
+days_raw  = min(100, unique_session_days / days_cap × 100)
+weeks_raw = weeks_with_paid_hours / ISO_weeks_overlapping_the_period × 100
+
+consistency = (hours_raw + days_raw + weeks_raw) / 3
 ```
 
-Needs **at least two weeks** with hours. A perfectly flat week-to-week pattern scores 100; wild swings approach 0. Sessions without `duration_minutes` are skipped.
+No sessions in the window → consistency is dropped (0 of 25). Extra hours or days above the cap stay 100. A 40-hour month hits the hours cap. A 20-hour month scores 50 on hours. One week of paid hours in a 4-week window scores 25 on weeks, not 0.
 
 ### Composite and ranks
 
 ```
 assessment_points  = assessment_raw  × 0.40    # maximum 40 points
 rating_points      = rating_raw      × 0.20    # maximum 20 points
-reliability_points = reliability_raw × 0.25    # maximum 25 points
-consistency_points = consistency_raw × 0.15    # maximum 15 points
+reliability_points = reliability_raw × 0.15    # maximum 15 points
+consistency_points = consistency_raw × 0.25    # maximum 25 points
 composite = sum(all component points)
 ```
 
-Example: a new worker has only assessment 90 and reliability 80 (no ratings, only one week of hours so consistency contributes zero):
+Example: a new worker has assessment 90 and reliability 80, no ratings, 20 paid hours, 5 unique days, and paid hours in 1 of 4 ISO weeks:
 
 ```
-composite = 90×0.40 + 0×0.20 + 80×0.25 + 0×0.15
-          = 36 + 0 + 20 + 0
-          = 56.00
+# 30-day window
+hours_raw = 20/40 × 100 = 50
+days_raw  = 5 / (3×30/7) × 100 ≈ 38.89
+weeks_raw = 1/4 × 100 = 25
+consistency_raw = (50 + 38.89 + 25) / 3 ≈ 37.96
+
+composite = 90×0.40 + 0×0.20 + 80×0.15 + 37.96×0.25
+          = 36 + 0 + 12 + 9.49
+          = 57.49
 ```
 
 Workers with **no** available components are omitted from the board entirely. An admin-only 5/5 rating normalizes to 100 but contributes `100 × 0.20 = 20.00`, never 100.
@@ -167,7 +200,51 @@ Ranking:
 2. `global_rank` = 1-based position on that list.
 3. `country_rank` = 1-based position among workers with the same `worker.country` (first time that country appears gets 1, next worker from that country gets 2, and so on).
 
-Stored snapshot fields: `assessment_component`, `rating_component`, `reliability_component`, `consistency_component`, plus legacy aliases `mcq_component` / `subjective_component` (same numbers as assessment / rating, or `0` when missing).
+Stored snapshot fields: `assessment_component`, `rating_component`, `reliability_component`, `consistency_component` are the **0–100** raw values. The Quality UI multiplies them by 0.40 / 0.20 / 0.15 / 0.25 to show /40 /20 /15 /25. Legacy aliases `mcq_component` / `subjective_component` match assessment / rating (or `0` when missing).
+
+## How every metric becomes 0–100 (then × weight)
+
+The engine in `backend/services/quality_engine.py` never multiplies hours or “number of sessions” by the board weight. It first converts each family to **one number from 0 to 100**, stores that, then:
+
+```
+WEIGHTS: assessment 0.40, rating 0.20, reliability 0.15, consistency 0.25
+composite = Σ (component_0_to_100 × weight)
+```
+
+Missing component → treat as 0. Weights are **not** re-normalized.
+
+| Component | Inputs | Conversion to 0–100 | Then |
+| :--- | :--- | :--- | :--- |
+| Assessment | MCQ `%` + graded task `%` | Average of those percentages (already 0–100) | × 0.40 |
+| Rating | Admin 1–5 | `score / scale_max × 100`, then average across periods | × 0.20 |
+| Reliability | Closed work sessions | `completed / closed × 100` | × 0.15 |
+| Consistency | Screenshot hours, unique days, weeks with paid hours | Three 0–100 pieces **averaged** (below) | × 0.25 |
+
+**Reliability (one piece)**
+
+```
+reliability_0_100 = completed_count / closed_count × 100
+```
+
+Open sessions ignored. No closed sessions → missing.
+
+**Consistency (three pieces, then average)**
+
+```
+D = (end − start).days + 1
+hours_cap = 40 × D / 30
+days_cap  = 3 × D / 7
+
+hours_0_100 = min(100, paid_screenshot_hours / hours_cap × 100)
+days_0_100  = min(100, unique_calendar_days_with_a_session / days_cap × 100)
+weeks_0_100 = weeks_with_paid_hours / ISO_weeks_in_window × 100
+
+consistency_0_100 = (hours_0_100 + days_0_100 + weeks_0_100) / 3
+```
+
+Several logins on the same day = **one** day. Paid hours = screenshot start/end only. Over the cap stays 100. A week counts if it has any paid screenshot minutes.
+
+Then `reliability_0_100 × 0.15` and `consistency_0_100 × 0.25` are the board points.
 
 ## Quality data model (short)
 
@@ -187,8 +264,16 @@ Stored snapshot fields: `assessment_component`, `rating_component`, `reliability
 | `GET /quality/ratings` | Worker sees own; admin can filter | Raw rating rows |
 | `POST /quality/ratings` | Admin | Create or upsert period rating |
 | `GET /quality/pending-ratings` | Admin | Active workers still unrated this period (optional `payroll_period_id`) |
-| `POST /quality/recalculate` | Admin | Rebuild calendar + latest payroll, or one named period if `payroll_period_id` is set |
-| `GET /leaderboard?period=calendar\|payroll&payroll_period_id=` | Any logged-in user | Ranked join of scores + worker names |
+| `POST /quality/recalculate` | Admin | Rebuild calendar + latest payroll + all-periods, or one named period if `payroll_period_id` is set |
+| `GET /leaderboard?period=calendar\|payroll\|all&payroll_period_id=` | Any logged-in user | Ranked join of scores + worker names |
+
+## Assessments vs training vs the score ledger
+
+Training stays **content** with an optional linked MCQ or task. Grades live on the **Scores** page (`/admin/assessments/scores`) and in `mcq_results` / `task_assessment_results`.
+
+- Marks on questions/activities must total **100** before activate.
+- One current score per worker per test; a retake overwrites that row. Quality 40% averages those scores in the selected period (or all tests on All periods).
+- Hard-delete of a template **SET NULL**s FKs; `title_snapshot` and `source_id` remain on the result.
 
 ---
 
@@ -204,8 +289,9 @@ A period is a closed date window plus a **reporting (base) currency**.
 | :--- | :--- |
 | `label` | Automatic name from `start_date`, always `March 2026` style, and renamable afterwards. Names are globally unique; duplicates are rejected (409) |
 | `start_date` / `end_date` | Inclusive calendar dates. Default UI fills the whole selected month; custom ranges are allowed |
-| `currency` | `USD` or `GBP` — the period’s **base** currency for rates, session earnings, and cost pools |
+| `currency` | `USD` or `GBP` — the period’s **base** currency for rates and session earnings |
 | `status` | Lifecycle (below) |
+| `is_current` | Admin pin: which period Calendar / Quality / Payroll open on. At most one row is true. New sessions still join by date, not by this pin |
 | `approved_by` | Admin who approved |
 | `wallet_pushed_at` | When nets were credited to wallets |
 | `paid_at` | When ops marked the cycle paid |
@@ -230,6 +316,12 @@ A month sometimes needs two periods (a regular run plus a correction or bonus ru
 - A name already used by another period is rejected (409), enforced by `uq_payroll_periods_label`.
 - Renaming does not touch dates, currency, status, or any calculated figure. Quality snapshots keyed to `payroll_period_id` follow the period, not its name.
 
+### Editing dates after create
+
+`PATCH /payroll/periods/{id}` accepts `start_date` and `end_date` while the period is `open` or `calculated`. Approved and paid periods are frozen. Changing dates does **not** restamp existing `payroll_period_id`s. Overlaps stay allowed (bonus/correction runs); the Calendar warns instead of rejecting.
+
+`is_current` is the shared admin pin. `POST { "is_current": true }` on one period clears it on the others. If none is pinned, screens fall back to the period covering today, else the latest unpaid.
+
 ### Lifecycle
 
 ```
@@ -240,7 +332,7 @@ open → calculated → approved → paid
 
 | Status | What is true | Allowed actions |
 | :--- | :--- | :--- |
-| **open** | Period exists; no finished calc (or it was reopened) | Edit cost pools; seed/calculate; edit ledger |
+| **open** | Period exists; no finished calc (or it was reopened) | Seed/calculate; edit ledger |
 | **calculated** | Line items + worker summaries exist | Recalculate; edit summaries/costs; approve; reopen |
 | **approved** | FX on summaries frozen as of approval (“pay day”) | Push wallets; mark paid; reopen (clears `approved_by`) |
 | **paid** | Terminal. `paid_at` set | Downloads only. Cannot reopen, recalculate, or edit summaries |
@@ -283,13 +375,14 @@ Workers **cannot** change `payroll_approval_state`, `payroll_period_id`, or `adm
 
 ### Hours (duration)
 
-`duration_minutes` is the number payroll uses, in this order: on-image times, stored duration, then clock `start_time`/`end_time`. Per worker, those minutes are summed for the period. GS pay is **hours × hourly rate** (set the rate; base pay updates automatically). Evidence can fill duration:
+Payroll hours are **only** the difference between the times entered from the screenshots (`image_end_at − image_start_at`). RDP `start_time` / `end_time` (how long Guacamole was connected) are ops clocks and are **not** multiplied by the rate.
 
-- Worker uploads start and end screenshots and the times shown on those images (`image_start_at`, `image_end_at`).
+- Worker (or admin) uploads start and end screenshots and types the times shown on those images.
 - `apply_image_duration` sets `duration_minutes = floor((image_end_at − image_start_at) in minutes)`, floored at 0.
+- `effective_duration_minutes` returns that value, or **0** if either entered time is missing. Incomplete closed sessions set `evidence_incomplete` on the ledger; the admin can still type hours on the payslip.
 - Evidence is “complete” only when both image URLs **and** both image times exist. Incomplete closed sessions trigger a worker notification.
 
-**Hours on finance** (`evidence_hours_for_worker`) sum every closed session in the period (skipping flagged/excluded). That total is stored on `payroll_worker_summaries.hours_logged` and is not typed by the admin. Entering a rate computes **base pay = hours × rate**. When a worker updates start/end times, the covering open/calculated period is stamped on `sessions.payroll_period_id` and hours (and pay) refresh automatically.
+**Hours on finance** (`evidence_hours_for_worker`) sum those entered minutes for every closed session in the period (skipping flagged/excluded). That total is stored on `payroll_worker_summaries.hours_logged`. Entering a rate computes **base pay = hours × rate**. When a worker updates start/end times, the covering open/calculated period is stamped on `sessions.payroll_period_id` and hours (and pay) refresh automatically.
 
 ### Partner / third-party earnings
 
@@ -346,18 +439,20 @@ It **deletes all existing `payroll_line_items` for the period**, then rebuilds. 
 Hours logged (for the summary, all included session types):
 
 ```
-hours = sum(duration_minutes of included sessions) / 60
+hours = sum(entered screenshot minutes of included sessions) / 60
 ```
+
+Missing `image_start_at` or `image_end_at` contributes 0 for that session.
 
 **GS RDP sessions**
 
 ```
-gross = (duration_minutes / 60) × hourly_rate
+gross = (entered screenshot minutes / 60) × hourly_rate
 worker_pct = 100, gs_pct = 0, partner_pct = 0
 worker_net = gross
 ```
 
-That gross is added into the worker’s **base pay**. A line item is written only if a rate exists and duration is set.
+That gross is added into the worker’s **base pay**. A line item is written only if a rate exists and both screenshot times are entered.
 
 **Partner multilog + third-party**
 
@@ -381,30 +476,15 @@ base_pay   += worker_net
 
 If `hours == 0`, flag `no_hours`.
 
-### Pass 2 — country cost pools, FX, payslip math
+### Pass 2 — FX and payslip math
 
-Country pools (`country_cost_pools`) are optional per period per country:
-
-- `transfer_cost_total` — remittance / payout rails
-- `external_cost_total` — other allocated business cost
-
-Allocation is **proportional to that worker’s hours among workers in the same country who were in this calculation**:
-
-```
-share = worker_hours / country_hours
-transfer_cost_base = pool.transfer_cost_total × share
-external_cost_base = pool.external_cost_total × share
-```
-
-Pools and session money are in the **period base currency**. Summaries are stored in the worker’s **local** currency:
+Session money and hourly rates are in the **period base currency**. Summaries are stored in the worker’s **local** currency. Bonus, transfer cost, and external cost are entered per worker and are already local amounts:
 
 ```
 local_currency = countries[worker.country].currency_code  (else period.currency)
 fx_rate = latest FX: 1 period.currency = X local   (manual rates beat API rates)
 rate_local        = hourly_rate × fx
 base_pay_local    = base_pay_base × fx
-transfer_cost     = transfer_cost_base × fx
-external_cost     = external_cost_base × fx
 ```
 
 If no FX row exists, flag `no_fx_rate`, keep amounts in the period currency, and store `fx_rate` as null.
@@ -422,7 +502,7 @@ base_equivalent  = final_net / fx_rate     # back into period currency
 
 If `final_net < 0`, flag `negative_net`.
 
-If a country pool exists, pool-derived costs overwrite previous costs. If **no** pool exists, a previous summary’s manual `transfer_cost` / `external_cost` are kept.
+Previous manual `transfer_cost` / `external_cost` values are kept when the period is recalculated.
 
 Workers who disappear from the calc (no approved sessions this run) have their summary deleted **unless** `bonus != 0` (bonus-only rows are kept).
 
@@ -543,8 +623,9 @@ The Currencies page (`/admin/currencies`) shows one row per currency with an inl
 
 | Endpoint | Effect |
 | :--- | :--- |
+| `GET /currencies/available` | FX API quote codes not already in the catalog (admin add-currency dropdown) |
 | `GET /currencies/list` | Catalog with each currency's effective USD rate, that rate's source, and the derived GBP rate. `?active_only=true` for dropdowns |
-| `POST /currencies/list` | Add a currency; an optional `usd_rate` seeds today's manual rate |
+| `POST /currencies/list` | Add a currency from the API list. Without `usd_rate`, today's API quote is stored. With `usd_rate`, a manual rate is stored instead. |
 | `PATCH /currencies/list/{id}` | Rename, deactivate, or repoint `usd_rate`. USD itself is rejected — its rate is always 1 |
 
 ### Rate resolution
@@ -678,7 +759,6 @@ Rows sent before this trace existed, and any row Resend never issued an id for, 
 | `payroll_periods` | Work period window, base currency, lifecycle timestamps |
 | `payroll_line_items` | One row per included session: gross, split %, nets, flags. Check: splits sum to 100.00 |
 | `payroll_worker_summaries` | One payslip row per worker per period (unique). Local amounts + FX snapshot + `admin_locked` |
-| `country_cost_pools` | Per-country transfer/external totals for a period |
 | `payment_tiers` | Named catalog of rates |
 | `rate_table_entries` | Dated worker- or tier-level hourly amounts actually used in calc |
 | `partner_arrangements` | Worker / GS / partner % (must sum 100) |
@@ -697,14 +777,13 @@ Rows sent before this trace existed, and any row Resend never issued an id for, 
 3. **Seed from sessions** on Finance. Closed sessions in the period dates are linked (`payroll_period_id`) and hours are summed per worker. Flag or exclude a session before seeding if it should not pay.
 4. Maintain **payment tiers** and assign `pay_tier` on workers; override individuals in the rate table if needed. Entering a rate (for example 5 USD/hr) auto-calculates base pay as hours × rate.
 5. Check the **Currencies** page: every payout currency present and its `1 USD =` rate current.
-6. Optionally set **country cost pools**.
-7. **Rate quality** for the period (`admin_overall` 1–5). This is for the leaderboard, not pay.
-8. Work the **Finance list**: eye for one worker, **Apply to many** for a shared bonus or rate, ledger for wide edits. Any save locks those rows.
-9. Recalculate if session data changed; locked rows keep admin figures.
-10. **Approve** (freeze FX).
-11. **Push to wallets**.
-12. Export payslips / CSV, and **queue the payslip emails** on the Receipts page. The send runs in the background — watch the progress bar, then use **Retry failed** for any bounces.
-13. **Mark paid**.
+6. **Rate quality** for the period (`admin_overall` 1–5). This is for the leaderboard, not pay.
+7. Work the **Finance list**: eye for one worker, **Apply to many** for a shared bonus or rate, ledger for wide edits. Any save locks those rows.
+8. Recalculate if session data changed; locked rows keep admin figures.
+9. **Approve** (freeze FX).
+10. **Push to wallets**.
+11. Export payslips / CSV, and **queue the payslip emails** on the Receipts page. The send runs in the background — watch the progress bar, then use **Retry failed** for any bounces.
+12. **Mark paid**.
 
 To remove a work period entirely, open the pencil next to its name (Calendar or Finance) and choose **Delete this work period**. Confirm, then enter the 6-digit code emailed to the admin alert inbox (Settings). Codes expire in 3 minutes. Changing that inbox does not let the new address receive codes for 24 hours.
 
@@ -714,8 +793,8 @@ To remove a work period entirely, open the pencil next to its name (Calendar or 
 
 | Shared concept | Quality | Finance |
 | :--- | :--- | :--- |
-| Work period dates | Payroll view uses the selected (or latest) period window for reliability/consistency; ratings averaged across **all** periods | Period is the payment batch |
-| Sessions | Close status and weekly hours in the window | Only **approved** sessions; hours × rate or earnings × split |
+| Work period dates | Payroll view uses the selected period window for tests, reliability, and consistency. **All periods** averages every current test and uses all-time sessions. Ratings still average across **all** periods | Period is the payment batch |
+| Sessions | Close status (reliability); screenshot hours, unique days, weeks with paid hours (consistency) | Only **approved** sessions; hours × rate or earnings × split |
 | Admin action at period end | 1–5 overall rating per worker | Cost evaluation, bonus, approve, pay |
 | Bonus / rank | Rank is the composite score | Bonus is a typed amount; **not** derived from rank |
 | Partner vs GS | Same leaderboard | Different pay path (hours vs earnings split) |
@@ -730,15 +809,20 @@ If product later wants “top quartile gets a bonus”, that rule does not exist
 
 Worker in August payroll view:
 
-- MCQ 80, 90 and graded task 70 → assessment = `(80+90+70)/3 = 80.00`
+- Current scores: Test A 80, Test B 90, Task 70 → assessment = `(80+90+70)/3 = 80.00`
+  (If Test A is later retaken at 89, the table and the average use 89, not 80.)
 - Ratings across all periods: 4/5 and 5/5 → rating = `(80+100)/2 = 90.00`
 - 9 completed, 1 abandoned → reliability = `90.00`
-- Weekly hours 20, 22, 18 → low CV → consistency ≈ `91.xx`
+- 30-day window: 60 paid screenshot hours, 18 unique days, paid hours in 3 of 4 ISO weeks
+  - hours_raw = `100` (cap 40h)
+  - days_raw = `100` (cap `3×30/7` ≈ 12.86 days)
+  - weeks_raw = `75`
+  - consistency = `(100 + 100 + 75) / 3` ≈ `91.67`
 
 ```
-composite = 80×0.40 + 90×0.20 + 90×0.25 + 91×0.15
-          = 32 + 18 + 22.5 + 13.65
-          = 86.15
+composite = 80×0.40 + 90×0.20 + 90×0.15 + 91.67×0.25
+          = 32 + 18 + 13.5 + 22.92
+          = 86.42
 ```
 
 ## Finance — GS worker

@@ -2,34 +2,87 @@ import { NextRequest, NextResponse } from 'next/server';
 
 type Role = 'user' | 'partner' | 'admin' | 'super_admin';
 
-// Which roles may enter each portal prefix
 const PORTAL_ROLES: Record<string, Role[]> = {
-  '/worker':     ['user', 'partner', 'admin', 'super_admin'],
-  '/admin':      ['admin', 'super_admin'],
+  '/worker': ['user', 'partner', 'admin', 'super_admin'],
+  '/admin': ['admin', 'super_admin'],
   '/leadership': ['super_admin'],
 };
 
-// Where each role lands after a successful login
 const ROLE_LANDING: Record<Role, string> = {
-  user:        '/worker/dashboard',
-  partner:     '/worker/dashboard',
-  admin:       '/admin/dashboard',
+  user: '/worker/dashboard',
+  partner: '/worker/dashboard',
+  admin: '/admin/dashboard',
   super_admin: '/leadership/ceo-command',
 };
 
-// A portal prefix on its own is not a page — canonicalize it to the section's first screen
 const PORTAL_LANDING: Record<string, string> = {
-  '/worker':     '/worker/dashboard',
-  '/admin':      '/admin/dashboard',
+  '/worker': '/worker/dashboard',
+  '/admin': '/admin/dashboard',
   '/leadership': '/leadership/ceo-command',
 };
 
-function getRole(req: NextRequest): Role | null {
-  const cookie = req.cookies.get('gs-role')?.value;
-  if (cookie === 'user' || cookie === 'partner' || cookie === 'admin' || cookie === 'super_admin') {
-    return cookie;
+const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'super_admin']);
+
+function cookieSecret(): string {
+  return (
+    process.env.SESSION_COOKIE_SECRET
+    || process.env.OTP_PEPPER
+    || (process.env.NODE_ENV === 'production' ? '' : 'dev-session-cookie-secret')
+  );
+}
+
+function decodePayload(token: string): string | null {
+  try {
+    const pad = '='.repeat((4 - (token.length % 4)) % 4);
+    const b64 = token.replace(/-/g, '+').replace(/_/g, '/') + pad;
+    const binary = atob(b64);
+    const bytes = Uint8Array.from(binary, (c) => c.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  } catch {
+    return null;
   }
-  return null;
+}
+
+async function hmacSha256Hex(secret: string, message: string): Promise<string> {
+  const key = await crypto.subtle.importKey(
+    'raw',
+    new TextEncoder().encode(secret),
+    { name: 'HMAC', hash: 'SHA-256' },
+    false,
+    ['sign'],
+  );
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(message));
+  return Array.from(new Uint8Array(sig))
+    .map((b) => b.toString(16).padStart(2, '0'))
+    .join('');
+}
+
+async function verifySessionCookie(token: string | undefined): Promise<Role | null> {
+  if (!token) return null;
+  const secret = cookieSecret();
+  if (!secret) return null;
+
+  const raw = decodePayload(token);
+  if (!raw) return null;
+
+  const parts = raw.split('|');
+  if (parts.length !== 4) return null;
+  const [uid, role, expStr, sig] = parts;
+  if (!uid || !VALID_ROLES.has(role as Role)) return null;
+
+  const payload = `${uid}|${role}|${expStr}`;
+  const expected = await hmacSha256Hex(secret, payload);
+  if (sig.length !== expected.length) return null;
+  let mismatch = 0;
+  for (let i = 0; i < sig.length; i += 1) {
+    mismatch |= sig.charCodeAt(i) ^ expected.charCodeAt(i);
+  }
+  if (mismatch !== 0) return null;
+
+  const exp = Number(expStr);
+  if (!Number.isFinite(exp) || exp < Math.floor(Date.now() / 1000)) return null;
+
+  return role as Role;
 }
 
 function matchedPortal(pathname: string): string | null {
@@ -39,15 +92,12 @@ function matchedPortal(pathname: string): string | null {
   return null;
 }
 
-export function middleware(req: NextRequest) {
+export async function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
   const portal = matchedPortal(pathname);
 
-  // Not a protected route — let it through
   if (!portal) return NextResponse.next();
 
-  // Bare portal root: rewrite to the section landing page before any auth work,
-  // otherwise it resolves to nothing and renders a 404.
   const stripped = pathname.replace(/\/$/, '');
   if (stripped === portal) {
     const url = req.nextUrl.clone();
@@ -56,20 +106,18 @@ export function middleware(req: NextRequest) {
   }
 
   const devAuthBypass =
-    process.env.NODE_ENV !== 'production' &&
-    process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
+    process.env.NODE_ENV !== 'production'
+    && process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
   if (devAuthBypass) return NextResponse.next();
 
-  const role = getRole(req);
+  const role = await verifySessionCookie(req.cookies.get('gs-session')?.value);
 
-  // No session — redirect to login
   if (!role) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
     return NextResponse.redirect(url);
   }
 
-  // Wrong portal for this role — redirect to their home
   if (!PORTAL_ROLES[portal].includes(role)) {
     const url = req.nextUrl.clone();
     url.pathname = ROLE_LANDING[role];

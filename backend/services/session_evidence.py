@@ -38,20 +38,12 @@ def apply_image_duration(session: WorkSession) -> None:
 
 def effective_duration_minutes(session: WorkSession) -> int:
     """
-    Minutes payroll should use: on-image times first, then stored duration,
-    then clock start/end.
+    Minutes payroll should use: only the start/end times entered from the
+    screenshots. RDP connected time is never paid.
     """
     apply_image_duration(session)
-    if session.duration_minutes:
-        return int(session.duration_minutes)
-    if session.start_time and session.end_time:
-        start = session.start_time
-        end = session.end_time
-        if start.tzinfo is None:
-            start = start.replace(tzinfo=timezone.utc)
-        if end.tzinfo is None:
-            end = end.replace(tzinfo=timezone.utc)
-        return max(0, int((end - start).total_seconds() // 60))
+    if session.image_start_at and session.image_end_at:
+        return int(session.duration_minutes or 0)
     return 0
 
 

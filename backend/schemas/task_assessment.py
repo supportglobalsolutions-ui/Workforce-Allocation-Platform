@@ -19,6 +19,8 @@ class TaskAssessmentCreate(SQLModel):
     time_limit_minutes:  Optional[int]      = None
     passing_score_pct:   Decimal            = Decimal("70.00")
     is_active:           bool               = True
+    allow_retakes:       bool               = False
+    max_attempts:        int                = 1
 
 
 class TaskAssessmentUpdate(SQLModel):
@@ -31,6 +33,8 @@ class TaskAssessmentUpdate(SQLModel):
     time_limit_minutes:  Optional[int]      = None
     passing_score_pct:   Optional[Decimal]  = None
     is_active:           Optional[bool]     = None
+    allow_retakes:       Optional[bool]     = None
+    max_attempts:        Optional[int]      = None
 
 
 class TaskAssessmentResponse(SQLModel):
@@ -46,27 +50,61 @@ class TaskAssessmentResponse(SQLModel):
     time_limit_minutes:  Optional[int]
     passing_score_pct:   Decimal
     is_active:           bool
+    allow_retakes:       bool = False
+    max_attempts:        int = 1
     created_by:          UUID
     created_at:          Optional[datetime]
 
 
 class TaskAssessmentWithStats(TaskAssessmentResponse):
     result_count: int = 0
+    marks_total: Decimal = Decimal("0")
 
 
-# ── Results ────────────────────────────────────────────────────────────────────
+class TaskActivityCreate(SQLModel):
+    prompt: str
+    max_marks: Decimal
+    sort_order: int = 0
+
+
+class TaskActivityUpdate(SQLModel):
+    prompt: Optional[str] = None
+    max_marks: Optional[Decimal] = None
+    sort_order: Optional[int] = None
+
+
+class TaskActivityResponse(SQLModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: UUID
+    task_assessment_id: UUID
+    prompt: str
+    max_marks: Decimal
+    sort_order: int
+
+
+class TaskActivityGrade(SQLModel):
+    activity_id: Optional[UUID] = None
+    marks_awarded: Decimal
+
 
 class TaskResultGrade(SQLModel):
-    score_pct:    Decimal
-    passed:       bool
+    score_pct:    Optional[Decimal] = None
+    passed:       Optional[bool] = None
     grader_notes: Optional[str] = None
+    activity_scores: list[TaskActivityGrade] = []
+
+
+class TaskResultScorePatch(SQLModel):
+    score_pct: Decimal
 
 
 class TaskResultResponse(SQLModel):
     model_config = ConfigDict(from_attributes=True)
 
     id:                    UUID
-    task_assessment_id:    UUID
+    task_assessment_id:    Optional[UUID] = None
+    source_id:             UUID
+    title_snapshot:        str = ""
     worker_id:             UUID
     status:                TaskResultStatusEnum
     submission_notes:      Optional[str]

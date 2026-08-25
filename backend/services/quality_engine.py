@@ -1,27 +1,33 @@
 """
 Composite quality scoring engine (confirmed weights):
 
-  40% assessment scores   — MCQ + graded task assessment average
+  40% assessment scores   — one current 0–100 per named test; average those scores
+                            (period window, or all tests when viewing All periods)
   20% admin ratings       — 1-5 manual ratings averaged over all
                             payroll periods, normalized to 0-100
-  25% reliability         — completed vs abandoned sessions in the window
-  15% consistency         — low variance of weekly hours in the window
+  15% reliability         — finished vs not-finished closed sessions
+  25% consistency         — paid hours, unique days, weeks present (average of three 0–100s)
+
+Reliability is finish quality only (not hours). Consistency is how much they
+worked (screenshot hours, unique days) and whether they showed up across weeks.
+Caps: ~40 paid hours / 30 days is a full hours score; 3 session-days / 7
+calendar days is a full days score. Weeks score is weeks with paid hours
+divided by ISO weeks in the period.
 
 Each component contributes only its assigned slice of the 100-point score.
 Missing data contributes zero; weights are never re-normalized.
 
-Two leaderboard views are maintained: "calendar" (current calendar month) and
-"payroll" (one snapshot per payroll period). One shared board — partners and
-GS workers rank together.
+Leaderboard views: "calendar" (current calendar month), "payroll" (one snapshot
+per payroll period), and "all" (all-time tests and sessions). One shared board —
+partners and GS workers rank together.
 """
 import logging
-import statistics
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal, ROUND_HALF_UP
 from typing import Optional
 from uuid import UUID
 
-from sqlmodel import Session, col, delete, select
+from sqlmodel import Session, delete, select
 
 from models.enums import IndicatorInputEnum, SessionCloseEnum
 from models.mcq import McqResult
@@ -30,6 +36,7 @@ from models.quality import QualityCompositeScore, QualityIndicator, QualityIndic
 from models.session import Session as WorkSession
 from models.task_assessment import TaskAssessmentResult
 from models.worker import Worker
+from services.period_current import resolve_current_period
 from services.period_labels import period_label_from_date
 
 logger = logging.getLogger(__name__)
@@ -37,10 +44,12 @@ logger = logging.getLogger(__name__)
 WEIGHTS = {
     "assessment": Decimal("0.40"),
     "rating": Decimal("0.20"),
-    "reliability": Decimal("0.25"),
-    "consistency": Decimal("0.15"),
+    "reliability": Decimal("0.15"),
+    "consistency": Decimal("0.25"),
 }
 TWO_DP = Decimal("0.01")
+HOURS_FULL_PER_30_DAYS = Decimal("40")
+DAYS_FULL_PER_7_DAYS = Decimal("3")
 DEFAULT_RATING_INDICATOR = {
     "code": "admin_overall",
     "name": "Admin Overall Rating",
@@ -69,7 +78,16 @@ def ensure_default_indicator(db: Session) -> QualityIndicator:
 
 
 def _latest_payroll_period(db: Session) -> Optional[PayrollPeriod]:
-    return db.exec(select(PayrollPeriod).order_by(col(PayrollPeriod.start_date).desc())).first()
+    return resolve_current_period(db)
+
+
+def _as_utc_date(stamp) -> Optional[date]:
+    if stamp is None:
+        return None
+    if isinstance(stamp, datetime):
+        t = stamp if stamp.tzinfo else stamp.replace(tzinfo=timezone.utc)
+        return t.astimezone(timezone.utc).date()
+    return stamp
 
 
 def _window_for(
@@ -78,6 +96,8 @@ def _window_for(
     payroll_period: Optional[PayrollPeriod] = None,
 ) -> tuple[date, date, str]:
     today = date.today()
+    if period_type == "all":
+        return date(1970, 1, 1), today, "All periods"
     if period_type == "payroll":
         period = payroll_period or _latest_payroll_period(db)
         if period:
@@ -90,17 +110,42 @@ def _window_for(
     return start, end, period_label_from_date(start)
 
 
-def _assessment_component(db: Session, worker_id) -> Optional[Decimal]:
+def _assessment_component(
+    db: Session,
+    worker_id,
+    start: Optional[date] = None,
+    end: Optional[date] = None,
+    all_periods: bool = False,
+) -> Optional[Decimal]:
+    """Average of the current 0–100 score for each named test.
+
+    One row per worker per test: a retake overwrites that score. A named period
+    averages tests whose current completion/grade date falls in the window.
+    All periods averages every current test score.
+    """
     scores: list[Decimal] = []
+
+    def include(stamp) -> bool:
+        if all_periods:
+            return True
+        if start is None or end is None:
+            return True
+        d = _as_utc_date(stamp)
+        return d is not None and start <= d <= end
+
     for r in db.exec(select(McqResult).where(McqResult.worker_id == worker_id)).all():
-        scores.append(Decimal(r.score_pct))
+        if include(r.completed_at):
+            scores.append(Decimal(r.score_pct))
+
     for r in db.exec(
         select(TaskAssessmentResult).where(
             TaskAssessmentResult.worker_id == worker_id,
             TaskAssessmentResult.score_pct.is_not(None),
         )
     ).all():
-        scores.append(Decimal(r.score_pct))
+        if include(r.graded_at or r.submitted_at or r.created_at):
+            scores.append(Decimal(r.score_pct))
+
     if not scores:
         return None
     return _q(sum(scores) / len(scores))
@@ -134,6 +179,7 @@ def _rating_component(db: Session, worker_id, indicators: dict) -> Optional[Deci
 
 
 def _reliability_component(sessions: list[WorkSession]) -> Optional[Decimal]:
+    """Finished sessions ÷ closed sessions × 100. Hours are not in this score."""
     closed = [s for s in sessions if s.close_status is not None]
     if not closed:
         return None
@@ -141,23 +187,85 @@ def _reliability_component(sessions: list[WorkSession]) -> Optional[Decimal]:
     return _q(Decimal(completed) / Decimal(len(closed)) * 100)
 
 
+def _window_days(start: date, end: date) -> int:
+    return max(1, (end - start).days + 1)
+
+
+def _session_day(session: WorkSession) -> date:
+    t = session.start_time
+    if t.tzinfo is None:
+        t = t.replace(tzinfo=timezone.utc)
+    return t.astimezone(timezone.utc).date()
+
+
+def _paid_minutes(session: WorkSession) -> int:
+    """Screenshot start/end only. Does not write duration_minutes."""
+    start, end = session.image_start_at, session.image_end_at
+    if not start or not end:
+        return 0
+    if start.tzinfo is None:
+        start = start.replace(tzinfo=timezone.utc)
+    if end.tzinfo is None:
+        end = end.replace(tzinfo=timezone.utc)
+    minutes = int((end - start).total_seconds() // 60)
+    return max(0, minutes)
+
+
+def _cap100(actual: Decimal, cap: Decimal) -> Decimal:
+    if cap <= 0 or actual <= 0:
+        return Decimal("0")
+    if actual >= cap:
+        return Decimal("100")
+    return _q(actual / cap * 100)
+
+
+def _iso_weeks_in_window(start: date, end: date) -> set[tuple[int, int]]:
+    weeks: set[tuple[int, int]] = set()
+    cursor = start
+    while cursor <= end:
+        iso = cursor.isocalendar()
+        weeks.add((iso[0], iso[1]))
+        cursor += timedelta(days=1)
+    return weeks
+
+
+def _weeks_present_raw(worked: set[tuple[int, int]], start: date, end: date) -> Decimal:
+    period_weeks = _iso_weeks_in_window(start, end)
+    if not period_weeks:
+        return Decimal("0")
+    hit = sum(1 for w in period_weeks if w in worked)
+    return _q(Decimal(hit) / Decimal(len(period_weeks)) * 100)
+
+
 def _consistency_component(sessions: list[WorkSession], start: date, end: date) -> Optional[Decimal]:
-    """100 minus the coefficient of variation of weekly hours (bounded to 0-100)."""
-    weekly: dict[int, float] = {}
+    """Average of hours, unique days, and weeks present, each 0–100.
+
+    Hours use screenshot start/end only. Several logins on one calendar day
+    count as one day. Weeks = ISO weeks in the window that have paid hours.
+    """
+    if not sessions:
+        return None
+
+    days = Decimal(_window_days(start, end))
+    hours_cap = HOURS_FULL_PER_30_DAYS * days / Decimal(30)
+    days_cap = DAYS_FULL_PER_7_DAYS * days / Decimal(7)
+
+    paid_minutes = 0
+    weekly: set[tuple[int, int]] = set()
+    present: set[date] = set()
     for s in sessions:
-        if not s.duration_minutes:
+        present.add(_session_day(s))
+        minutes = _paid_minutes(s)
+        if minutes <= 0:
             continue
-        week = s.start_time.date().isocalendar()[1]
-        weekly[week] = weekly.get(week, 0.0) + s.duration_minutes / 60.0
-    values = list(weekly.values())
-    if len(values) < 2:
-        return None
-    mean = statistics.mean(values)
-    if mean <= 0:
-        return None
-    cv = statistics.pstdev(values) / mean
-    score = max(0.0, min(100.0, 100.0 * (1 - cv)))
-    return _q(Decimal(str(score)))
+        paid_minutes += minutes
+        iso = _session_day(s).isocalendar()
+        weekly.add((iso[0], iso[1]))
+
+    hours_raw = _cap100(Decimal(paid_minutes) / Decimal(60), hours_cap)
+    days_raw = _cap100(Decimal(len(present)), days_cap)
+    weeks_raw = _weeks_present_raw(weekly, start, end)
+    return _q((hours_raw + days_raw + weeks_raw) / Decimal("3"))
 
 
 def _streak_days(sessions: list[WorkSession]) -> int:
@@ -176,8 +284,8 @@ def _composite_score(components: dict[str, Optional[Decimal]]) -> Decimal:
 
     Assessment:  raw average × 40% = maximum 40 points
     Rating:      normalized 1–5 average × 20% = maximum 20 points
-    Reliability: completed-session share × 25% = maximum 25 points
-    Consistency: weekly-hours stability × 15% = maximum 15 points
+    Reliability: finished-session share × 15% = maximum 15 points
+    Consistency: average of hours, days, weeks present × 25% = maximum 25 points
 
     A missing signal gives no points for its slice, preventing partial data from
     inflating a worker's score. For example, a 5/5 admin-only rating is 20.00.
@@ -222,7 +330,13 @@ def recalculate(
         ).all()
 
         components = {
-            "assessment": _assessment_component(db, worker.id),
+            "assessment": _assessment_component(
+                db,
+                worker.id,
+                start=start,
+                end=end,
+                all_periods=period_type == "all",
+            ),
             "rating": _rating_component(db, worker.id, indicators),
             "reliability": _reliability_component(sessions),
             "consistency": _consistency_component(sessions, start, end),
@@ -296,4 +410,5 @@ def recalculate_all(db: Session) -> dict:
             "payroll",
             payroll_period_id=latest.id if latest else None,
         ),
+        "all": recalculate(db, "all"),
     }

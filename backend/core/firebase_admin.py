@@ -96,12 +96,12 @@ def verify_firebase_token(id_token: str) -> dict:
         try:
             return auth.verify_id_token(
                 id_token,
-                check_revoked=False,
+                check_revoked=True,
                 clock_skew_seconds=_CLOCK_SKEW_SECONDS,
             )
         except TypeError:
             # Older firebase-admin without clock_skew_seconds support.
-            return auth.verify_id_token(id_token, check_revoked=False)
+            return auth.verify_id_token(id_token, check_revoked=True)
     except auth.RevokedIdTokenError:
         raise ValueError("Token has been revoked")
     except auth.ExpiredIdTokenError:

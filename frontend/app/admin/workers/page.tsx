@@ -3,15 +3,17 @@
 import { useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Settings2, Star,
-  Search, ShieldOff, X,
+  Search, ShieldOff, Trash2, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import RateWorkerModal from '@/components/quality/RateWorkerModal';
+import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { enteredPayMinutes, rdpConnectedMinutes } from '@/lib/hours';
 import {
   AccountStatus,
   apiBanWorker,
@@ -57,7 +59,14 @@ interface WorkSession {
   image_end_at?: string | null;
 }
 
-interface RDPResource { id: string; nickname: string; status?: string; assigned_worker_id?: string | null; }
+interface RDPResource {
+  id: string;
+  nickname: string;
+  status?: string;
+  assigned_worker_id?: string | null;
+  owner_name?: string | null;
+  client_name?: string | null;
+}
 
 // Session-type labels (for work sessions only)
 const TYPE_LABELS: Record<string, string> = {
@@ -101,7 +110,7 @@ function WorkReadyBadge({ ready }: { ready: boolean }) {
 }
 
 function formatDuration(minutes: number | null) {
-  if (!minutes) return '—';
+  if (minutes == null) return '—';
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
@@ -249,19 +258,28 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
     return machines.find((m) => m.id === id)?.nickname ?? id.slice(0, 8) + '…';
   };
 
-  const sessionRows = sessions.map((s) => ({
-    id: s.id,
-    date: new Date(s.start_time).toLocaleString(),
-    machine: machineName(s.rdp_resource_id),
-    duration: formatDuration(s.duration_minutes),
-    type: TYPE_LABELS[s.session_type] ?? s.session_type,
-    status: s.close_status ?? (s.end_time ? 'completed' : 'active'),
-    start_image_url: s.start_image_url,
-    end_image_url: s.end_image_url,
-    image_start_at: s.image_start_at,
-    image_end_at: s.image_end_at,
-    duration_minutes: s.duration_minutes,
-  }));
+  const sessionRows = sessions.map((s) => {
+    const rdpMins = rdpConnectedMinutes(s);
+    const workMins = enteredPayMinutes(s);
+    return {
+      id: s.id,
+      date: new Date(s.start_time).toLocaleString(),
+      start_time: s.start_time,
+      end_time: s.end_time,
+      machine: machineName(s.rdp_resource_id),
+      duration: formatDuration(rdpMins),
+      rdp_time: formatDuration(rdpMins),
+      work_time: s.image_start_at && s.image_end_at ? formatDuration(workMins) : 'Not entered',
+      rdp_minutes: rdpMins,
+      type: TYPE_LABELS[s.session_type] ?? s.session_type,
+      status: s.close_status ?? (s.end_time ? 'completed' : 'active'),
+      start_image_url: s.start_image_url,
+      end_image_url: s.end_image_url,
+      image_start_at: s.image_start_at,
+      image_end_at: s.image_end_at,
+      duration_minutes: s.duration_minutes,
+    };
+  });
 
   const selectedSession = selectedSessionId
     ? sessionRows.find((r) => r.id === selectedSessionId) ?? null
@@ -477,6 +495,8 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                       {(rdpOptions ?? []).map((m) => (
                         <option key={m.id} value={m.id}>
                           {m.nickname}
+                          {m.client_name ? ` · ${m.client_name}` : ''}
+                          {m.owner_name ? ` · owner ${m.owner_name}` : ''}
                           {m.assigned_worker_id && m.assigned_worker_id !== worker.id ? ' (assigned)' : ''}
                         </option>
                       ))}
@@ -528,7 +548,8 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                       columns={[
                         { key: 'date', header: 'Date' },
                         { key: 'machine', header: 'Machine' },
-                        { key: 'duration', header: 'Duration' },
+                        { key: 'rdp_time', header: 'RDP uptime' },
+                        { key: 'work_time', header: 'Work hours' },
                         { key: 'type', header: 'Type' },
                         { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status as string} /> },
                         {
@@ -583,6 +604,9 @@ export default function WorkersPage() {
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [actionNote, setActionNote] = useState<string | null>(null);
 
   async function loadWorkers() {
     setWorkersLoading(true);
@@ -624,6 +648,27 @@ export default function WorkersPage() {
     _worker: w,
   }));
 
+  const allVisibleSelected = filteredWorkers.length > 0 && filteredWorkers.every((w) => selectedIds.has(w.id));
+  const selectedWorkers = workers.filter((w) => selectedIds.has(w.id));
+
+  function toggleRow(id: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function toggleAllVisible() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allVisibleSelected) filteredWorkers.forEach((w) => next.delete(w.id));
+      else filteredWorkers.forEach((w) => next.add(w.id));
+      return next;
+    });
+  }
+
   function handleWorkerUpdated(updated: Worker) {
     setWorkers((prev) => prev.map((w) => (w.id === updated.id ? updated : w)));
     setSelectedWorker((prev) => (prev && prev.id === updated.id ? updated : prev));
@@ -633,13 +678,31 @@ export default function WorkersPage() {
     <div>
       <PageHeader
         title="Workers"
-        description="View and manage worker profiles, employment details, and session history."
         actions={
-          <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-accent/20 text-emerald-400 border border-emerald-accent/30">
-            {workers.length} worker{workers.length !== 1 ? 's' : ''}
-          </span>
+          <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <button
+                type="button"
+                onClick={() => setDeleteOpen(true)}
+                className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5 text-danger border-danger/30 hover:bg-danger/10"
+              >
+                <Trash2 size={13} /> Delete ({selectedIds.size})
+              </button>
+            )}
+            <span className="inline-flex items-center px-3 py-1.5 rounded-full text-xs font-bold bg-emerald-accent/20 text-emerald-400 border border-emerald-accent/30">
+              {workers.length} worker{workers.length !== 1 ? 's' : ''}
+            </span>
+          </div>
         }
       />
+
+      {actionNote && (
+        <div className="mb-4 flex items-center gap-2 p-3 rounded-xl border border-emerald-accent/30 bg-emerald-accent/10 text-emerald-accent text-xs">
+          <CheckCircle size={13} />
+          <span className="flex-1">{actionNote}</span>
+          <button type="button" onClick={() => setActionNote(null)} className="opacity-70 hover:opacity-100"><X size={12} /></button>
+        </div>
+      )}
 
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative w-full sm:w-auto">
@@ -669,7 +732,24 @@ export default function WorkersPage() {
           </select>
         ))}
         <span className="text-xs text-theme-muted ml-1">{filteredWorkers.length} worker{filteredWorkers.length !== 1 ? 's' : ''}</span>
+        {selectedIds.size > 0 && (
+          <span className="text-xs text-theme-muted">· {selectedIds.size} selected</span>
+        )}
       </div>
+
+      {!workersLoading && !workersError && filteredWorkers.length > 0 && (
+        <div className="mb-3 flex items-center gap-2 text-xs text-theme-muted">
+          <label className="inline-flex items-center gap-2 cursor-pointer select-none">
+            <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible} className="accent-emerald-400" />
+            Select all visible ({filteredWorkers.length})
+          </label>
+          {selectedIds.size > 0 && (
+            <button type="button" onClick={() => setSelectedIds(new Set())} className="underline hover:text-theme-heading">
+              Clear
+            </button>
+          )}
+        </div>
+      )}
 
       {workersLoading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
@@ -680,6 +760,19 @@ export default function WorkersPage() {
       ) : (
         <DataTable
           columns={[
+            {
+              key: 'select',
+              header: '',
+              render: (r) => (
+                <input
+                  type="checkbox"
+                  checked={selectedIds.has(String(r.id))}
+                  onChange={() => toggleRow(String(r.id))}
+                  aria-label={`Select ${(r as typeof workerRows[number]).name}`}
+                  className="accent-emerald-400"
+                />
+              ),
+            },
             { key: 'name', header: 'Name' },
             { key: 'country', header: 'Country' },
             {
@@ -718,6 +811,22 @@ export default function WorkersPage() {
           worker={selectedWorker}
           onClose={() => setSelectedWorker(null)}
           onUpdated={handleWorkerUpdated}
+        />
+      )}
+
+      {deleteOpen && selectedIds.size > 0 && (
+        <BulkDeleteModal
+          kind="workers"
+          ids={Array.from(selectedIds)}
+          labels={selectedWorkers.map((w) => w.display_name)}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={(result) => {
+            setDeleteOpen(false);
+            setSelectedIds(new Set());
+            setSelectedWorker(null);
+            setActionNote(`Deleted ${result.deleted_count} worker${result.deleted_count === 1 ? '' : 's'}.`);
+            void loadWorkers();
+          }}
         />
       )}
     </div>

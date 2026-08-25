@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlmodel import Session, select
+from sqlmodel import Session, delete, select
 
 from core.database import get_db
 from core.permissions import require_admin, require_user
@@ -20,6 +20,7 @@ from schemas.training import (
     TrainingModuleUpdate,
     TrainingProgressResponse,
 )
+from services.audit_service import record_audit
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -116,12 +117,25 @@ def update_module(
 def delete_module(
     module_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
     module = db.get(TrainingModule, module_id)
     if not module:
         raise HTTPException(status_code=404, detail="Training module not found")
+    title = module.title
+    db.exec(delete(TrainingProgress).where(TrainingProgress.module_id == module_id))
+    db.exec(delete(TrainingLesson).where(TrainingLesson.module_id == module_id))
     db.delete(module)
+    admin = get_admin_user(db, current_user)
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="training.module_deleted",
+        target_type="training_module",
+        target_id=module_id,
+        previous_value={"title": title},
+        reason_note=f"Deleted training module {title}",
+    )
     db.commit()
 
 

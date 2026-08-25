@@ -46,6 +46,10 @@ class RDPResourceResponse(RDPResourceBase):
     id:                   UUID
     last_health_check_at: Optional[datetime]
     status_changed_at:    datetime
+    assigned_worker_name: Optional[str] = None
+    client_name:          Optional[str] = None
+    owner_name:           Optional[str] = None
+    owner_type:           Optional[str] = None
 
 
 class RdpForceReleaseBody(SQLModel):

@@ -64,6 +64,10 @@ export interface RdpResource {
   client_id: string | null;
   status: string;
   assigned_worker_id: string | null;
+  assigned_worker_name?: string | null;
+  client_name?: string | null;
+  owner_name?: string | null;
+  owner_type?: string | null;
   guacamole_connection_id: string | null;
   health_notes: string | null;
   monitor_host: string | null;

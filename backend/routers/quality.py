@@ -20,6 +20,7 @@ from schemas.quality import (
     QualityIndicatorResponse,
     QualityIndicatorUpdate,
 )
+from services.period_current import resolve_current_period
 from services import quality_engine
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
@@ -27,7 +28,7 @@ router = APIRouter()
 
 
 def _latest_payroll_period(db: Session) -> PayrollPeriod | None:
-    return db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).first()
+    return resolve_current_period(db)
 
 
 @router.get("/me", response_model=QualityCompositeScoreResponse | None)
@@ -220,7 +221,7 @@ def recalculate_scores(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Recompute leaderboard snapshots. Omit payroll_period_id to refresh calendar + latest period."""
+    """Recompute leaderboard snapshots. Omit payroll_period_id to refresh calendar, latest payroll, and all-periods."""
     try:
         if payroll_period_id:
             return quality_engine.recalculate(db, "payroll", payroll_period_id=payroll_period_id)

@@ -41,6 +41,12 @@ class CurrencyCreate(CurrencyBase):
     usd_rate: Optional[Decimal] = None
 
 
+class AvailableCurrency(SQLModel):
+    code: str
+    name: str
+    usd_rate: Decimal
+
+
 class CurrencyUpdate(SQLModel):
     name:      Optional[str]  = None
     symbol:    Optional[str]  = None

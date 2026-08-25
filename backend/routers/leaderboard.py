@@ -16,13 +16,13 @@ router = APIRouter()
 @router.get("", response_model=list[LeaderboardResponse])
 def get_leaderboard(
     country: str | None = None,
-    period: str = Query("calendar", pattern="^(calendar|payroll)$"),
+    period: str = Query("calendar", pattern="^(calendar|payroll|all)$"),
     payroll_period_id: UUID | None = None,
     limit: int = Query(50, ge=1, le=200),
     db: Session = Depends(get_db),
     _: dict = Depends(require_user),
 ):
-    """Shared leaderboard (GS + partner workers) — calendar month or payroll period view."""
+    """Shared leaderboard (GS + partner workers) — calendar month, payroll period, or all-time."""
     stmt = (
         select(QualityCompositeScore, Worker)
         .join(Worker, Worker.id == QualityCompositeScore.worker_id)
