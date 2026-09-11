@@ -25,8 +25,22 @@ and shipped to every visitor's browser**. If you paste one combined file into
 That is especially dangerous with `SUPABASE_SERVICE_ROLE_KEY`, which bypasses
 every Row Level Security policy. Treat it like the database password itself.
 
-**Rule: the frontend file contains only values you'd be happy to print on a
-billboard. Everything else lives in `backend/.env`.**
+**Rule: `NEXT_PUBLIC_`-prefixed values must be safe to print on a billboard.
+Everything else belongs in `backend/.env`** — with one deliberate exception
+below.
+
+### The two secrets that legitimately live in both files
+
+`SESSION_COOKIE_SECRET` and `OTP_PEPPER` must appear in **both**
+`backend/.env` and `frontend/.env.local`, with **identical values**. The
+backend signs the session cookie (`core/session_cookie.py`) and the Next.js
+middleware verifies that signature (`middleware.ts:28-29`,
+`lib/auth/session-cookie.ts:8-9`). If the values drift, every authenticated
+request bounces to the login page.
+
+They are safe there because they carry no `NEXT_PUBLIC_` prefix, so Next.js
+keeps them in the server process and never inlines them into the browser
+bundle. Do not "fix" them by adding the prefix.
 
 ---
 
@@ -77,6 +91,16 @@ NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID=<from Firebase console>
 NEXT_PUBLIC_FIREBASE_APP_ID=<from Firebase console>
 
 NEXT_PUBLIC_API_URL=http://127.0.0.1:8000
+NEXT_PUBLIC_GUACAMOLE_URL=http://localhost:8080/guacamole
+
+# Optional dev-only auth bypass (must match the backend's DEV_AUTH_BYPASS)
+NEXT_PUBLIC_DEV_AUTH_BYPASS=false
+NEXT_PUBLIC_DEV_AUTH_ROLE=user
+
+# Server-side only — no NEXT_PUBLIC_ prefix, so these never reach the browser.
+# Must be byte-identical to the same keys in backend/.env.
+SESSION_COOKIE_SECRET=<same long random string as backend/.env>
+OTP_PEPPER=<same long random string as backend/.env>
 ```
 
 **No Supabase variables belong here.** The browser never talks to Postgres —

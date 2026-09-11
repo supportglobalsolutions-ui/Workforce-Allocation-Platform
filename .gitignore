@@ -54,12 +54,17 @@ backend/email-template-server2.stderr.log
 # Generated payslip PDFs
 backend/data/payslips/
 
-# Local env files — never commit secrets
+# Local env files — never commit secrets.
+# Every .env* in every directory is ignored; the *.example templates are the
+# only exception. Written this way so a new env file in a new location is
+# covered by default rather than needing a rule added for it.
 .env
-.env.local
-.env*.local
-backend/.env
-frontend/.env.local
+.env.*
+**/.env
+**/.env.*
+!.env.example
+!**/.env.example
+!**/.env.local.example
 
 # Firebase service account key
 **/firebase-service-account.json
