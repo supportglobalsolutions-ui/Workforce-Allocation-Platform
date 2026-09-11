@@ -3,6 +3,16 @@ node_modules/
 .pnp
 .pnp.js
 
+# Python virtualenvs — never commit
+venv/
+.venv/
+env/
+ENV/
+
+# Editor config — .vscode/settings.json holds a plaintext DB password
+.vscode/
+.idea/
+
 # Testing
 coverage/
 
@@ -56,6 +66,15 @@ frontend/.env.local
 firebase-service-account.json
 **/admin.json
 admin.json
+**/serviceAccount*.json
+**/service-account*.json
+*-firebase-adminsdk-*.json
+
+# Other credential material
+*.key
+*.p12
+*.pfx
+.firebase/
 
 # Firebase security rules — copy-paste into Firebase Console, never commit
 firestore.rules

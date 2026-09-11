@@ -1,0 +1,24 @@
+# Infrastructure-local secrets and state.
+# General rules (env files, service accounts, venvs) live in the ROOT .gitignore
+# and already apply here — this file only covers infrastructure-specific paths.
+
+# Docker Compose env file (holds DB/Guacamole passwords)
+.env
+.env.*
+!.env.example
+
+# Guacamole auth — the .example is committed, the real mapping is not
+guacamole/user-mapping.xml
+
+# Container data volumes / runtime state
+postgres/data/
+redis/data/
+uptime-kuma/data/
+guacamole/data/
+*.rdb
+*.aof
+
+# Local TLS material for nginx
+nginx/certs/
+nginx/*.crt
+nginx/*.key
