@@ -8,7 +8,12 @@ engine_options = {
     "pool_pre_ping": True,
 }
 
-if settings.is_production:
+if settings.DATABASE_USE_PGBOUNCER:
+    # Supabase's :6543 endpoint is pgbouncer in transaction mode; it already
+    # multiplexes connections. A second pool on top of it just holds server
+    # backends open and burns through the project's connection budget.
+    engine_options["poolclass"] = NullPool
+elif settings.is_production:
     engine_options.update(
         pool_size=10,
         max_overflow=20,
@@ -21,7 +26,15 @@ else:
     # so abandoned reload requests cannot exhaust the backend.
     engine_options["poolclass"] = NullPool
 
-engine = create_engine(settings.DATABASE_URL, **engine_options)
+
+def _with_sslmode(url: str) -> str:
+    """Supabase refuses plaintext connections; default sslmode=require."""
+    if "supabase" in url and "sslmode=" not in url:
+        return f"{url}{'&' if '?' in url else '?'}sslmode=require"
+    return url
+
+
+engine = create_engine(_with_sslmode(settings.DATABASE_URL), **engine_options)
 
 
 def get_db():

@@ -20,8 +20,28 @@ class Settings(BaseSettings):
     # ── Session cookie (signed HttpOnly cookie for Next.js middleware) ──
     SESSION_COOKIE_SECRET: str = ""
 
-    # ── Database ──────────────────────────────────────────────
+    # ── Database (Supabase-hosted PostgreSQL) ─────────────────
+    # Supabase exposes three connection strings; pick per workload:
+    #   • Direct        db.<ref>.supabase.co:5432        — IPv6 only unless you
+    #     buy the IPv4 add-on. Fine for Alembic from a v6-capable machine.
+    #   • Session pool  aws-0-<region>.pooler.supabase.com:5432 — IPv4, one
+    #     backend per client. Use this for migrations from IPv4-only hosts.
+    #   • Transaction   aws-0-<region>.pooler.supabase.com:6543 — IPv4,
+    #     pgbouncer. Use for the running app. NOT for Alembic.
+    # Always include ?sslmode=require.
     DATABASE_URL: str = "postgresql://postgres:CHANGE_ME@localhost:5432/workforceallocationdb"
+
+    # Set true when DATABASE_URL points at the :6543 transaction pooler. Keeps
+    # SQLAlchemy from stacking its own pool on top of pgbouncer's.
+    DATABASE_USE_PGBOUNCER: bool = False
+
+    # ── Supabase project (only needed if you call Supabase APIs) ──
+    # The app reaches Postgres through DATABASE_URL alone. These are for
+    # supabase-js / Storage / PostgREST, which this project does not use today —
+    # auth, storage and realtime all still run on Firebase.
+    SUPABASE_URL: str = ""
+    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SERVICE_ROLE_KEY: str = ""
 
     # ── Redis ─────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
