@@ -6,12 +6,8 @@
 import { supabase } from '@/lib/supabase';
 
 const BASE = '/api';
-const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 
 async function getToken(forceRefresh = false): Promise<string | null> {
-  // In test mode the backend supplies the fixed development identity.
-  if (DEV_AUTH_BYPASS) return null;
-
   if (forceRefresh) {
     const { data } = await supabase.auth.refreshSession();
     return data.session?.access_token ?? null;

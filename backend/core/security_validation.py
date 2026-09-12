@@ -14,9 +14,6 @@ _INSECURE_GUAC_DEFAULT = "guacadmin"
 
 def validate_production_settings() -> None:
     """Fail fast when production is misconfigured."""
-    if settings.DEV_AUTH_BYPASS:
-        raise RuntimeError("DEV_AUTH_BYPASS must be false when ENVIRONMENT=production")
-
     if not settings.DATABASE_URL or _INSECURE_DB_DEFAULT in settings.DATABASE_URL:
         raise RuntimeError("Set a strong DATABASE_URL in production (no default password)")
 

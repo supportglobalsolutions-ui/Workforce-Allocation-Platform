@@ -31,8 +31,6 @@ logger = logging.getLogger(__name__)
 async def lifespan(app: FastAPI):
     if settings.is_production:
         validate_production_settings()
-    elif settings.DEV_AUTH_BYPASS:
-        logger.warning("DEV_AUTH_BYPASS is enabled — never use this in production")
 
     currency_routes = [getattr(r, "path", "") for r in app.routes if "currenc" in getattr(r, "path", "")]
     logger.info(
@@ -40,15 +38,12 @@ async def lifespan(app: FastAPI):
         len(app.routes),
         bool(currency_routes),
     )
-    auth_required = not (settings.DEV_AUTH_BYPASS and not settings.is_production)
-    if auth_required and not is_auth_ready():
+    if not is_auth_ready():
         logger.warning(
             "Supabase auth is not fully configured - set SUPABASE_URL, "
             "SUPABASE_SECRET_KEY and SUPABASE_JWKS_URL. Every authenticated "
             "request will be rejected until then."
         )
-    elif not auth_required:
-        logger.warning("Development auth bypass enabled; tokens are not verified.")
 
     background_tasks = [asyncio.create_task(run_rdp_lifecycle_loop())]
     if settings.EMAIL_DISPATCH_ENABLED:

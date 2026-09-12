@@ -105,11 +105,6 @@ export async function middleware(req: NextRequest) {
     return NextResponse.redirect(url);
   }
 
-  const devAuthBypass =
-    process.env.NODE_ENV !== 'production'
-    && process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
-  if (devAuthBypass) return NextResponse.next();
-
   const role = await verifySessionCookie(req.cookies.get('gs-session')?.value);
 
   if (!role) {

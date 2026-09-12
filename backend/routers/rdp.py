@@ -1037,9 +1037,6 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
         except Exception:
             await websocket.close(code=4001, reason="Invalid auth token")
             return
-    elif settings.DEV_AUTH_BYPASS and not settings.is_production:
-        uid = "dev-test-user"
-        role = settings.DEV_AUTH_ROLE if settings.DEV_AUTH_ROLE in {"user", "admin", "super_admin"} else "user"
     else:
         await websocket.close(code=4001, reason="Missing auth token")
         return
@@ -1061,9 +1058,8 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
             return
 
         is_admin = role in {"admin", "super_admin"}
-        is_dev_bypass = uid == "dev-test-user"
 
-        if not is_admin and not is_dev_bypass:
+        if not is_admin:
             admin_user = db.exec(
                 select(AdminUser).where(AdminUser.firebase_uid == uid)
             ).first()

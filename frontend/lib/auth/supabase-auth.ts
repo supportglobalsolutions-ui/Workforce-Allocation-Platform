@@ -11,50 +11,41 @@ import {
 } from './config';
 import { api } from '@/lib/api';
 
-// ── Dev bypass (development only) ─────────────────────────────────────────────
-const DEV_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
-const DEV_ROLE   = (process.env.NEXT_PUBLIC_DEV_AUTH_ROLE ?? 'super_admin') as AuthRole;
-const DEV_KEY    = 'dev_auth_session';
-
-function makeDevSession(): AuthSession {
-  return {
-    uid:            'dev-test-user',
-    email:          'dev.test@local.dev',
-    displayName:    'Dev User',
-    authRole:       DEV_ROLE,
-    primaryPortal:  ROLE_TO_PORTAL[DEV_ROLE],
-    allowedPortals: ROLE_ALLOWED_PORTALS[DEV_ROLE],
-  };
-}
-// ──────────────────────────────────────────────────────────────────────────────
-
-export async function signIn(email: string, password: string): Promise<AuthSession> {
-  if (DEV_BYPASS) {
-    const session = makeDevSession();
-    localStorage.setItem(DEV_KEY, JSON.stringify(session));
-    return session;
-  }
-  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-  if (error || !data.user || !data.session) {
-    throw error || new Error('Login failed');
-  }
-  await syncSessionCookie(data.session.access_token);
-  return sessionFromUser(data.user, data.session.access_token);
-}
-
-export async function signOut(): Promise<void> {
-  if (DEV_BYPASS) {
-    localStorage.removeItem(DEV_KEY);
-    return;
-  }
-  await clearSessionCookie();
-  await supabase.auth.signOut();
-}
-
-export async function sessionFromUser(user: User, _accessToken?: string): Promise<AuthSession> {
+export async function sessionFromUser(user: User, accessToken?: string): Promise<AuthSession> {
   const appMeta = user.app_metadata || {};
   const userMeta = user.user_metadata || {};
-  const role = (appMeta.role as AuthRole | undefined) ?? 'user';
+
+  // Extract custom claims from JWT access token if available
+  let jwtClaims: Record<string, any> = {};
+  if (accessToken) {
+    try {
+      const base64Url = accessToken.split('.')[1];
+      if (base64Url) {
+        const base64 = base64Url.replace(/-/g, '+').replace(/_/g, '/');
+        const jsonPayload = decodeURIComponent(
+          atob(base64)
+            .split('')
+            .map((c) => '%' + ('00' + c.charCodeAt(0).toString(16)).slice(-2))
+            .join(''),
+        );
+        jwtClaims = JSON.parse(jsonPayload);
+      }
+    } catch {}
+  }
+
+  // Priority: custom claim user_role -> custom claim role -> app_metadata.role -> default 'user'
+  const roleFromClaims =
+    (jwtClaims.user_role as AuthRole) ||
+    ((jwtClaims.custom_claims as Record<string, any>)?.role as AuthRole) ||
+    (jwtClaims.app_metadata?.role as AuthRole) ||
+    (appMeta.role as AuthRole | undefined);
+
+  // Note: standard Supabase JWTs set claims.role = "authenticated". We want the application role.
+  const role: AuthRole =
+    roleFromClaims && (roleFromClaims as string) !== 'authenticated'
+      ? roleFromClaims
+      : ((appMeta.role as AuthRole | undefined) ?? 'user');
+
   const displayName =
     (userMeta.display_name as string) ||
     (userMeta.full_name as string) ||
@@ -66,20 +57,28 @@ export async function sessionFromUser(user: User, _accessToken?: string): Promis
     email: user.email ?? '',
     displayName,
     authRole: role,
-    primaryPortal: ROLE_TO_PORTAL[role],
-    allowedPortals: ROLE_ALLOWED_PORTALS[role],
+    primaryPortal: ROLE_TO_PORTAL[role] || 'worker',
+    allowedPortals: ROLE_ALLOWED_PORTALS[role] || ['worker'],
   };
+}
+
+export async function signIn(email: string, password: string): Promise<AuthSession> {
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error || !data.user || !data.session) {
+    throw error || new Error('Login failed');
+  }
+  await syncSessionCookie(data.session.access_token);
+  return sessionFromUser(data.user, data.session.access_token);
+}
+
+export async function signOut(): Promise<void> {
+  await clearSessionCookie();
+  await supabase.auth.signOut();
 }
 
 export function subscribeAuthState(
   callback: (session: AuthSession | null) => void,
 ): () => void {
-  if (DEV_BYPASS) {
-    const stored = localStorage.getItem(DEV_KEY);
-    callback(stored ? (JSON.parse(stored) as AuthSession) : null);
-    return () => {};
-  }
-
   // Initial session check
   supabase.auth.getSession().then(async ({ data: { session } }) => {
     if (session?.user) {

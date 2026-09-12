@@ -5,10 +5,7 @@
  */
 import { supabase } from '@/lib/supabase';
 
-const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
-
 async function authHeaders(): Promise<HeadersInit> {
-  if (DEV_AUTH_BYPASS) return {};
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};

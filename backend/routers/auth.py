@@ -242,9 +242,7 @@ def list_users(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """List accounts. Uses PostgreSQL during the development auth bypass."""
-    if settings.DEV_AUTH_BYPASS and not settings.is_production:
-        return _list_postgres_users(db)
+    """List accounts from Supabase Auth."""
     return list_auth_users()
 
 

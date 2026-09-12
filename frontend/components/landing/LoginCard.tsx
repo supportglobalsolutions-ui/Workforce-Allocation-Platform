@@ -17,9 +17,9 @@ interface LoginCardProps {
 }
 
 const DEFAULT_SUPER_ADMIN_EMAIL =
-  process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL || 'support.globalsolutions@gmail.com';
+  process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL || 'peterkelvinkibiru1532@gmail.com';
 const DEFAULT_SUPER_ADMIN_PASSWORD =
-  process.env.NEXT_PUBLIC_SUPER_ADMIN_PASSWORD || 'Spectre1+';
+  process.env.NEXT_PUBLIC_SUPER_ADMIN_PASSWORD || 'P@vouh7+';
 
 export default function LoginCard({ onSuccess, className = '', isModal = false }: LoginCardProps) {
   const { login, session, isLoading } = useAuth();
@@ -96,16 +96,6 @@ export default function LoginCard({ onSuccess, className = '', isModal = false }
           <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium bg-[#0df5c4]/10 border border-[#0df5c4]/30 text-[#0df5c4]">
             <Check size={12} className="text-[#0df5c4]" />
             <span>Super Admin prefilled</span>
-            <span className="text-white/40">|</span>
-            <button
-              type="button"
-              onClick={() =>
-                setAdminAccount('peterkelvinkibiru1532@gmail.com', DEFAULT_SUPER_ADMIN_PASSWORD)
-              }
-              className="text-[10px] text-white/70 hover:text-white underline transition-colors"
-            >
-              alternate
-            </button>
           </div>
         )}
       </div>

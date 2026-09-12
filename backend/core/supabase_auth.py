@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 VALID_ROLES = {"user", "admin", "super_admin", "partner"}
 VALID_STATUSES = {"pending", "approved", "rejected", "banned"}
-SUPER_ADMIN_EMAIL = "support.globalsolutions@gmail.com"
+SUPER_ADMIN_EMAIL = "peterkelvinkibiru1532@gmail.com"
 
 # Supabase's own JWT "role" claim (authenticated / anon / service_role) is not
 # our application role — read ours out of app_metadata.
@@ -147,14 +147,39 @@ def verify_supabase_token(access_token: str) -> dict:
     app_md = claims.get("app_metadata") or {}
     user_md = claims.get("user_metadata") or {}
 
+    # Extract role from JWT custom claims or app_metadata
+    extracted_role = (
+        claims.get("user_role")
+        or (claims.get("custom_claims") or {}).get("role")
+        or (claims.get("claims_admin") or {}).get("role")
+    )
+    if not extracted_role or extracted_role not in VALID_ROLES:
+        raw_role = claims.get("role")
+        if raw_role in VALID_ROLES:
+            extracted_role = raw_role
+        else:
+            extracted_role = app_md.get(_APP_ROLE_KEY, "user")
+
+    extracted_status = (
+        claims.get("status")
+        or (claims.get("custom_claims") or {}).get("status")
+        or app_md.get(_APP_STATUS_KEY, "approved")
+    )
+
+    extracted_partner = (
+        claims.get("partner_entity_id")
+        or (claims.get("custom_claims") or {}).get("partner_entity_id")
+        or app_md.get(_APP_PARTNER_KEY)
+    )
+
     return {
         "uid": claims.get("sub", ""),
         "email": claims.get("email", "") or user_md.get("email", ""),
         # Display name is user-controlled and only ever used for presentation.
         "name": user_md.get("full_name") or user_md.get("display_name") or "",
-        "role": app_md.get(_APP_ROLE_KEY, "user"),
-        "status": app_md.get(_APP_STATUS_KEY, "approved"),
-        "partner_entity_id": app_md.get(_APP_PARTNER_KEY),
+        "role": extracted_role,
+        "status": extracted_status,
+        "partner_entity_id": extracted_partner,
     }
 
 

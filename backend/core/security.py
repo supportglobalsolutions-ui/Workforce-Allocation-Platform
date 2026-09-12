@@ -4,30 +4,11 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth_logging import log_auth_failure
-from .config import settings
 from .supabase_auth import verify_supabase_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
 ROLES = {"user", "partner", "admin", "super_admin"}
-
-# Fixed identity used when DEV_AUTH_BYPASS is enabled (development only).
-_DEV_USER_UID = "dev-test-user"
-_DEV_USER_EMAIL = "dev.test@local.dev"
-
-
-def _dev_bypass_enabled() -> bool:
-    return settings.DEV_AUTH_BYPASS and not settings.is_production
-
-
-def _dev_user() -> dict:
-    role = settings.DEV_AUTH_ROLE if settings.DEV_AUTH_ROLE in ROLES else "user"
-    return {
-        "uid": _DEV_USER_UID,
-        "email": _DEV_USER_EMAIL,
-        "name": "Dev Test User",
-        "role": role,
-    }
 
 
 def get_current_user(
@@ -39,12 +20,10 @@ def get_current_user(
     Returns uid, email, name and the application role.
     Roles: user | partner | admin | super_admin
 
-    The role comes from app_metadata, which only the service key can write.
+    The role comes from custom claims or app_metadata.
     user_metadata is user-editable and is never trusted for authorisation.
     """
     if not credentials:
-        if _dev_bypass_enabled():
-            return _dev_user()
         log_auth_failure(request, reason="missing_token")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -55,8 +34,6 @@ def get_current_user(
     try:
         decoded = verify_supabase_token(credentials.credentials)
     except ValueError as exc:
-        if _dev_bypass_enabled():
-            return _dev_user()
         log_auth_failure(request, reason="invalid_token", detail=str(exc))
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
