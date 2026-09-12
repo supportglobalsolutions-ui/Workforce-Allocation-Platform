@@ -6,8 +6,8 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.firebase_admin import ban_firebase_user, unban_firebase_user, get_firebase_user
-from core.auth_errors import http_error_from_firebase
+from core.supabase_auth import ban_auth_user, unban_auth_user, get_auth_user
+from core.auth_errors import http_error_from_auth
 from core.permissions import require_admin, require_user
 from core.security import get_current_user
 from models.admin_users import AdminUser
@@ -320,9 +320,9 @@ def _get_worker_firebase_uid(worker_id: UUID, db: Session, current_user: dict) -
         )
 
     try:
-        fb_user = get_firebase_user(admin_user.firebase_uid)
+        fb_user = get_auth_user(admin_user.firebase_uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     target_role = (fb_user.custom_claims or {}).get("role", "user")
     if current_user.get("role") == "admin" and target_role == "super_admin":
@@ -343,9 +343,9 @@ def ban_worker(
     """Ban a worker's Firebase account — prevents login."""
     _, firebase_uid = _get_worker_firebase_uid(worker_id, db, current_user)
     try:
-        ban_firebase_user(firebase_uid)
+        ban_auth_user(firebase_uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
     return {"banned": True}
 
 
@@ -358,7 +358,7 @@ def unban_worker(
     """Unban a worker's Firebase account — restores login access."""
     _, firebase_uid = _get_worker_firebase_uid(worker_id, db, current_user)
     try:
-        unban_firebase_user(firebase_uid)
+        unban_auth_user(firebase_uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
     return {"banned": False}

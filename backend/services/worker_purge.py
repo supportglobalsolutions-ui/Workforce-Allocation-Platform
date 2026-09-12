@@ -7,7 +7,7 @@ from uuid import UUID
 from sqlalchemy import delete, update as sa_update
 from sqlmodel import Session, select
 
-from core.firebase_admin import ban_firebase_user
+from core.supabase_auth import ban_auth_user
 from models.allocation import Allocation
 from models.client import Client
 from models.email_job import EmailJobItem
@@ -34,7 +34,7 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
     """
     Permanently remove workers and dependent operational data.
 
-    Order matters for FKs. Firebase accounts linked to the worker are banned
+    Order matters for FKs. Supabase accounts linked to the worker are banned
     (login disabled). The admin_users login row is kept but unlinked.
     """
     unique_ids = list(dict.fromkeys(worker_ids))
@@ -73,9 +73,9 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
             firebase_uid = admin.firebase_uid if admin else None
         if firebase_uid:
             try:
-                ban_firebase_user(firebase_uid)
+                ban_auth_user(firebase_uid)
             except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not ban Firebase user for worker %s: %s", wid, exc)
+                logger.warning("Could not ban Supabase user for worker %s: %s", wid, exc)
 
         # Sessions (including active)
         session_ids = list(db.exec(select(WorkSession.id).where(WorkSession.worker_id == wid)).all())

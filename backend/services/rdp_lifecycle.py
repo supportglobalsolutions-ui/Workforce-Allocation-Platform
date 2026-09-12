@@ -13,7 +13,6 @@ from core.redis import get_redis
 from models.enums import RdpStatusEnum, ReleaseReasonEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
-from services.firebase_mirror import delete_active_session, mirror_rdp_status
 from services.rdp_state import transition_rdp_status, utc_now
 
 logger = logging.getLogger(__name__)
@@ -92,10 +91,8 @@ def run_rdp_lifecycle_tick() -> dict[str, int]:
                     require_owner=False,
                     release_reason=ReleaseReasonEnum.timed_out,
                 )
-                mirror_rdp_status(resource)
                 for sid in result.get("closed_session_ids", []):
                     from uuid import UUID
-                    delete_active_session(UUID(str(sid)))
                 auto_released += 1
                 logger.info("RDP %s auto-released after idle timeout", resource.nickname)
             except Exception as exc:

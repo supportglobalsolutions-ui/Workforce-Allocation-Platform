@@ -10,7 +10,6 @@ from core.permissions import require_admin, require_user
 from models.enums import ShiftStatusEnum
 from models.shift import Shift
 from schemas.shift import ShiftCreate, ShiftResponse, ShiftUpdate
-from services.firebase_mirror import mirror_rdp_status_by_id, mirror_shift_status_change_by_id
 from services.rdp_state import assign_rdp_for_approved_shift
 from .deps import apply_update, get_worker_for_user
 
@@ -116,7 +115,4 @@ def update_shift(
     db.add(shift)
     db.commit()
     db.refresh(shift)
-    background_tasks.add_task(mirror_shift_status_change_by_id, shift.id, previous_status)
-    if shift.rdp_resource_id and shift.status == ShiftStatusEnum.approved:
-        background_tasks.add_task(mirror_rdp_status_by_id, shift.rdp_resource_id)
     return shift

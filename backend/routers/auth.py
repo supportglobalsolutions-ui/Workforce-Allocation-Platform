@@ -6,24 +6,24 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr
 from sqlmodel import Session, select
 
-from core.auth_errors import http_error_from_firebase
+from core.auth_errors import http_error_from_auth
 from core.config import settings
 from core.database import get_db
-from core.firebase_admin import (
+from core.supabase_auth import (
     SUPER_ADMIN_EMAIL,
-    approve_firebase_user,
-    ban_firebase_user,
+    approve_auth_user,
+    ban_auth_user,
     bootstrap_super_admin,
-    create_firebase_user,
-    get_firebase_user,
-    get_firebase_user_by_email,
-    list_firebase_users,
+    create_auth_user,
+    get_auth_user,
+    get_auth_user_by_email,
+    list_auth_users,
     register_pending_user,
-    reject_firebase_user,
+    reject_auth_user,
     set_user_role,
-    unban_firebase_user,
+    unban_auth_user,
     user_to_dict,
-    verify_firebase_token,
+    verify_supabase_token,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
 from core.rate_limit import check_rate_limit
@@ -168,7 +168,7 @@ def _ensure_login_profile(
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(body: RegisterRequest, request: Request):
     """
-    Public self-registration. Creates a disabled Firebase user pending admin approval.
+    Public self-registration. Creates a banned Supabase user pending admin approval.
     """
     check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=body.email.lower())
     check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
@@ -184,7 +184,7 @@ def register_user(body: RegisterRequest, request: Request):
             display_name=body.displayName,
         )
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     return user_to_dict(user)
 
@@ -245,7 +245,7 @@ def list_users(
     """List accounts. Uses PostgreSQL during the development auth bypass."""
     if settings.DEV_AUTH_BYPASS and not settings.is_production:
         return _list_postgres_users(db)
-    return list_firebase_users()
+    return list_auth_users()
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
@@ -255,7 +255,7 @@ def create_user(
     current_user: dict = Depends(require_admin),
 ):
     """
-    Create a new Firebase user with a role claim.
+    Create a new Supabase user with a role in app_metadata.
     - admin       : can create worker, partner, or operations lead
     - super_admin : can create any role including executive
     """
@@ -277,7 +277,7 @@ def create_user(
         )
 
     try:
-        user = create_firebase_user(
+        user = create_auth_user(
             email=body.email,
             password=body.password,
             display_name=body.displayName,
@@ -285,7 +285,7 @@ def create_user(
             partner_entity_id=partner_entity_id,
         )
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     if body.role in {"user", "partner"}:
         _ensure_login_profile(
@@ -330,9 +330,9 @@ def approve_user(
                 raise HTTPException(status_code=404, detail="Partner company not found.")
 
     try:
-        user = approve_firebase_user(uid)
+        user = approve_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     # Eagerly provision admin_users + workers so the admin can finish the
     # profile immediately instead of waiting for the worker's first login.
@@ -383,9 +383,9 @@ def reject_user(
 ):
     """Reject and disable a pending account request."""
     try:
-        user = reject_firebase_user(uid)
+        user = reject_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
     return user_to_dict(user)
 
 
@@ -412,9 +412,9 @@ def update_user_role(
         )
 
     try:
-        target = get_firebase_user(uid)
+        target = get_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     target_role = (target.custom_claims or {}).get("role", "user")
     if actor_role == "admin" and target_role == "super_admin":
@@ -434,7 +434,7 @@ def update_user_role(
     try:
         set_user_role(uid, body.role, partner_entity_id=partner_entity_id)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     if body.role == "partner":
         _ensure_login_profile(
@@ -446,13 +446,13 @@ def update_user_role(
             partner_entity_id=partner_entity_id,
         )
 
-    return user_to_dict(get_firebase_user(uid))
+    return user_to_dict(get_auth_user(uid))
 
 
 @router.get("/account-status")
 def get_account_status(email: str, request: Request):
     """
-    Rate-limited status lookup for the login page when Firebase returns user-disabled.
+    Rate-limited status lookup for the login page when auth returns user-disabled.
     Returns a generic response when the address is not registered to reduce enumeration.
     """
     check_rate_limit(request, scope="auth-account-status", limit=10, window_seconds=60)
@@ -464,7 +464,7 @@ def get_account_status(email: str, request: Request):
         key_suffix=email.lower()[:120],
     )
     try:
-        user = get_firebase_user_by_email(email)
+        user = get_auth_user_by_email(email)
     except Exception:
         return {"status": "unknown"}
     claims = user.custom_claims or {}
@@ -477,7 +477,7 @@ def create_session_token(body: SessionTokenRequest, request: Request):
     """Verify Firebase ID token and return a signed cookie value for Next.js middleware."""
     check_rate_limit(request, scope="auth-session-token", limit=30, window_seconds=60)
     try:
-        decoded = verify_firebase_token(body.id_token)
+        decoded = verify_supabase_token(body.id_token)
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -499,9 +499,9 @@ def ban_user(
 ):
     """Disable a user's account and mark it as banned. Admins cannot ban super_admins."""
     try:
-        target = get_firebase_user(uid)
+        target = get_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     target_role = (target.custom_claims or {}).get("role", "user")
     actor_role = current_user["role"]
@@ -513,9 +513,9 @@ def ban_user(
         )
 
     try:
-        user = ban_firebase_user(uid)
+        user = ban_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
     return user_to_dict(user)
 
 
@@ -526,9 +526,9 @@ def unban_user(
 ):
     """Re-enable a previously banned account."""
     try:
-        target = get_firebase_user(uid)
+        target = get_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
 
     target_role = (target.custom_claims or {}).get("role", "user")
     actor_role = current_user["role"]
@@ -540,9 +540,9 @@ def unban_user(
         )
 
     try:
-        user = unban_firebase_user(uid)
+        user = unban_auth_user(uid)
     except Exception as exc:
-        raise http_error_from_firebase(exc) from exc
+        raise http_error_from_auth(exc) from exc
     return user_to_dict(user)
 
 
@@ -550,7 +550,7 @@ def unban_user(
 def bootstrap(current_user: dict = Depends(require_super_admin)):
     """
     Idempotent: ensures support.globalsolutions@gmail.com has the super_admin claim.
-    Only callable by an existing super_admin. Run once after initial Firebase setup.
+    Only callable by an existing super_admin. Run once after initial Supabase setup.
     """
     try:
         return bootstrap_super_admin()

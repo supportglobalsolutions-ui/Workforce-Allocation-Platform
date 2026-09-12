@@ -31,7 +31,6 @@ from services.admin_otp import (
 )
 from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
-from services.firebase_mirror import mirror_active_session_by_id, mirror_rdp_status_by_id
 from services.rdp_state import resume_active_from_heartbeat
 from services.security_risk import (
     BULK_HARD_MAX,
@@ -275,8 +274,6 @@ def create_session(
     db.add(session)
     db.commit()
     db.refresh(session)
-    if session.end_time is None:
-        background_tasks.add_task(mirror_active_session_by_id, session.id)
     return _session_response(session)
 
 
@@ -379,7 +376,6 @@ def update_session(
     on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
-    background_tasks.add_task(mirror_active_session_by_id, session.id)
     return _session_response(session)
 
 
@@ -412,8 +408,6 @@ def heartbeat_session(
 
     redis_client.set(f"heartbeat:session:{session_id}", now.isoformat(), ex=3600)
     if session.end_time is None:
-        background_tasks.add_task(mirror_active_session_by_id, session.id)
         if rdp_was_idle and session.rdp_resource_id:
             resume_active_from_heartbeat(db, session.rdp_resource_id)
-            background_tasks.add_task(mirror_rdp_status_by_id, session.rdp_resource_id)
     return _session_response(session)

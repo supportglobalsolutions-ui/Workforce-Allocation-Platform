@@ -28,7 +28,6 @@ from schemas.task_assessment import (
     TaskResultScorePatch,
     TaskResultWithWorker,
 )
-from services import firestore_sync
 from services.assessment_marks import max_attempts_for, require_marks_total_100
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
@@ -148,7 +147,6 @@ def create_task_assessment(
     db.add(a)
     db.commit()
     db.refresh(a)
-    firestore_sync.sync_task_assessment(_to_dict(a))
     return a
 
 
@@ -244,7 +242,6 @@ def update_task_assessment(
     db.add(a)
     db.commit()
     db.refresh(a)
-    firestore_sync.sync_task_assessment(_to_dict(a))
     return a
 
 
@@ -262,7 +259,6 @@ def delete_task_assessment(
     db.flush()
     db.delete(a)
     db.commit()
-    firestore_sync.delete_task_assessment(str(assessment_id))
 
 
 @router.get("/{assessment_id}/results", response_model=list[TaskResultWithWorker])
@@ -313,7 +309,6 @@ def patch_task_score(
     db.add(r)
     db.commit()
     db.refresh(r)
-    firestore_sync.sync_task_result(_to_dict(r))
     return r
 
 
@@ -379,7 +374,6 @@ def grade_task_result(
     db.add(r)
     db.commit()
     db.refresh(r)
-    firestore_sync.sync_task_result(_to_dict(r))
     return r
 
 
@@ -426,5 +420,4 @@ def submit_task_result(
         db.add(r)
     db.commit()
     db.refresh(r)
-    firestore_sync.sync_task_result(_to_dict(r))
     return r

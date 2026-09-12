@@ -136,9 +136,9 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         const height = Math.max(box?.clientHeight ?? window.innerHeight, 600);
 
         // guacamole-common-js WebSocketTunnel appends connect data as a query string.
-        // The backend strips firebaseToken before forwarding to Guacamole.
+        // The backend strips accessToken before forwarding to Guacamole.
         const connectData = new URLSearchParams({
-          firebaseToken: idToken,
+          accessToken: idToken,
           GUAC_WIDTH: String(Math.floor(width)),
           GUAC_HEIGHT: String(Math.floor(height)),
           GUAC_DPI: '96',

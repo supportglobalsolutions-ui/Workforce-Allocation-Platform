@@ -9,7 +9,6 @@ from sqlmodel import Session, select
 
 from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
-from services.firebase_mirror import mirror_rdp_status, push_system_alert
 from services.rdp_state import PROTECTED_FROM_HEALTH, transition_rdp_status, utc_now
 
 logger = logging.getLogger(__name__)
@@ -111,45 +110,39 @@ def apply_uptime_kuma_event(db: Session, payload: dict[str, Any]) -> dict[str, A
 
     if kuma_status == KUMA_DOWN:
         if resource.status != RdpStatusEnum.offline:
-            transition_rdp_status(db, resource, RdpStatusEnum.offline, mirror=False, commit=False)
+            transition_rdp_status(db, resource, RdpStatusEnum.offline, commit=False)
             changed = True
         alert_message = f"RDP {resource.nickname} is unreachable (TCP check failed)."
     elif kuma_status == KUMA_MAINTENANCE:
         if resource.status != RdpStatusEnum.maintenance:
-            transition_rdp_status(db, resource, RdpStatusEnum.maintenance, mirror=False, commit=False)
+            transition_rdp_status(db, resource, RdpStatusEnum.maintenance, commit=False)
             changed = True
         alert_message = f"RDP {resource.nickname} entered maintenance mode."
     elif kuma_status == KUMA_UP:
         if resource.status in {RdpStatusEnum.offline, RdpStatusEnum.unhealthy}:
             transition_rdp_status(
-                db, resource, _status_after_recovery(resource), mirror=False, commit=False
+                db, resource, _status_after_recovery(resource), commit=False
             )
             changed = True
         elif resource.status == RdpStatusEnum.maintenance:
             transition_rdp_status(
-                db, resource, _status_after_recovery(resource), mirror=False, commit=False
+                db, resource, _status_after_recovery(resource), commit=False
             )
             changed = True
     elif kuma_status == KUMA_PENDING:
         pass
     else:
         if resource.status not in ACTIVE_ASSIGNMENT_STATUSES | {RdpStatusEnum.online_free}:
-            transition_rdp_status(db, resource, RdpStatusEnum.unhealthy, mirror=False, commit=False)
+            transition_rdp_status(db, resource, RdpStatusEnum.unhealthy, commit=False)
             changed = True
         alert_message = f"RDP {resource.nickname} health check reported an unknown state."
 
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    mirror_rdp_status(resource)
 
     if changed and alert_message and kuma_status in {KUMA_DOWN, KUMA_MAINTENANCE}:
-        push_system_alert(
-            alert_type="rdp_offline" if kuma_status == KUMA_DOWN else "rdp_maintenance",
-            severity="critical" if kuma_status == KUMA_DOWN else "warning",
-            message=alert_message,
-            entity_ref=str(resource.id),
-        )
+        pass
 
     return {
         "ok": True,

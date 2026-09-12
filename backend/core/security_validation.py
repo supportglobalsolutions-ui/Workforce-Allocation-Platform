@@ -31,16 +31,21 @@ def validate_production_settings() -> None:
 
 
 def validate_session_image_url(url: str) -> str:
-    """Allow only HTTPS Firebase Storage download URLs for session evidence."""
+    """Allow only HTTPS Supabase Storage URLs for session evidence.
+
+    Restricting the host stops a worker submitting a link to an arbitrary
+    server as proof of work, which would both leak request metadata and let
+    the "evidence" change after review.
+    """
     parsed = urlparse(url.strip())
-    if parsed.scheme not in {"https"}:
+    if parsed.scheme != "https":
         raise ValueError("Image URL must use HTTPS")
     host = (parsed.hostname or "").lower()
     if not host:
         raise ValueError("Image URL is invalid")
-    if host.endswith(".firebasestorage.app") or host.endswith(".googleapis.com"):
+
+    project_host = (urlparse(settings.SUPABASE_URL).hostname or "").lower()
+    if project_host and host == project_host and "/storage/v1/object/" in parsed.path:
         return url.strip()
-    project = settings.FIREBASE_PROJECT_ID.lower()
-    if project and project in host:
-        return url.strip()
-    raise ValueError("Image URL must be a Firebase Storage download link")
+
+    raise ValueError("Image URL must be a Supabase Storage link for this project")

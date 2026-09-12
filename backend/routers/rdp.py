@@ -15,7 +15,7 @@ from starlette.background import BackgroundTask
 
 from core.config import settings
 from core.database import engine, get_db
-from core.firebase_admin import verify_firebase_token
+from core.supabase_auth import verify_supabase_token
 from core.guacamole import GuacamoleClient
 from core.permissions import require_admin, require_user
 from core.rate_limit import check_rate_limit
@@ -32,11 +32,6 @@ from schemas.rdp import (
     RDPResourceResponse,
     RDPResourceUpdate,
     RdpForceReleaseBody,
-)
-from services.firebase_mirror import (
-    delete_active_session,
-    mirror_active_session_by_id,
-    mirror_rdp_status_by_id,
 )
 from services.rdp_state import (
     transition_rdp_status,
@@ -537,7 +532,7 @@ async def proxy_guacamole_tunnel(
     """
     Proxy the Guacamole HTTP tunnel for the guacamole-common-js viewer.
     Streams responses so remote-desktop frames arrive in real time.
-    Auth: Firebase Bearer token (sent by the viewer as an extra tunnel header).
+    Auth: Supabase Bearer token (sent by the viewer as an extra tunnel header).
     """
     is_admin = current_user.get("role") in {"admin", "super_admin"}
     if not is_admin:
@@ -648,7 +643,6 @@ def create_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return resource
 
 
@@ -680,7 +674,6 @@ def update_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return resource
 
 
@@ -810,8 +803,6 @@ def claim_rdp_resource(
         db.refresh(allocation)
         db.refresh(work_session)
 
-        background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
-        background_tasks.add_task(mirror_active_session_by_id, work_session.id)
 
         return _build_claim_payload(
             allocation=allocation,
@@ -858,9 +849,6 @@ def end_rdp_connection(
             admin_id=admin_id,
         )
 
-        background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
-        for sid in result.get("closed_session_ids", []):
-            background_tasks.add_task(delete_active_session, UUID(str(sid)))
 
         return result
     except HTTPException:
@@ -899,7 +887,6 @@ def lock_rdp_resource(
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
     transition_rdp_status(db, resource, RdpStatusEnum.admin_locked)
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
 
 
@@ -923,7 +910,6 @@ def unlock_rdp_resource(
         RdpStatusEnum.assigned if resource.assigned_worker_id else RdpStatusEnum.online_free
     )
     transition_rdp_status(db, resource, new_status)
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
 
 
@@ -939,7 +925,6 @@ def maintenance_rdp_resource(
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
     transition_rdp_status(db, resource, RdpStatusEnum.maintenance)
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
     return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
 
 
@@ -981,9 +966,6 @@ def force_release_rdp_resource(
     db.add(resource)
     db.commit()
 
-    background_tasks.add_task(mirror_rdp_status_by_id, resource.id)
-    for sid in result.get("closed_session_ids", []):
-        background_tasks.add_task(delete_active_session, UUID(str(sid)))
 
     return {**result, "reason": body.reason.strip()}
 
@@ -1035,21 +1017,21 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
     """
     WebSocket proxy for guacamole-common-js WebSocketTunnel.
     The Guacamole auth token never leaves the server — the browser only sends its
-    Firebase ID token (as ?firebaseToken=...) plus display hint params.
+    Supabase access token (as ?accessToken=...) plus display hint params.
 
     Flow:
-      1. Verify Firebase token from query param (or DEV bypass).
+      1. Verify the access token from the query param (or DEV bypass).
       2. Confirm the worker has an open allocation for this RDP.
       3. Fetch Guacamole auth token server-side.
       4. Open a WebSocket to Guacamole and relay frames bidirectionally.
     """
     params = websocket.query_params
-    firebase_token = params.get("firebaseToken")
+    access_token = params.get("accessToken")
 
     # --- 1. Authenticate ---
-    if firebase_token:
+    if access_token:
         try:
-            decoded = verify_firebase_token(firebase_token)
+            decoded = verify_supabase_token(access_token)
             uid: str = decoded["uid"]
             role: str = decoded.get("role", "user")
         except Exception:

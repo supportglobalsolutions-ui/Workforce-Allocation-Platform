@@ -42,8 +42,8 @@ def _display_name_from(current_user: dict) -> str:
 
 def get_admin_user(db: Session, current_user: dict) -> AdminUser:
     """
-    Resolve the admin_users row for the logged-in Firebase account, creating it
-    on first access (just-in-time provisioning) so a valid Firebase login never
+    Resolve the admin_users row for the logged-in Supabase account, creating it
+    on first access (just-in-time provisioning) so a valid Supabase login never
     has to be seeded into Postgres by hand.
     """
     admin = db.exec(

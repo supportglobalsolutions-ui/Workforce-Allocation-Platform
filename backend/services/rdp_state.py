@@ -13,7 +13,6 @@ from models.allocation import Allocation
 from models.enums import RdpStatusEnum, ShiftStatusEnum
 from models.rdp_machine import RDPResource
 from models.shift import Shift
-from services.firebase_mirror import mirror_rdp_status
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +58,6 @@ def transition_rdp_status(
     new_status: RdpStatusEnum,
     *,
     assigned_worker_id: UUID | None | object = ...,
-    mirror: bool = True,
     commit: bool = True,
 ) -> RDPResource:
     """
@@ -76,8 +74,6 @@ def transition_rdp_status(
     if commit:
         db.commit()
         db.refresh(resource)
-        if mirror:
-            mirror_rdp_status(resource)
     return resource
 
 
@@ -116,7 +112,6 @@ def assign_rdp_for_approved_shift(db: Session, shift: Shift, *, commit: bool = F
         resource,
         RdpStatusEnum.assigned,
         assigned_worker_id=shift.worker_id,
-        mirror=False,
         commit=commit,
     )
 

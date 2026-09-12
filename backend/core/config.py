@@ -9,7 +9,7 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
     # ── Dev-only auth bypass ──────────────────────────────────
-    # When true, requests with no/invalid Firebase token are treated as a fixed
+    # When true, requests with no/invalid access token are treated as a fixed
     # test user. NEVER enable in production. Used only to test flows in isolation.
     DEV_AUTH_BYPASS: bool = False
     DEV_AUTH_ROLE: str = "user"  # role of the fake test user: user | admin | super_admin
@@ -35,21 +35,21 @@ class Settings(BaseSettings):
     # SQLAlchemy from stacking its own pool on top of pgbouncer's.
     DATABASE_USE_PGBOUNCER: bool = False
 
-    # ── Supabase project (only needed if you call Supabase APIs) ──
-    # The app reaches Postgres through DATABASE_URL alone. These are for
-    # supabase-js / Storage / PostgREST, which this project does not use today —
-    # auth, storage and realtime all still run on Firebase.
+    # ── Supabase project (auth + API) ─────────────────────────
+    # The service key drives the GoTrue admin API (create/ban/role changes).
+    # SUPABASE_SECRET_KEY is the current name; SERVICE_ROLE_KEY is the legacy
+    # one. Either works — core/supabase_auth.py prefers the former.
     SUPABASE_URL: str = ""
-    SUPABASE_ANON_KEY: str = ""
+    SUPABASE_SECRET_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
+
+    # Token verification. JWKS (RS256) is preferred; the shared secret is the
+    # legacy HS256 path and is used only as a fallback.
+    SUPABASE_JWKS_URL: str = ""
+    SUPABASE_JWT_SECRET: str = ""
 
     # ── Redis ─────────────────────────────────────────────────
     REDIS_URL: str = "redis://localhost:6379/0"
-
-    # ── Firestore mirror reconciliation ──────────────────────
-    # How often the background loop re-asserts PG state onto Firestore and
-    # prunes orphaned docs, so the mirror self-heals after transient failures.
-    MIRROR_RECONCILE_INTERVAL_SECONDS: int = 300
 
     # ── RDP session lifecycle ─────────────────────────────────
     RDP_HEARTBEAT_IDLE_SECONDS: int = 600       # 10m without heartbeat → idle
@@ -60,11 +60,6 @@ class Settings(BaseSettings):
     GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
     GUACAMOLE_USERNAME: str = "guacadmin"
     GUACAMOLE_PASSWORD: str = ""
-
-    # ── Firebase Admin ────────────────────────────────────────
-    FIREBASE_CREDENTIALS_PATH: str = "./firebase-service-account.json"
-    FIREBASE_PROJECT_ID: str = ""
-    FIREBASE_DATABASE_URL: str = ""
 
     # ── Uptime Kuma (RDP TCP heartbeat) ─────────────────────
     UPTIME_KUMA_URL: str = "http://localhost:3001"

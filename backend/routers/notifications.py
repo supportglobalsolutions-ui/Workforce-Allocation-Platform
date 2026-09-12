@@ -5,7 +5,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, or_, select
 
 from core.database import get_db
-from core.firebase_admin import list_firebase_users
+from core.supabase_auth import list_auth_users
 from core.permissions import require_admin, require_user
 from models.admin_users import AdminUser
 from models.notification import Notification
@@ -50,7 +50,7 @@ def _worker_email(db: Session, worker: Worker) -> str | None:
 def _resolve_partner_workers(db: Session) -> list[Worker]:
     """Workers linked to Firebase accounts with role=partner."""
     partner_uids = {
-        u["uid"] for u in list_firebase_users()
+        u["uid"] for u in list_auth_users()
         if u.get("role") == "partner" and u.get("status") == "approved"
     }
     if not partner_uids:

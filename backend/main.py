@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from core.config import settings
-from core.firebase_admin import init_firebase
+from core.supabase_auth import is_auth_ready
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
 from routers import (
@@ -18,8 +18,6 @@ from routers import (
 )
 from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
-from services.leaderboard_sync import run_leaderboard_sync_loop
-from services.mirror_reconcile import run_mirror_reconcile_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
 
 _log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
@@ -42,25 +40,19 @@ async def lifespan(app: FastAPI):
         len(app.routes),
         bool(currency_routes),
     )
-    firebase_enabled = not (
-        settings.DEV_AUTH_BYPASS and not settings.is_production
-    )
+    auth_required = not (settings.DEV_AUTH_BYPASS and not settings.is_production)
+    if auth_required and not is_auth_ready():
+        logger.warning(
+            "Supabase auth is not fully configured - set SUPABASE_URL, "
+            "SUPABASE_SECRET_KEY and SUPABASE_JWKS_URL. Every authenticated "
+            "request will be rejected until then."
+        )
+    elif not auth_required:
+        logger.warning("Development auth bypass enabled; tokens are not verified.")
+
     background_tasks = [asyncio.create_task(run_rdp_lifecycle_loop())]
     if settings.EMAIL_DISPATCH_ENABLED:
         background_tasks.append(asyncio.create_task(run_email_dispatch_loop()))
-    if firebase_enabled:
-        init_firebase()
-        background_tasks.extend(
-            [
-                asyncio.create_task(run_leaderboard_sync_loop()),
-                asyncio.create_task(run_mirror_reconcile_loop()),
-            ]
-        )
-    else:
-        logger.warning(
-            "Development auth bypass enabled; Firebase initialization and "
-            "Firestore mirror jobs are disabled."
-        )
     yield
     for task in background_tasks:
         task.cancel()
