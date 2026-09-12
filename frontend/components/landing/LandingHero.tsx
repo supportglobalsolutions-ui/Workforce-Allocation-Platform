@@ -1,108 +1,110 @@
 'use client';
 
+import { useState } from 'react';
 import Link from 'next/link';
-import { motion } from 'framer-motion';
-import { ArrowRight } from 'lucide-react';
-import LogoMark from '@/components/theme/LogoMark';
-
-const TAGLINE = ['Remote', 'Smart', 'Global'] as const;
-
-const fadeUp = {
-  hidden: { opacity: 0, y: 28 },
-  visible: (i: number) => ({
-    opacity: 1,
-    y: 0,
-    transition: { delay: 0.15 + i * 0.12, duration: 0.7, ease: [0.22, 1, 0.36, 1] },
-  }),
-};
+import { ArrowRight, Play } from 'lucide-react';
+import LandingNavbar from './LandingNavbar';
+import HoloGlobe from './HoloGlobe';
+import FeatureStrip from './FeatureStrip';
+import WhySection from './WhySection';
+import LoginModal from './LoginModal';
 
 export default function LandingHero() {
+  const [isLoginModalOpen, setIsLoginModalOpen] = useState(false);
+
   return (
-    <div className="relative flex-1 flex flex-col items-center justify-center px-6 py-16 overflow-hidden">
-      {/* Ambient background */}
-      <div className="absolute inset-0 pointer-events-none" aria-hidden>
-        <div className="absolute inset-0 landing-grid opacity-60" />
-        <div className="landing-orb absolute -top-20 left-[15%] w-[420px] h-[420px] rounded-full bg-emerald-accent/[0.07]" />
-        <div className="landing-orb landing-orb-delayed absolute bottom-0 right-[10%] w-[380px] h-[380px] rounded-full bg-gold-accent/[0.06]" />
-        <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_0%,var(--background)_72%)]" />
+    <div className="relative min-h-screen w-full flex flex-col bg-[#020d0a] text-white overflow-hidden selection:bg-[#0df5c4]/30 selection:text-white">
+      {/* Background Cybernetic Ambience & Ray Flares */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        {/* Deep space radial aura */}
+        <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-[1200px] h-[700px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,rgba(3,40,32,0.06)_50%,transparent_80%)] blur-3xl" />
+        
+        {/* Diagonal light streak flares */}
+        <div className="absolute -top-20 -left-40 w-[600px] h-[300px] rotate-[-25deg] bg-gradient-to-r from-transparent via-[#0df5c4]/10 to-transparent blur-2xl" />
+        <div className="absolute top-1/3 -right-40 w-[700px] h-[350px] rotate-[-30deg] bg-gradient-to-r from-transparent via-[#0df5c4]/8 to-transparent blur-2xl" />
+
+        {/* Cyber coordinate grid */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(13,245,196,0.03)_1px,transparent_1px),linear-gradient(to_bottom,rgba(13,245,196,0.03)_1px,transparent_1px)] bg-[size:4rem_4rem] [mask-image:radial-gradient(ellipse_60%_50%_at_50%_40%,#000_70%,transparent_100%)]" />
       </div>
 
-      {/* Floating particles */}
-      {[...Array(8)].map((_, i) => (
-        <motion.span
-          key={i}
-          className="absolute w-1 h-1 rounded-full bg-emerald-accent/30 pointer-events-none"
-          style={{ left: `${10 + i * 11}%`, top: `${18 + (i % 4) * 18}%` }}
-          animate={{ y: [0, -24, 0], opacity: [0.15, 0.55, 0.15] }}
-          transition={{ duration: 5 + i * 0.4, repeat: Infinity, delay: i * 0.35, ease: 'easeInOut' }}
-          aria-hidden
-        />
-      ))}
+      {/* Top Navbar */}
+      <LandingNavbar onOpenLogin={() => setIsLoginModalOpen(true)} />
 
-      <motion.div
-        initial="hidden"
-        animate="visible"
-        className="relative z-10 flex flex-col items-center text-center max-w-2xl"
-      >
-        {/* Logo with glow ring */}
-        <motion.div custom={0} variants={fadeUp} className="relative">
-          <div className="absolute -inset-3 rounded-2xl bg-emerald-accent/10 blur-xl landing-orb" />
-          <div className="relative rounded-2xl ring-1 ring-white/10 shadow-[0_0_40px_rgba(63,199,160,0.12)]">
-            <LogoMark size="xl" priority />
-          </div>
-        </motion.div>
+      {/* Hero Section */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center pt-8 sm:pt-14 pb-8">
+        <div className="w-full max-w-7xl mx-auto px-5 sm:px-8 grid grid-cols-1 lg:grid-cols-12 gap-12 lg:gap-8 items-center">
+          
+          {/* Left Column: Hero Typography & Actions */}
+          <div className="lg:col-span-6 flex flex-col items-start text-left z-20">
+            {/* Pill Tag */}
+            <div className="inline-flex items-center gap-2 px-3.5 py-1.5 rounded-full text-[11px] font-bold uppercase tracking-[0.25em] text-[#0df5c4] bg-[#03201a]/80 border border-[#0df5c4]/30 shadow-[0_0_15px_rgba(13,245,196,0.15)] mb-6">
+              <span>REMOTE</span>
+              <span className="text-white/40">•</span>
+              <span>SMART</span>
+              <span className="text-white/40">•</span>
+              <span>GLOBAL</span>
+            </div>
 
-        {/* Title */}
-        <motion.h1
-          custom={1}
-          variants={fadeUp}
-          className="landing-display landing-title-gradient font-display mt-10 text-glow-emerald"
-        >
-          Global Solutions
-        </motion.h1>
+            {/* Giant Title */}
+            <h1 className="text-4xl sm:text-6xl lg:text-[68px] font-display font-extrabold tracking-tight text-white leading-[1.08] mb-5">
+              <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-[#d2fbf1] to-[#0df5c4] drop-shadow-[0_0_35px_rgba(13,245,196,0.3)]">
+                Global Solutions
+              </span>
+            </h1>
 
-        {/* Tagline */}
-        <motion.div custom={2} variants={fadeUp} className="mt-6 flex flex-col items-center gap-3">
-          <div className="h-px w-24 landing-shimmer-line rounded-full opacity-70" />
-          <p className="type-label-caps flex flex-wrap items-center justify-center gap-x-3 gap-y-1">
-            {TAGLINE.map((word, i) => (
-              <motion.span
-                key={word}
-                initial={{ opacity: 0, y: 8 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: 0.55 + i * 0.1, duration: 0.5 }}
-                className={word === 'Smart' ? 'text-gold-accent text-glow-gold' : 'text-emerald-accent'}
+            {/* Subheading */}
+            <p className="text-xl sm:text-2xl font-display font-semibold text-[#e1f5f0] tracking-tight leading-snug mb-4">
+              Build remote teams. Unlock global talent. Scale your business.
+            </p>
+
+            {/* Body */}
+            <p className="text-sm sm:text-base text-[#8cb2a6] leading-relaxed max-w-xl mb-8">
+              Global Solutions connects you with skilled professionals from around the world,
+              helping you build high-performing teams, work smarter, and achieve more — no borders,
+              no limits.
+            </p>
+
+            {/* CTA Buttons */}
+            <div className="flex flex-wrap items-center gap-4">
+              <button
+                type="button"
+                onClick={() => setIsLoginModalOpen(true)}
+                className="group relative inline-flex items-center gap-2 px-8 py-3.5 rounded-full font-bold text-sm text-[#01241c] bg-[#0df5c4] hover:bg-[#3bf8d1] active:scale-95 transition-all shadow-[0_0_25px_rgba(13,245,196,0.45)] hover:shadow-[0_0_35px_rgba(13,245,196,0.6)]"
               >
-                {word}
-                {i < TAGLINE.length - 1 && (
-                  <span className="text-gold-accent/40 ml-3 hidden sm:inline">·</span>
-                )}
-              </motion.span>
-            ))}
-          </p>
-        </motion.div>
+                <span>Get Started</span>
+                <ArrowRight size={16} strokeWidth={2.5} className="group-hover:translate-x-1 transition-transform" />
+              </button>
 
-        {/* Login CTA */}
-        <motion.div custom={3} variants={fadeUp} className="mt-12">
-          <Link
-            href="/login"
-            prefetch
-            className="group relative inline-flex items-center gap-2.5 px-10 py-3.5 rounded-xl font-bold text-sm overflow-hidden transition-transform hover:scale-[1.02] active:scale-[0.98]"
-          >
-            <span className="absolute inset-0 bg-emerald-accent rounded-xl" />
-            <span className="absolute inset-0 bg-gradient-to-r from-emerald-accent via-emerald-accent to-gold-accent/80 opacity-0 group-hover:opacity-100 transition-opacity duration-500 rounded-xl" />
-            <span className="absolute inset-0 rounded-xl ring-1 ring-gold-accent/30 group-hover:ring-gold-accent/50 transition-all" />
-            <span className="relative text-brand-primary-dark flex items-center gap-2.5">
-              Login
-              <ArrowRight
-                size={17}
-                strokeWidth={2.5}
-                className="transition-transform group-hover:translate-x-1"
-              />
-            </span>
-          </Link>
-        </motion.div>
-      </motion.div>
+              <a
+                href="#features"
+                className="group inline-flex items-center gap-2.5 px-6 py-3.5 rounded-full font-semibold text-sm text-white bg-[#031d17]/80 hover:bg-[#04281f] border border-[#0df5c4]/25 hover:border-[#0df5c4]/50 transition-all shadow-[0_0_20px_rgba(13,245,196,0.1)] active:scale-95"
+              >
+                <div className="w-5 h-5 rounded-full bg-[#0df5c4]/20 flex items-center justify-center text-[#0df5c4]">
+                  <Play size={10} fill="#0df5c4" />
+                </div>
+                <span>Learn More</span>
+              </a>
+            </div>
+          </div>
+
+          {/* Right Column: Holographic Globe & Network */}
+          <div className="lg:col-span-6 flex items-center justify-center z-10 w-full">
+            <HoloGlobe />
+          </div>
+        </div>
+
+        {/* Feature Strip (5 Cards) */}
+        <FeatureStrip />
+
+        {/* Why Global Solutions & Partners */}
+        <WhySection />
+      </main>
+
+      {/* Interactive Login Modal with Autofilled Super Admin */}
+      <LoginModal
+        isOpen={isLoginModalOpen}
+        onClose={() => setIsLoginModalOpen(false)}
+      />
     </div>
   );
 }

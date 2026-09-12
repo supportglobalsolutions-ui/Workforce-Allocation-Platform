@@ -21,7 +21,7 @@ const nextConfig = {
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://*.supabase.co",
+      "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com",
       "connect-src 'self' https://*.supabase.co wss://*.supabase.co wss: ws:",
       "font-src 'self' data:",
       "frame-src 'self'",

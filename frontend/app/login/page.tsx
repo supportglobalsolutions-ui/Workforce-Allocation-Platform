@@ -1,146 +1,84 @@
 'use client';
 
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import Link from 'next/link';
-import { Lock, Mail, AlertCircle, Eye, EyeOff } from 'lucide-react';
-import LogoMark from '@/components/theme/LogoMark';
-import SpinningDots from '@/components/shared/SpinningDots';
-import { useAuth } from '@/lib/auth/AuthProvider';
-import { setAuthRoleCookie } from '@/lib/auth/cookies';
-import { ROLE_LANDING } from '@/lib/navigation/config';
+import LandingNavbar from '@/components/landing/LandingNavbar';
+import LoginCard from '@/components/landing/LoginCard';
+import {
+  GlobalWorkforceCard,
+  GlobalReachCard,
+  RemoteTeamsCard,
+  ProjectsDeliveredCard,
+  FeaturePillList,
+} from '@/components/landing/FloatingWidgets';
 
 export default function LoginPage() {
-  const { login, session, isLoading } = useAuth();
-  const router = useRouter();
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
-  const [error, setError] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
-
-  useEffect(() => {
-    if (!session) return;
-    setAuthRoleCookie(session.authRole);
-    router.replace(ROLE_LANDING[session.primaryPortal]);
-  }, [session, router]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loading) return;
-    setError('');
-    setLoading(true);
-    const result = await login(email, password);
-    if (!result.ok) setError(result.error ?? 'Login failed.');
-    setLoading(false);
-  };
-
-  if (isLoading) {
-    return (
-      <div className="flex-1 flex items-center justify-center p-6">
-        <SpinningDots size="lg" className="text-emerald-accent" />
-      </div>
-    );
-  }
-
   return (
-    <div className="flex-1 flex items-center justify-center p-6">
-      <div className="relative z-10 w-full max-w-md glass-modal p-8 md:p-10">
-        <div className="flex flex-col items-center mb-8">
-          <LogoMark size="md" />
-          <h1 className="type-headline-md text-theme-heading mt-6 font-display">
-            Global Solutions
+    <div className="relative min-h-screen w-full flex flex-col bg-[#010e0b] text-white overflow-x-hidden selection:bg-[#0df5c4]/30 selection:text-white">
+      {/* Background Cyber Earth & Ray Atmosphere */}
+      <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
+        {/* Deep ambient glow */}
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,rgba(3,40,32,0.06)_50%,transparent_80%)] blur-3xl" />
+        
+        {/* Diagonal cyber light streaks */}
+        <div className="absolute -top-10 -left-32 w-[500px] h-[250px] rotate-[-25deg] bg-gradient-to-r from-transparent via-[#0df5c4]/10 to-transparent blur-2xl" />
+        <div className="absolute top-1/4 -right-32 w-[600px] h-[300px] rotate-[-30deg] bg-gradient-to-r from-transparent via-[#0df5c4]/8 to-transparent blur-2xl" />
+
+        {/* Curved luminous Earth Horizon at the bottom (matching Image 1) */}
+        <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-[1400px] h-[600px] rounded-[100%] bg-[radial-gradient(ellipse_at_center,#062b23_0%,#02120e_55%,#010a08_100%)] border-t border-[#0df5c4]/30 shadow-[0_-20px_80px_rgba(13,245,196,0.15)] opacity-90" />
+
+        {/* Star grid / node coordinates */}
+        <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(13,245,196,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(13,245,196,0.02)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
+      </div>
+
+      {/* Top Navbar */}
+      <LandingNavbar variant="login" />
+
+      {/* Main Content */}
+      <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-10 sm:py-14">
+        {/* Welcome Header */}
+        <div className="text-center max-w-xl mx-auto mb-8 sm:mb-10">
+          <div className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#0df5c4] mb-2">
+            WELCOME TO
+          </div>
+          <h1 className="text-4xl sm:text-5xl lg:text-6xl font-display font-extrabold text-white tracking-tight leading-tight">
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-white via-[#d2fbf1] to-[#0df5c4] drop-shadow-[0_0_25px_rgba(13,245,196,0.3)]">
+              Global Solutions
+            </span>
           </h1>
-          <p className="type-label-caps mt-3 text-theme-muted">
-            <span className="text-emerald-accent">Remote</span>
-            <span className="text-gold-accent/60 mx-1.5">·</span>
-            <span className="text-gold-accent">Smart</span>
-            <span className="text-gold-accent/60 mx-1.5">·</span>
-            <span className="text-emerald-accent">Global</span>
+          <p className="text-xs sm:text-sm font-bold uppercase tracking-[0.25em] text-[#0df5c4] mt-2">
+            REMOTE • SMART • GLOBAL
+          </p>
+          <p className="text-xs sm:text-sm text-[#8cb2a6] mt-2 max-w-md mx-auto">
+            Connect talent. Empower teams. Build a smarter, more connected world.
           </p>
         </div>
 
-        <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
-              Email
-            </label>
-            <div className="relative">
-              <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent/70" />
-              <input
-                type="email"
-                required
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@globalsolutions.com"
-                className="input-field pl-10"
-              />
-            </div>
+        {/* Central Display: Login Card + Floating Surrounding Widgets (Image 1 Layout) */}
+        <div className="relative w-full max-w-6xl mx-auto flex items-center justify-center">
+          {/* Left Column Widgets (Large screens) */}
+          <div className="hidden xl:flex flex-col gap-8 w-72 shrink-0 pr-4">
+            <GlobalWorkforceCard className="hover:scale-[1.02] transition-transform" />
+            <GlobalReachCard className="hover:scale-[1.02] transition-transform" />
           </div>
 
-          <div>
-            <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">
-              Password
-            </label>
-            <div className="relative">
-              <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent/70 pointer-events-none" />
-              <input
-                type={showPassword ? 'text' : 'password'}
-                required
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                className="input-field pl-10 pr-10"
-              />
-              <button
-                type="button"
-                onClick={() => setShowPassword((v) => !v)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-theme-muted hover:text-emerald-accent transition-colors"
-                aria-label={showPassword ? 'Hide password' : 'Show password'}
-              >
-                {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-              </button>
-            </div>
+          {/* Central Login Card (with autofilled Super Admin) */}
+          <div className="w-full flex justify-center px-2">
+            <LoginCard />
           </div>
 
-          <div className="flex justify-end">
-            <Link href="/reset-password" prefetch className="text-xs text-gold-accent hover:underline font-medium">
-              Forgot password?
-            </Link>
+          {/* Right Column Widgets (Large screens) */}
+          <div className="hidden xl:flex flex-col gap-5 w-72 shrink-0 pl-4">
+            <RemoteTeamsCard className="hover:scale-[1.02] transition-transform" />
+            <ProjectsDeliveredCard className="hover:scale-[1.02] transition-transform" />
+            <FeaturePillList />
           </div>
+        </div>
 
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
-              <AlertCircle size={14} />
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={loading}
-            className={`w-full flex items-center justify-center gap-2 py-3 disabled:opacity-60 ${
-              loading ? 'btn-secondary' : 'btn-primary'
-            }`}
-          >
-            {loading ? (
-              <SpinningDots size="md" className="text-emerald-accent" />
-            ) : (
-              <>
-                <Lock size={16} />
-                Sign In
-              </>
-            )}
-          </button>
-        </form>
-
-        <p className="text-center text-sm text-theme-muted mt-6">
-          New here?{' '}
-          <Link href="/signup" className="text-emerald-accent hover:underline font-medium">
-            Create an account
-          </Link>
-        </p>
-      </div>
+        {/* Responsive Grid for tablets/mobile below the card */}
+        <div className="xl:hidden w-full max-w-md mt-10 space-y-4">
+          <GlobalWorkforceCard />
+          <RemoteTeamsCard />
+        </div>
+      </main>
     </div>
   );
 }
