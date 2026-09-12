@@ -87,8 +87,28 @@ def main() -> int:
     cfg = Config(str(BACKEND / "alembic.ini"))
     cfg.set_main_option("script_location", str(BACKEND / "migrations"))
     command.stamp(cfg, "head")
-
     print(f"alembic revision now      : {current_revision()}")
+
+    # Freshly created tables have RLS off, which Supabase flags as a security
+    # error and which would expose them through the Data API.
+    print("\napplying row level security...")
+    rls = BACKEND / "scripts" / "rls_policies.sql"
+    if rls.is_file():
+        with engine.connect() as c:
+            raw = c.connection.dbapi_connection
+            with raw.cursor() as cur:
+                cur.execute(rls.read_text(encoding="utf-8"))
+            raw.commit()
+            missing = c.execute(text("""
+                SELECT count(*) FROM pg_class c
+                JOIN pg_namespace n ON n.oid = c.relnamespace
+                WHERE n.nspname = 'public' AND c.relkind = 'r'
+                  AND NOT c.relrowsecurity
+            """)).scalar()
+        print(f"RLS missing on            : {missing} table(s)")
+    else:
+        print("WARNING: scripts/rls_policies.sql not found - RLS NOT applied")
+
     print("\nSchema bootstrap complete.")
     return 0
 
