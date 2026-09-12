@@ -7,8 +7,8 @@ import { UserPlus, Mail, Lock, AlertCircle, CheckCircle, Eye, EyeOff } from 'luc
 import LogoMark from '@/components/theme/LogoMark';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
-import { apiRegisterUser } from '@/lib/auth/firebase-auth';
-import { getFirebaseAuthErrorMessage } from '@/lib/auth/errors';
+import { apiRegisterUser } from '@/lib/auth/supabase-auth';
+import { getAuthErrorMessage } from '@/lib/auth/errors';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 
 export default function SignupPage() {
@@ -36,7 +36,7 @@ export default function SignupPage() {
       await apiRegisterUser(email, password, displayName);
       setSubmitted(true);
     } catch (err: unknown) {
-      setError(getFirebaseAuthErrorMessage(err));
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }

@@ -1,6 +1,4 @@
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { doc, setDoc, serverTimestamp } from 'firebase/firestore';
-import { storage, db, auth } from './firebase';
+import { supabase } from './supabase';
 import { api } from './api';
 
 const ALLOWED_TYPES = ['image/jpeg', 'image/jpg', 'image/png', 'image/webp'];
@@ -63,45 +61,41 @@ function compressImage(file: File, onProgress?: (pct: number) => void): Promise<
 }
 
 /**
- * Upload compressed blob to Firebase Storage.
+ * Upload compressed blob to Supabase Storage.
  * Progress callback: 30 → 85 %.
  */
-function uploadToStorage(
+async function uploadToStorage(
   sessionId: string,
   imageType: 'start' | 'end',
   blob: Blob,
   onProgress?: (pct: number) => void,
 ): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const storageRef = ref(storage, `session-images/${sessionId}/${imageType}.jpg`);
-    const task = uploadBytesResumable(storageRef, blob, { contentType: 'image/jpeg' });
+  onProgress?.(50);
+  const path = `${sessionId}/${imageType}.jpg`;
+  const { error } = await supabase.storage
+    .from('session-images')
+    .upload(path, blob, {
+      contentType: 'image/jpeg',
+      upsert: true,
+    });
 
-    task.on(
-      'state_changed',
-      (snap) => {
-        if (snap.totalBytes > 0) {
-          const pct = Math.round(30 + (snap.bytesTransferred / snap.totalBytes) * 55);
-          onProgress?.(pct);
-        }
-      },
-      reject,
-      async () => {
-        try { resolve(await getDownloadURL(task.snapshot.ref)); }
-        catch (e) { reject(e); }
-      },
-    );
-  });
+  if (error) {
+    throw error;
+  }
+
+  onProgress?.(80);
+  const { data: urlData } = supabase.storage.from('session-images').getPublicUrl(path);
+  return urlData.publicUrl;
 }
 
 /**
  * Full pipeline:
  *   1. Validate original file (max 2 MB)
  *   2. Compress — resize to 1400 px longest edge, re-encode JPEG at 0.82
- *   3. Upload to Firebase Storage → get download URL
- *   4. Mirror URL to Firestore (session_images/{sessionId})
- *   5. Persist URL to PostgreSQL via PATCH /sessions/{id}
+ *   3. Upload to Supabase Storage → get public URL
+ *   4. Persist URL to PostgreSQL via PATCH /sessions/{id}
  *
- * Returns the Firebase Storage download URL (used directly as <img src>).
+ * Returns the Supabase Storage download URL (used directly as <img src>).
  */
 export async function uploadSessionImage(
   sessionId: string,
@@ -114,33 +108,15 @@ export async function uploadSessionImage(
 
   onProgress?.(0);
 
-  // 1 — compress in browser  (0 → 30 %)
+  // 1 — compress in browser (0 → 30 %)
   const compressed = await compressImage(file, onProgress);
 
-  const firebaseUid = auth.currentUser?.uid;
-  if (!firebaseUid) throw new Error('You must be signed in to upload session images');
-
-  // Register ownership before Storage rules check the Firestore doc.
-  await setDoc(
-    doc(db, 'session_images', sessionId),
-    { firebase_uid: firebaseUid, updated_at: serverTimestamp() },
-    { merge: true },
-  );
-
-  // 2 — upload to Firebase Storage  (30 → 85 %)
+  // 2 — upload to Supabase Storage (30 → 85 %)
   const downloadUrl = await uploadToStorage(sessionId, imageType, compressed, onProgress);
 
-  // 3 — mirror URL to Firestore  (85 → 92 %)
-  onProgress?.(85);
+  // 3 — persist URL to PostgreSQL (85 → 100 %)
+  onProgress?.(90);
   const field = `${imageType}_image_url` as const;
-  await setDoc(
-    doc(db, 'session_images', sessionId),
-    { firebase_uid: firebaseUid, [field]: downloadUrl, updated_at: serverTimestamp() },
-    { merge: true },
-  );
-
-  // 4 — persist URL to PostgreSQL  (92 → 100 %)
-  onProgress?.(92);
   await api.patch(`/sessions/${sessionId}`, { [field]: downloadUrl });
 
   onProgress?.(100);

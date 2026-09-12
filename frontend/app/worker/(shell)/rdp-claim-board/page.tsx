@@ -3,13 +3,11 @@
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { collection, onSnapshot } from 'firebase/firestore';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { api } from '@/lib/api';
-import { db, COLLECTIONS } from '@/lib/firebase';
 import { claimRdp, getMyActiveRdp, type MyActiveRdp } from '@/lib/rdp';
 
 interface RDPResource {
@@ -61,41 +59,12 @@ export default function RdpClaimBoard() {
     }
   }, []);
 
-  useEffect(() => { loadMachines(); }, [loadMachines]);
-
-  // Firestore realtime status overlay — only after Firebase Auth is ready.
+  // Initial load and periodic refresh every 10 seconds
   useEffect(() => {
-    if (authLoading || !session) return;
-
-    const unsub = onSnapshot(
-      collection(db, COLLECTIONS.RDP_STATUS),
-      (snap) => {
-        const live: Record<string, { status: string; worker_id: string | null }> = {};
-        snap.forEach((doc) => {
-          const data = doc.data();
-          live[doc.id] = {
-            status: String(data.status ?? ''),
-            worker_id: data.worker_id ? String(data.worker_id) : null,
-          };
-        });
-        setMachines((prev) =>
-          prev.map((m) => {
-            const row = live[m.id];
-            if (!row?.status) return m;
-            return {
-              ...m,
-              status: row.status,
-              assigned_worker_id: row.worker_id ?? m.assigned_worker_id,
-            };
-          }),
-        );
-      },
-      (err) => {
-        console.warn('rdp_status listener:', err.message);
-      },
-    );
-    return () => unsub();
-  }, [authLoading, session]);
+    loadMachines();
+    const interval = setInterval(loadMachines, 10000);
+    return () => clearInterval(interval);
+  }, [loadMachines]);
 
   useEffect(() => {
     let ch: BroadcastChannel | null = null;

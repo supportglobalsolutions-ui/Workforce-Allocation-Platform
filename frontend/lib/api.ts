@@ -1,21 +1,23 @@
 /**
  * Typed fetch client for the FastAPI backend.
  * All requests go through the Next.js /api reverse proxy (next.config.js rewrites).
- * Every call automatically attaches the Firebase ID token as a Bearer header.
+ * Every call automatically attaches the Supabase access token as a Bearer header.
  */
-import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 
 const BASE = '/api';
 const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 
 async function getToken(forceRefresh = false): Promise<string | null> {
   // In test mode the backend supplies the fixed development identity.
-  // Avoid contacting Firebase, so a suspended Firebase project cannot block
-  // PostgreSQL-backed admin pages.
   if (DEV_AUTH_BYPASS) return null;
 
-  await auth.authStateReady();
-  return auth.currentUser?.getIdToken(forceRefresh) ?? null;
+  if (forceRefresh) {
+    const { data } = await supabase.auth.refreshSession();
+    return data.session?.access_token ?? null;
+  }
+  const { data } = await supabase.auth.getSession();
+  return data.session?.access_token ?? null;
 }
 
 

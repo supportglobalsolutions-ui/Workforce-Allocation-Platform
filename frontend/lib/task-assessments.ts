@@ -1,11 +1,9 @@
 /**
  * Task assessment data layer.
- * Reads from Firestore first; falls back to the REST API on any error.
- * Writes always go through the API (backend syncs to Firestore after commit).
+ * All records are canonical in PostgreSQL and served via the FastAPI REST API.
+ * Media files are stored in Supabase Storage.
  */
-import { collection, getDocs, query, where, orderBy } from 'firebase/firestore';
-import { ref, uploadBytesResumable, getDownloadURL, deleteObject } from 'firebase/storage';
-import { db, storage, COLLECTIONS } from './firebase';
+import { supabase } from './supabase';
 import { api } from './api';
 
 export type MediaType = 'image' | 'video';
@@ -57,41 +55,17 @@ export interface TaskResult {
   worker_country:        string;
 }
 
-// ── Read (Firestore-first) ────────────────────────────────────────────────────
+// ── Read operations ─────────────────────────────────────────────────────────
 
 export async function fetchTaskAssessments(): Promise<TaskAssessment[]> {
-  try {
-    const snap = await getDocs(
-      query(collection(db, COLLECTIONS.TASK_ASSESSMENTS), orderBy('title'))
-    );
-    if (!snap.empty) {
-      return snap.docs.map((d) => ({ result_count: 0, ...d.data() } as TaskAssessment));
-    }
-  } catch {
-    // Firestore unavailable or empty — fall through to API
-  }
   return api.get<TaskAssessment[]>('/task-assessments');
 }
 
 export async function fetchTaskResults(assessmentId: string): Promise<TaskResult[]> {
-  try {
-    const snap = await getDocs(
-      query(
-        collection(db, COLLECTIONS.TASK_RESULTS),
-        where('task_assessment_id', '==', assessmentId),
-        orderBy('created_at', 'desc'),
-      )
-    );
-    if (!snap.empty) {
-      return snap.docs.map((d) => d.data() as TaskResult);
-    }
-  } catch {
-    // fall through
-  }
   return api.get<TaskResult[]>(`/task-assessments/${assessmentId}/results`);
 }
 
-// ── Firebase Storage upload ───────────────────────────────────────────────────
+// ── Supabase Storage upload ─────────────────────────────────────────────────
 
 export interface UploadProgress {
   name: string;
@@ -102,32 +76,38 @@ export async function uploadTaskMedia(
   file: File,
   onProgress?: (p: UploadProgress) => void,
 ): Promise<TaskMedia> {
-  const ext          = file.name.split('.').pop() ?? '';
   const safeTimestamp = Date.now();
-  const storagePath  = `task-assessments/uploads/${safeTimestamp}-${file.name}`;
-  const storageRef   = ref(storage, storagePath);
+  const storagePath = `uploads/${safeTimestamp}-${file.name}`;
   const mediaType: MediaType = file.type.startsWith('video/') ? 'video' : 'image';
 
-  return new Promise((resolve, reject) => {
-    const task = uploadBytesResumable(storageRef, file);
-    task.on(
-      'state_changed',
-      (snap) => {
-        const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
-        onProgress?.({ name: file.name, progress: pct });
-      },
-      reject,
-      async () => {
-        const url = await getDownloadURL(task.snapshot.ref);
-        resolve({ type: mediaType, url, name: file.name, storage_path: storagePath });
-      },
-    );
-  });
+  onProgress?.({ name: file.name, progress: 30 });
+
+  const { error } = await supabase.storage
+    .from('task-media')
+    .upload(storagePath, file, {
+      contentType: file.type || 'application/octet-stream',
+      upsert: true,
+    });
+
+  if (error) {
+    throw error;
+  }
+
+  onProgress?.({ name: file.name, progress: 90 });
+  const { data: urlData } = supabase.storage.from('task-media').getPublicUrl(storagePath);
+  onProgress?.({ name: file.name, progress: 100 });
+
+  return {
+    type: mediaType,
+    url: urlData.publicUrl,
+    name: file.name,
+    storage_path: storagePath,
+  };
 }
 
 export async function deleteTaskMedia(storagePath: string): Promise<void> {
   try {
-    await deleteObject(ref(storage, storagePath));
+    await supabase.storage.from('task-media').remove([storagePath]);
   } catch {
     // best-effort; Postgres record is the truth
   }

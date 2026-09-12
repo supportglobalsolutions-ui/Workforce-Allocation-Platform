@@ -1,12 +1,7 @@
 'use client';
 
-import {
-  signInWithEmailAndPassword,
-  signOut as fbSignOut,
-  onAuthStateChanged,
-  type User,
-} from 'firebase/auth';
-import { auth } from '@/lib/firebase';
+import type { User } from '@supabase/supabase-js';
+import { supabase } from '@/lib/supabase';
 import { syncSessionCookie, clearSessionCookie } from './session-cookie';
 import {
   AuthRole,
@@ -39,10 +34,12 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
     localStorage.setItem(DEV_KEY, JSON.stringify(session));
     return session;
   }
-  const { user } = await signInWithEmailAndPassword(auth, email, password);
-  const idToken = await user.getIdToken(true);
-  await syncSessionCookie(idToken);
-  return sessionFromUser(user);
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+  if (error || !data.user || !data.session) {
+    throw error || new Error('Login failed');
+  }
+  await syncSessionCookie(data.session.access_token);
+  return sessionFromUser(data.user, data.session.access_token);
 }
 
 export async function signOut(): Promise<void> {
@@ -51,16 +48,23 @@ export async function signOut(): Promise<void> {
     return;
   }
   await clearSessionCookie();
-  await fbSignOut(auth);
+  await supabase.auth.signOut();
 }
 
-export async function sessionFromUser(user: User): Promise<AuthSession> {
-  const token = await user.getIdTokenResult(/* forceRefresh */ true);
-  const role = (token.claims['role'] as AuthRole | undefined) ?? 'user';
+export async function sessionFromUser(user: User, _accessToken?: string): Promise<AuthSession> {
+  const appMeta = user.app_metadata || {};
+  const userMeta = user.user_metadata || {};
+  const role = (appMeta.role as AuthRole | undefined) ?? 'user';
+  const displayName =
+    (userMeta.display_name as string) ||
+    (userMeta.full_name as string) ||
+    user.email?.split('@')[0] ||
+    user.id;
+
   return {
-    uid: user.uid,
+    uid: user.id,
     email: user.email ?? '',
-    displayName: user.displayName ?? (user.email?.split('@')[0] ?? user.uid),
+    displayName,
     authRole: role,
     primaryPortal: ROLE_TO_PORTAL[role],
     allowedPortals: ROLE_ALLOWED_PORTALS[role],
@@ -75,20 +79,38 @@ export function subscribeAuthState(
     callback(stored ? (JSON.parse(stored) as AuthSession) : null);
     return () => {};
   }
-  return onAuthStateChanged(auth, async (user) => {
-    if (!user) {
+
+  // Initial session check
+  supabase.auth.getSession().then(async ({ data: { session } }) => {
+    if (session?.user) {
+      try {
+        await syncSessionCookie(session.access_token);
+        callback(await sessionFromUser(session.user, session.access_token));
+      } catch {
+        callback(null);
+      }
+    } else {
+      callback(null);
+    }
+  });
+
+  const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (event === 'SIGNED_OUT' || !session?.user) {
       await clearSessionCookie();
       callback(null);
       return;
     }
     try {
-      const idToken = await user.getIdToken(true);
-      await syncSessionCookie(idToken);
-      callback(await sessionFromUser(user));
+      await syncSessionCookie(session.access_token);
+      callback(await sessionFromUser(session.user, session.access_token));
     } catch {
       callback(null);
     }
   });
+
+  return () => {
+    subscription.unsubscribe();
+  };
 }
 
 // ── Backend API helpers ────────────────────────────────────────────────────

@@ -12,7 +12,7 @@ import {
   apiBanWorker,
   apiGetAccountStatus,
   apiUnbanWorker,
-} from '@/lib/auth/firebase-auth';
+} from '@/lib/auth/supabase-auth';
 import { ensurePartnerEntity, PartnerEntity } from '@/lib/partners';
 
 export interface AdminWorker {

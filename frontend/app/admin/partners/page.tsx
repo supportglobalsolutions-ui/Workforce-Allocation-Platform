@@ -12,7 +12,7 @@ import {
   ManagedUser,
   apiListUsers,
   apiUpdateUserRole,
-} from '@/lib/auth/firebase-auth';
+} from '@/lib/auth/supabase-auth';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, assignableRoles } from '@/lib/auth/config';
 

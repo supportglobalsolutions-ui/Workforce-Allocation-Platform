@@ -1,7 +1,7 @@
 'use client';
 
-// Firebase Auth manages its own session persistence via onAuthStateChanged.
-// This file is kept for import compatibility but all storage is handled by Firebase.
+// Supabase Auth manages its own session persistence via onAuthStateChange.
+// This file is kept for import compatibility but all storage is handled by Supabase.
 
 export function readStoredSession() { return null; }
 export function writeStoredSession(_session: unknown) {}

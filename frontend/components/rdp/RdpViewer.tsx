@@ -2,7 +2,7 @@
 
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
-import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -46,16 +46,16 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
 
     (async () => {
       try {
-        // Fetch Guacamole module and Firebase token in parallel.
-        const [Guacamole, idToken] = await Promise.all([
+        // Fetch Guacamole module and Supabase token in parallel.
+        const [Guacamole, sessionData] = await Promise.all([
           import('guacamole-common-js').then((m) => m.default),
-          auth.currentUser
-            ? auth.currentUser.getIdToken()
-            : Promise.reject(new Error('Not signed in.')),
+          supabase.auth.getSession(),
         ]);
+        const idToken = sessionData.data.session?.access_token;
+        if (!idToken) throw new Error('Not signed in.');
 
         // Build WS URL: backend proxies to Guacamole, keeping the Guacamole
-        // auth token server-side. Only the Firebase ID token crosses the wire.
+        // auth token server-side. Only the Supabase access token crosses the wire.
         const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
         const wsBase = apiUrl.replace(/^http/, 'ws');
         const wsTunnelUrl = `${wsBase}/rdp/${rdpId}/ws-tunnel`;

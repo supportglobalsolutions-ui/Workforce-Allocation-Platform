@@ -394,7 +394,7 @@ function ClientForm({
         </div>
         <div className="sm:col-span-2">
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Documents</label>
-          <p className="text-xs text-theme-muted mb-2">Paste Firebase Storage or Drive links.</p>
+          <p className="text-xs text-theme-muted mb-2">Paste document or Drive links.</p>
           <div className="space-y-2">
             {form.document_urls.map((url, i) => (
               <div key={i} className="flex items-center gap-2">

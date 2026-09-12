@@ -9,9 +9,9 @@ import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
 const PLATFORM = [
-  { name: 'Firebase Auth', status: 'Connected' },
+  { name: 'Supabase Auth', status: 'Connected' },
   { name: 'PostgreSQL', status: 'Connected' },
-  { name: 'Firebase Real-time Board', status: 'Active' },
+  { name: 'Supabase Database & Realtime', status: 'Active' },
   { name: 'Guacamole RDP Gateway', status: 'Active' },
 ] as const;
 

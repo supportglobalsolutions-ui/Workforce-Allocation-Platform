@@ -5,13 +5,11 @@ const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
   compress: true,
-  transpilePackages: ['framer-motion', 'firebase'],
+  transpilePackages: ['framer-motion'],
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
   webpack: (config) => {
-    // Firebase sub-packages (e.g. firebase/firestore) import @firebase/* peers.
-    // Resolve from the project root so nested firebase/node_modules does not shadow them.
     config.resolve.modules = [
       path.resolve(__dirname, 'node_modules'),
       ...(config.resolve.modules ?? ['node_modules']),
@@ -23,8 +21,8 @@ const nextConfig = {
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
-      "img-src 'self' data: blob: https://firebasestorage.googleapis.com https://*.firebasestorage.app https://*.googleapis.com",
-      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com wss: ws:",
+      "img-src 'self' data: blob: https://*.supabase.co",
+      "connect-src 'self' https://*.supabase.co wss://*.supabase.co wss: ws:",
       "font-src 'self' data:",
       "frame-src 'self'",
       "object-src 'none'",

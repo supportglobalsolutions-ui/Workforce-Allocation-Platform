@@ -17,7 +17,7 @@ import {
   apiRejectUser,
   apiUnbanUser,
   apiUpdateUserRole,
-} from '@/lib/auth/firebase-auth';
+} from '@/lib/auth/supabase-auth';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 
@@ -837,7 +837,7 @@ export default function AccountsPage() {
         <div className="glass-panel p-6 mb-5">
           <h2 className="text-sm font-bold text-white mb-1">New account</h2>
           <p className="text-xs text-theme-muted mb-4">
-            Choose a role — it is written as a Firebase custom claim on create so portal access matches immediately.
+            Choose a role — it is saved to Supabase user metadata on create so portal access matches immediately.
             For Partner logins, use Add Partner.
           </p>
           <form onSubmit={handleCreate} className="grid sm:grid-cols-2 gap-4">

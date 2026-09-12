@@ -599,15 +599,11 @@ Certbot will configure HTTPS redirects automatically. Confirm in your local brow
 | :--- | :--- | :--- |
 | `NEXT_PUBLIC_API_URL` | `https://api.yourdomain.com` | Hetzner backend API |
 | `NEXT_PUBLIC_GUACAMOLE_URL` | `https://guac.yourdomain.com` | Guacamole RDP gateway |
+| `NEXT_PUBLIC_SUPABASE_URL` | `https://your-project.supabase.co` | Supabase Project URL |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | *(Your Supabase Anon / Public Key)* | Supabase Client SDK Key |
 | `SESSION_COOKIE_SECRET` | *(Same hex string as in Hetzner `.env`)* | Signs session cookie |
 | `OTP_PEPPER` | *(Same hex string as in Hetzner `.env`)* | Verifies cookie signature |
 | `NEXT_PUBLIC_DEV_AUTH_BYPASS` | `false` | Production security |
-| `NEXT_PUBLIC_FIREBASE_API_KEY` | *(Your Firebase Web API Key)* | Client Auth |
-| `NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN` | `your-app.firebaseapp.com` | Client Auth Domain |
-| `NEXT_PUBLIC_FIREBASE_PROJECT_ID` | `your-app` | Project ID |
-| `NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET` | `your-app.firebasestorage.app` | Storage Bucket |
-| `NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID` | `...` | Messaging Sender ID |
-| `NEXT_PUBLIC_FIREBASE_APP_ID` | `1:...` | App ID |
 
 5. Click **Deploy**.
 6. Under **Project Settings > Domains**, assign your custom domain: `app.yourdomain.com` (point a `CNAME` record to `cname.vercel-dns.com`).

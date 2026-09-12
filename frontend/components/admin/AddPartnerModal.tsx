@@ -7,7 +7,7 @@ import {
   ManagedUser,
   apiApproveUser,
   apiCreateUser,
-} from '@/lib/auth/firebase-auth';
+} from '@/lib/auth/supabase-auth';
 import { ROLE_DISPLAY, AuthRole } from '@/lib/auth/config';
 import { ensurePartnerEntity } from '@/lib/partners';
 

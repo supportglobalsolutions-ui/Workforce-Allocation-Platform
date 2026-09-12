@@ -3,10 +3,9 @@
 import { createContext, useCallback, useContext, useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { AuthSession, canAccessPortal } from './config';
-import { signIn, signOut, subscribeAuthState, apiGetAccountStatus } from './firebase-auth';
+import { signIn, signOut, subscribeAuthState, apiGetAccountStatus } from './supabase-auth';
 import { clearAuthRoleCookie } from './cookies';
-import { getFirebaseAuthErrorMessage } from './errors';
-import { FirebaseError } from 'firebase/app';
+import { getAuthErrorMessage } from './errors';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 import { logoutBlockReason } from '@/lib/logout-guard';
@@ -68,8 +67,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       return { ok: true as const };
     } catch (err: unknown) {
       const isDisabled =
-        (err instanceof FirebaseError && err.code === 'auth/user-disabled') ||
-        (err instanceof Error && err.message.includes('user-disabled'));
+        err instanceof Error &&
+        (err.message.includes('user-disabled') ||
+         err.message.includes('disabled') ||
+         err.message.includes('banned') ||
+         err.message.includes('awaiting'));
 
       if (isDisabled) {
         try {
@@ -89,7 +91,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         return { ok: false as const, error: 'Your account has been disabled. Contact an administrator.' };
       }
 
-      return { ok: false as const, error: getFirebaseAuthErrorMessage(err) };
+      return { ok: false as const, error: getAuthErrorMessage(err) };
     }
   }, [router]);
 

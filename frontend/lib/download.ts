@@ -1,16 +1,16 @@
 /**
  * Authenticated file download helper for CSV / PDF / ZIP endpoints.
- * Attaches the Firebase bearer token, fetches through the /api proxy,
+ * Attaches the Supabase bearer token, fetches through the /api proxy,
  * and triggers a browser download of the resulting blob.
  */
-import { auth } from '@/lib/firebase';
+import { supabase } from '@/lib/supabase';
 
 const DEV_AUTH_BYPASS = process.env.NEXT_PUBLIC_DEV_AUTH_BYPASS === 'true';
 
 async function authHeaders(): Promise<HeadersInit> {
   if (DEV_AUTH_BYPASS) return {};
-  await auth.authStateReady();
-  const token = await auth.currentUser?.getIdToken();
+  const { data } = await supabase.auth.getSession();
+  const token = data.session?.access_token;
   return token ? { Authorization: `Bearer ${token}` } : {};
 }
 
