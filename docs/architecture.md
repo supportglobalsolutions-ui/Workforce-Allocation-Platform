@@ -25,7 +25,7 @@ globalsolutions-platform/
 │       │   │   ├── page.tsx        ← shift submission
 │       │   │   └── [id]/page.tsx
 │       │   ├── rdp/
-│       │   │   └── page.tsx        ← RDP claim board (Firebase live)
+│       │   │   └── page.tsx        ← RDP claim board (real-time live)
 │       │   ├── sessions/
 │       │   │   └── page.tsx        ← session history
 │       │   ├── quality/
@@ -62,9 +62,9 @@ globalsolutions-platform/
 │       │   ├── admin/
 │       │   └── leadership/
 │       └── lib/
-│           ├── firebase.ts             ← Firebase init (real-time display only)
+│           ├── supabase.ts             ← Supabase client init
 │           ├── api.ts                  ← axios client → FastAPI
-│           └── auth.ts                 ← Firebase Auth token helpers
+│           └── auth/                   ← Supabase Auth helpers
 ├── ── BACKEND (FastAPI) ───────────────────────────────────
 ├── backend/
 │   ├── .env.example
@@ -72,7 +72,7 @@ globalsolutions-platform/
 │   ├── main.py                     ← FastAPI app entry
 │   ├── core/
 │   │   ├── config.py               ← env var loading
-│   │   ├── security.py             ← Firebase token verification
+│   │   ├── supabase_auth.py        ← Supabase token verification & admin
 │   │   ├── permissions.py          ← role-based access logic
 │   │   └── database.py             ← PostgreSQL connection (SQLAlchemy)
 │   ├── routers/
@@ -106,8 +106,7 @@ globalsolutions-platform/
 │   │   ├── payroll_engine.py       ← percentage splits, exception flags
 │   │   ├── quality_engine.py       ← 50/50 composite score
 │   │   ├── session_engine.py       ← session rules, heartbeat
-│   │   ├── audit_service.py        ← write-only audit entries
-│   │   └── firebase_mirror.py      ← mirror state to Firebase (PG commit first)
+│   │   └── audit_service.py        ← write-only audit entries
 │   └── migrations/                 ← Alembic DB migrations
 │       └── versions/
 ├── infrastructure/

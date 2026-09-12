@@ -11,7 +11,7 @@ Use a real inbox — Resend rejects @example.com / @test.com (and similar reserv
 Re-running with a deliverable --email also migrates any prior test-worker@example.com row.
 
 What it does (idempotent — safe to re-run):
-  1. Ensures an admin_users login row exists for --email (test-only firebase_uid).
+  1. Ensures an admin_users login row exists for --email (test-only auth_user_id).
   2. Ensures a workers profile linked to that login row.
   3. Ensures a payroll period covering today exists (status = calculated).
   4. Creates/updates that worker's PayrollWorkerSummary with sample amounts.
@@ -58,7 +58,7 @@ def seed(email: str, name: str, country: str, currency: str, net: Decimal) -> No
     with Session(engine) as db:
         # Migrate earlier seed rows that used @example.com (Resend cannot deliver there).
         for stale in db.exec(
-            select(AdminUser).where(AdminUser.firebase_uid.like("test-worker-%"))
+            select(AdminUser).where(AdminUser.auth_user_id.like("test-worker-%"))
         ).all():
             if stale.email.lower() != email.lower() and blocked_recipient_reason(stale.email):
                 print(f"[~] updating stale test login {stale.email} → {email}")
@@ -71,11 +71,11 @@ def seed(email: str, name: str, country: str, currency: str, net: Decimal) -> No
         admin = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
         if not admin:
             admin = db.exec(
-                select(AdminUser).where(AdminUser.firebase_uid.like("test-worker-%"))
+                select(AdminUser).where(AdminUser.auth_user_id.like("test-worker-%"))
             ).first()
         if not admin:
             admin = AdminUser(
-                firebase_uid=f"test-worker-{email}",
+                auth_user_id=f"test-worker-{email}",
                 email=email,
                 role=AdminRoleEnum.technical_admin,
                 display_name=name,

@@ -1061,7 +1061,7 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
 
         if not is_admin:
             admin_user = db.exec(
-                select(AdminUser).where(AdminUser.firebase_uid == uid)
+                select(AdminUser).where(AdminUser.auth_user_id == uid)
             ).first()
             worker = (
                 db.exec(select(Worker).where(Worker.admin_user_id == admin_user.id)).first()

@@ -80,25 +80,14 @@ GUACAMOLE_URL=http://localhost:8080/guacamole
 GUACAMOLE_USERNAME=guacadmin
 GUACAMOLE_PASSWORD=guacadmin
 
-# Firebase
-FIREBASE_CREDENTIALS_PATH=./firebase-service-account.json
-FIREBASE_PROJECT_ID=your-firebase-project-id
-FIREBASE_DATABASE_URL=https://your-project-default-rtdb.firebaseio.com
+# Supabase Auth
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=your-supabase-service-role-key
 
 # Uptime Kuma webhook secret (set this to anything, same value goes in Uptime Kuma)
 UPTIME_KUMA_URL=http://localhost:3001
 UPTIME_KUMA_WEBHOOK_SECRET=your-secret-here
-
-# Dev only — skip Firebase token verification (never use in production)
-DEV_AUTH_BYPASS=false
-DEV_AUTH_ROLE=user
 ```
-
-Place your Firebase service account JSON file at:
-```
-backend/firebase-service-account.json
-```
-Download it from Firebase Console → Project Settings → Service Accounts → Generate new private key.
 
 ---
 
@@ -259,7 +248,7 @@ WHERE nickname = 'Machine-KE-01';
 
 Uptime Kuma checks whether each **physical RDP Windows machine** is reachable on **TCP port 3389**.
 When a machine goes up or down, it sends one webhook to your backend, which updates PostgreSQL
-(`rdp_resources.status`, `last_health_check_at`) and mirrors the change to Firebase.
+(`rdp_resources.status`, `last_health_check_at`).
 
 This is **separate** from worker session heartbeats (`POST /sessions/{id}/heartbeat`), which detect
 when a worker stops responding while already connected.
@@ -453,7 +442,7 @@ With the backend running and logged in as admin, open:
 http://localhost:8000/docs
 ```
 
-Find `GET /integrations/uptime-kuma/status` (requires admin Firebase token), or from the frontend admin session use the API proxy.
+Find `GET /integrations/uptime-kuma/status` (requires admin auth token), or from the frontend admin session use the API proxy.
 
 Expected response shape:
 
@@ -490,7 +479,7 @@ You should get `"ok": true` and a matching `rdp_id` if `RDP-KE-001` exists in Po
 | **Maintenance** monitor | `maintenance` |
 | Machine is `admin_locked` | Health events **ignored** (lock is not cleared automatically) |
 
-Firebase `rdp_status` and the worker claim board update when PostgreSQL changes (mirror + optional Firestore `onSnapshot` on the frontend).
+The worker claim board updates when PostgreSQL changes.
 
 ---
 
@@ -530,8 +519,7 @@ Frontend runs at `http://localhost:3000`
 
 | Job | File | What it does |
 |-----|------|--------------|
-| Leaderboard sync | `services/leaderboard_sync.py` | Every 5 min, refreshes leaderboard in Firestore from `quality_composite_scores` |
-| Mirror reconcile | `services/mirror_reconcile.py` | Re-asserts `rdp_status` and `active_sessions` from PostgreSQL so Firestore self-heals after failures |
+| Leaderboard sync | `services/leaderboard_sync.py` | Every 5 min, recalculates leaderboard from `quality_composite_scores` |
 | RDP lifecycle | `services/rdp_lifecycle.py` | Every 60s, marks machines `idle` without session heartbeat (10m) and auto-releases after 20m idle |
 
 Uptime Kuma runs separately in Docker (port **3001**) and pushes TCP up/down events to the backend webhook — it does not start inside uvicorn.
@@ -641,7 +629,6 @@ sudo systemctl start globalsolutions-api
 | Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v`, regenerate `guacamole_initdb.sql`, then `docker compose up -d` |
 | `ModuleNotFoundError` | Virtual environment not activated — run `venv\Scripts\activate` |
 | `Target database is not up to date` | Run `.\venv\Scripts\alembic upgrade head` |
-| `firebase-service-account.json` not found | Download from Firebase Console and place at `backend/firebase-service-account.json` |
 | Uptime Kuma webhook Test fails | Backend not running on port 8000, or wrong `UPTIME_KUMA_WEBHOOK_SECRET` in URL vs `.env` |
 | Uptime Kuma shows Up but platform status unchanged | Monitor **Friendly Name** does not exactly match `rdp_resources.nickname` |
 | Webhook returns `unknown monitor` | Add/fix the RDP row in Postgres, or rename the Uptime Kuma monitor to match `nickname` |

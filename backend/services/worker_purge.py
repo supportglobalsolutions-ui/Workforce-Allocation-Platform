@@ -63,17 +63,17 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
                 resource.status = RdpStatusEnum.online_free
             db.add(resource)
 
-        # Ban Firebase login if linked
-        firebase_uid = None
+        # Ban auth login if linked
+        auth_user_id = None
         if worker.admin_user is not None:
-            firebase_uid = worker.admin_user.firebase_uid
+            auth_user_id = worker.admin_user.auth_user_id
         elif worker.admin_user_id:
             from models.admin_users import AdminUser
             admin = db.get(AdminUser, worker.admin_user_id)
-            firebase_uid = admin.firebase_uid if admin else None
-        if firebase_uid:
+            auth_user_id = admin.auth_user_id if admin else None
+        if auth_user_id:
             try:
-                ban_auth_user(firebase_uid)
+                ban_auth_user(auth_user_id)
             except Exception as exc:  # noqa: BLE001
                 logger.warning("Could not ban Supabase user for worker %s: %s", wid, exc)
 

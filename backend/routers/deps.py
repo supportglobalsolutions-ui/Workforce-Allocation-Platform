@@ -16,7 +16,7 @@ from models.enums import (
 )
 from models.worker import Worker
 
-# Auth role (Firebase claim) -> org role stored on admin_users.role.
+# Auth role (Supabase claim) -> org role stored on admin_users.role.
 # admin_users.role is metadata only; it does NOT drive auth/routing.
 _AUTH_TO_ORG_ROLE = {
     "super_admin": AdminRoleEnum.ceo_leadership,
@@ -47,13 +47,13 @@ def get_admin_user(db: Session, current_user: dict) -> AdminUser:
     has to be seeded into Postgres by hand.
     """
     admin = db.exec(
-        select(AdminUser).where(AdminUser.firebase_uid == current_user["uid"])
+        select(AdminUser).where(AdminUser.auth_user_id == current_user["uid"])
     ).first()
     if admin:
         return admin
 
     admin = AdminUser(
-        firebase_uid=current_user["uid"],
+        auth_user_id=current_user["uid"],
         email=current_user.get("email") or f"{current_user['uid']}@unknown.local",
         role=_AUTH_TO_ORG_ROLE.get(current_user.get("role", "user"), AdminRoleEnum.technical_admin),
         display_name=_display_name_from(current_user),

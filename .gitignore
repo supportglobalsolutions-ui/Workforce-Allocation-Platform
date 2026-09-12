@@ -69,24 +69,16 @@ backend/data/payslips/
 # Timestamped copies of env files, kept out of the repo root
 .env-backups/
 
-# Firebase service account key
-**/firebase-service-account.json
-firebase-service-account.json
+# Service account keys
 **/admin.json
 admin.json
 **/serviceAccount*.json
 **/service-account*.json
-*-firebase-adminsdk-*.json
 
 # Other credential material
 *.key
 *.p12
 *.pfx
-.firebase/
-
-# Firebase security rules — copy-paste into Firebase Console, never commit
-firestore.rules
-storage.rules
 
 # Env files in subdirectories
 frontend/app/admin/.env

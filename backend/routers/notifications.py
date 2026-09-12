@@ -48,14 +48,14 @@ def _worker_email(db: Session, worker: Worker) -> str | None:
 
 
 def _resolve_partner_workers(db: Session) -> list[Worker]:
-    """Workers linked to Firebase accounts with role=partner."""
+    """Workers linked to auth accounts with role=partner."""
     partner_uids = {
         u["uid"] for u in list_auth_users()
         if u.get("role") == "partner" and u.get("status") == "approved"
     }
     if not partner_uids:
         return []
-    admins = list(db.exec(select(AdminUser).where(AdminUser.firebase_uid.in_(partner_uids))).all())
+    admins = list(db.exec(select(AdminUser).where(AdminUser.auth_user_id.in_(partner_uids))).all())
     if not admins:
         return []
     admin_ids = [a.id for a in admins]

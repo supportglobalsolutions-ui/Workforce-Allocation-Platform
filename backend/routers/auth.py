@@ -117,10 +117,10 @@ def _ensure_login_profile(
     """Ensure admin_users + workers rows exist so partner/worker can use worker APIs / inbox."""
     from uuid import UUID as UUIDType
 
-    admin_row = db.exec(select(AdminUser).where(AdminUser.firebase_uid == uid)).first()
+    admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
     if not admin_row:
         admin_row = AdminUser(
-            firebase_uid=uid,
+            auth_user_id=uid,
             email=email or f"{uid}@unknown.local",
             role=AdminRoleEnum.technical_admin,
             display_name=display_name or (email or "").split("@")[0] or "Partner",
@@ -219,7 +219,7 @@ def _list_postgres_users(db: Session) -> list[dict]:
             else 0
         )
         users.append({
-            "uid": admin.firebase_uid,
+            "uid": admin.auth_user_id,
             "email": admin.email,
             "displayName": admin.display_name,
             "role": role,
@@ -335,10 +335,10 @@ def approve_user(
     # Eagerly provision admin_users + workers so the admin can finish the
     # profile immediately instead of waiting for the worker's first login.
     if worker_type is not None:
-        admin_row = db.exec(select(AdminUser).where(AdminUser.firebase_uid == uid)).first()
+        admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
         if not admin_row:
             admin_row = AdminUser(
-                firebase_uid=uid,
+                auth_user_id=uid,
                 email=user.email or f"{uid}@unknown.local",
                 role=AdminRoleEnum.technical_admin,
                 display_name=user.display_name or (user.email or "").split("@")[0] or "New Worker",
@@ -472,7 +472,7 @@ def get_account_status(email: str, request: Request):
 
 @router.post("/session-token")
 def create_session_token(body: SessionTokenRequest, request: Request):
-    """Verify Firebase ID token and return a signed cookie value for Next.js middleware."""
+    """Verify Supabase ID token and return a signed cookie value for Next.js middleware."""
     check_rate_limit(request, scope="auth-session-token", limit=30, window_seconds=60)
     try:
         decoded = verify_supabase_token(body.id_token)

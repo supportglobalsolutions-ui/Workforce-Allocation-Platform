@@ -12,7 +12,7 @@ A full-stack workforce management system for allocating workers to RDP machines,
 | Frontend | Next.js 14 (App Router), TypeScript, Tailwind CSS |
 | Backend | FastAPI (Python), SQLModel, Pydantic v2 |
 | Database | PostgreSQL 15 |
-| Auth | Firebase Authentication (custom role claims) |
+| Auth | Supabase Authentication (custom role claims / app_metadata) |
 | RDP Gateway | Apache Guacamole (browser-based RDP) |
 | Claim Locking | Redis (SETNX distributed locks) |
 | RDP Monitoring | Uptime Kuma (TCP port 3389 heartbeat) |
@@ -39,7 +39,7 @@ Workforce-Allocation-Platform/
 | Page | URL | Description |
 |------|-----|-------------|
 | Landing Page | `/` | Platform overview with login and request access entry points |
-| Login | `/login` | Firebase email/password authentication for all user types |
+| Login | `/login` | Supabase email/password authentication for all user types |
 | Sign Up | `/signup` | New worker registration (pending admin approval) |
 | Reset Password | `/reset-password` | Password recovery workflow |
 | Pages Directory | `/pages` | Searchable sitemap of every page in the platform with roles and features |
@@ -70,7 +70,7 @@ Handlers, country managers, and operations leads. Role: `admin` or `super_admin`
 |------|-----|-------------|
 | Admin Dashboard | `/admin/dashboard` | Operations command center — worker KPIs, session overview, payroll status, system health |
 | Worker Management | `/admin/workers` | Create, edit, ban, and **bulk-delete** workers (select all / OTP when deleting more than 10) |
-| User Management | `/admin/users` | Manage Firebase user accounts — approve, reject, change roles |
+| User Management | `/admin/users` | Manage user accounts — approve, reject, change roles |
 | Partner Management | `/admin/partners` | Manage partner entities, split percentages, client overrides, and revenue breakdowns |
 | RDP Management | `/admin/rdp` | Full control of RDP machines — status changes, maintenance mode, lock, force release |
 | Live Session Monitor | `/admin/live-sessions` | Real-time feed of all active sessions. Force-end capability. Full audit view |
@@ -135,7 +135,7 @@ Guacamole admin: `http://localhost:8080/guacamole`
 | `admin` | Worker Portal + Admin Portal |
 | `super_admin` | Everything including Leadership Portal |
 
-Roles are set as Firebase custom claims. The backend verifies the claim on every request.
+Roles are set as Supabase custom claims (app_metadata). The backend verifies the claim on every request.
 
 ---
 

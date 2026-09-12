@@ -9,7 +9,7 @@ from models.enums import AccountStatusEnum, AdminRoleEnum
 
 
 class AdminUserBase(SQLModel):
-    firebase_uid:  str
+    auth_user_id:  str
     email:         EmailStr
     role:          AdminRoleEnum
     display_name:  str

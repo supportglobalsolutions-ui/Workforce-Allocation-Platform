@@ -29,10 +29,10 @@ Phase 0 requires a confirmed ERD before production build begins so that session 
 | Layer | Technology | Role |
 | :--- | :--- | :--- |
 | **Source of truth** | PostgreSQL | Permanent, auditable, financially accurate records. Run separately — not in docker-compose. |
-| **Real-time display** | Firebase (Firestore) | Live RDP board, active sessions, leaderboard. Backend mirrors here after every PostgreSQL commit. |
+| **Real-time display** | Supabase Realtime / API polling | Live RDP board, active sessions, leaderboard. |
 | **Distributed locking** | Redis | Atomic RDP claim locks (30s TTL), session heartbeat state, Guacamole token cache. Runs in docker-compose. |
 
-PostgreSQL holds the canonical record. Firebase mirrors live state written by the FastAPI backend. If Firebase is unavailable, historical data remains intact; if PostgreSQL is unavailable, new actions are rejected to protect integrity.
+PostgreSQL holds the canonical record. If PostgreSQL is unavailable, new actions are rejected to protect integrity.
 
 **Team standard for new data:** [storage-decision-guide.md](storage-decision-guide.md)
 
@@ -58,7 +58,7 @@ Scope here means *which role primarily needs the data*, not how the tables are p
 | **Worker layer** | shifts, RDP claim/allocations, sessions, MCQ assessments, own quality rank, leaderboard read |
 | **Admin layer** | shift approval, RDP state machine, quality ratings, worker management, assessment authoring |
 | **Executive layer** | payroll periods, payroll line items, commercial splits, rate approval, audit, utilisation |
-| **General layer** | `admin_users`, `audit_log`, `partner_entities`, `partner_arrangements`, Firebase, Redis |
+| **General layer** | `admin_users`, `audit_log`, `partner_entities`, `partner_arrangements`, Redis |
 
 ```mermaid
 flowchart TB
@@ -72,7 +72,7 @@ flowchart TB
         CoreTables[Shared canonical tables]
     end
 
-    subgraph realtime [Firebase - Real-time Mirror]
+    subgraph realtime [Cache and Real-time]
         RdpStatus[rdp_status]
         ActiveSessions[active_sessions]
         Notifications[shift_notifications]
@@ -127,7 +127,7 @@ erDiagram
 
 ## Layer 1 — Worker portal
 
-> **Build runbook:** Step-by-step implementation order, page-to-table mapping, and Firebase/Redis setup for this layer → [worker-layer-setup.md](worker-layer-setup.md).
+> **Build runbook:** Step-by-step implementation order, page-to-table mapping, and Redis setup for this layer → [worker-layer-setup.md](worker-layer-setup.md).
 
 ### Data needs
 
@@ -176,7 +176,7 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | `knowledge_base_articles` | Read published (post-MVP) | `title`, `body`, `published_at` | FK → `admin_users` (author) |
 | `partner_entities` | Read-only (partner workers) | `name`, `status` | Referenced by `workers.partner_entity_id` |
 
-### Firebase — worker-facing reads
+### Real-time — worker-facing reads
 
 | Path | Shape | When updated |
 | :--- | :--- | :--- |
@@ -257,21 +257,21 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | `knowledge_base_articles` | CRUD (post-MVP) | `title`, `body`, `version` | FK → `admin_users` |
 | `audit_log` | Read (ops actions) | `action`, `target_type`, `target_id`, `previous_value`, `new_value` | FK → `actor_id` |
 
-### Firebase — admin-facing
+### Real-time — admin-facing
 
 | Path | Admin use |
 | :--- | :--- |
-| `/rdp_status/*` | Live ops board — same mirror; admin triggers writes via API |
+| `/rdp_status/*` | Live ops board |
 | `/active_sessions/*` | Monitor idle / abandoned sessions |
 | `/system_alerts/{alert_id}` | Machine offline, idle session, and payroll exception triage |
 
 ### Redis — admin-triggered
 
-Admins use the same claim and heartbeat keys as workers. A force-release clears the open allocation and updates Firebase as part of the transaction.
+Admins use the same claim and heartbeat keys as workers. A force-release clears the open allocation as part of the transaction.
 
 ### Business rules (admin layer)
 
-- Claim flow: Redis lock → PostgreSQL transaction → verify `rdp_resources.status = online_free` → set status `assigned` → write `audit_log` → mirror to Firebase → commit.
+- Claim flow: Redis lock → PostgreSQL transaction → verify `rdp_resources.status = online_free` → set status `assigned` → write `audit_log` → commit.
 - Force-release requires a `reason_note`, which is written as an `audit_log` entry.
 - Manual quality ratings require a mandatory `reason_note`.
 
@@ -324,14 +324,12 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | `rdp_resources` | Read utilisation | Status distribution, assignment | — |
 | `audit_log` | Full read | All material actions | Append-only |
 
-### Firebase — executive-facing
+### Real-time — executive-facing
 
 | Path | Executive use |
 | :--- | :--- |
 | `/leaderboard/current_period` | Org-wide performance snapshot (calculated from PostgreSQL, refreshed every 5 minutes) |
 | `/system_alerts/*` | Org-level incident visibility |
-
-Executives do not write to Firebase directly; FastAPI mirrors after PostgreSQL commits.
 
 ### Business rules (executive layer)
 
@@ -382,19 +380,18 @@ erDiagram
 | `admin_otp_challenges` | 3-minute hashed confirmation codes for irreversible admin actions | PostgreSQL only |
 | `security_risk_events` | Per-admin risk points from destructive deletes; drives 24h score + alert emails | PostgreSQL only |
 
-### Authentication (Firebase Auth — not a PostgreSQL table)
+### Authentication (Supabase Auth — not a PostgreSQL table)
 
-- Login tokens for all roles are issued by the same Firebase project.
-- `admin_users.firebase_uid` and `workers.admin_user_id` link a Firebase UID to its PostgreSQL row.
-- Role enforcement happens **server-side** on every FastAPI call, not in Firebase rules alone.
+- Login tokens for all roles are issued by Supabase Auth.
+- `admin_users.auth_user_id` and `workers.admin_user_id` link a Supabase user UID to its PostgreSQL row.
+- Role enforcement happens **server-side** on every FastAPI call via JWT custom claims (`app_metadata`).
 
 ### Storage infrastructure summary
 
 | Technology | Scope | Role layer? |
 | :--- | :--- | :--- |
 | **PostgreSQL** | All tables — canonical source of truth | No — general |
-| **Firebase** | 5 collection paths — real-time UI mirror only | No — general |
-| **Redis** | 3 key patterns — ephemeral locks and heartbeats | No — general |
+| **Redis** | Ephemeral locks, sessions, and heartbeats | No — general |
 
 ---
 
@@ -459,7 +456,7 @@ erDiagram
 
     ADMIN_USERS {
         uuid id PK
-        string firebase_uid UK
+        string auth_user_id UK
         string email UK
         enum role
         string display_name
@@ -578,12 +575,12 @@ erDiagram
 
 ### 1. `admin_users`
 
-Platform operators authenticated via Firebase Auth. Roles are enforced server-side on every API call.
+Platform operators authenticated via Supabase Auth. Roles are enforced server-side on every API call.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | PK, default `gen_random_uuid()` | Internal primary key |
-| `firebase_uid` | `VARCHAR(128)` | UNIQUE, NOT NULL | Firebase Auth UID |
+| `auth_user_id` | `VARCHAR(128)` | UNIQUE, NOT NULL | Supabase Auth UID |
 | `email` | `VARCHAR(255)` | UNIQUE, NOT NULL | Login email |
 | `role` | `admin_role_enum` | NOT NULL | See roles below |
 | `display_name` | `VARCHAR(255)` | NOT NULL | Shown in audit log and UI |
@@ -594,7 +591,7 @@ Platform operators authenticated via Firebase Auth. Roles are enforced server-si
 
 **Roles (`admin_role_enum`):** `ceo_leadership`, `operations_lead`, `country_manager`, `technical_admin`
 
-> Workers authenticate through the same Firebase project but are stored in `workers`, linked optionally via `admin_user_id`.
+> Workers authenticate through Supabase Auth and are stored in `workers`, linked optionally via `admin_user_id`.
 
 ---
 
@@ -750,7 +747,7 @@ Atomic claim records linking a worker to an RDP at a point in time. Central to *
 1. Redis distributed lock acquired on `rdp:{id}`
 2. PostgreSQL transaction: verify `rdp_resources.status = online_free`
 3. Update status → `assigned`, insert `allocations` row, write `audit_log`
-4. Mirror to Firebase; commit transaction
+4. Commit transaction
 5. Second concurrent claim fails at step 2 or unique index
 
 ---
@@ -1210,21 +1207,9 @@ Events arrive out of order — a webhook can be retried, and polling can observe
 
 ---
 
-# Appendix B — Real-time and ephemeral storage
+# Appendix B — Ephemeral storage and cache
 
-These stores hold no canonical data. Firebase mirrors live state for UI; Redis holds short-lived coordination keys. Both are part of the **general layer** because they serve every portal.
-
-## Firebase real-time collections
-
-Firebase is **not** the source of truth. FastAPI writes here after every PostgreSQL commit for live UI updates.
-
-| Path | Document shape | Updated when |
-| :--- | :--- | :--- |
-| `/rdp_status/{rdp_id}` | `{ status, worker_id, updated_at }` | RDP state machine transition |
-| `/active_sessions/{session_id}` | `{ worker_id, rdp_id, started_at, heartbeat_at }` | Session start, heartbeat, end |
-| `/shift_notifications/{worker_id}/{notif_id}` | `{ type, title, body, read, created_at }` | Shift approved/rejected, RDP assigned |
-| `/leaderboard/current_period` | `{ workers: [{ id, score, country_rank, global_rank, streak }], refreshed_at }` | Every 5 minutes |
-| `/system_alerts/{alert_id}` | `{ type, severity, message, entity_ref, created_at }` | Machine offline, idle session, payroll exception |
+Redis holds short-lived coordination keys and session heartbeats.
 
 ## Redis keys
 

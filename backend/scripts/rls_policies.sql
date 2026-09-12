@@ -87,8 +87,8 @@ END $$;
 --  Everything below is commented out. Uncomment ONLY the tables you actually
 --  subscribe to - each one you enable is a table the browser can read.
 --
---  These assume the Supabase JWT's `sub` is stored on admin_users.firebase_uid
---  (the column still carries its old name; it holds the Supabase user id).
+--  These assume the Supabase JWT's `sub` is stored on admin_users.auth_user_id
+--  (holds the Supabase user id).
 -- ---------------------------------------------------------------------------
 
 -- -- Machine availability: every signed-in worker may see the board.
@@ -112,7 +112,7 @@ END $$;
 --             SELECT w.id
 --             FROM public.workers w
 --             JOIN public.admin_users au ON au.id = w.admin_user_id
---             WHERE au.firebase_uid = auth.jwt() ->> 'sub'
+--             WHERE au.auth_user_id = auth.jwt() ->> 'sub'
 --         )
 --     );
 --

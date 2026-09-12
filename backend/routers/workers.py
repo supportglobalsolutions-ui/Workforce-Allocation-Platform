@@ -300,8 +300,8 @@ def update_worker(
     db.refresh(worker)
     return _enrich_worker(db, worker)
 
-def _get_worker_firebase_uid(worker_id: UUID, db: Session, current_user: dict) -> tuple[Worker, str]:
-    """Fetch worker + linked firebase_uid, enforce admin-cannot-modify-super_admin."""
+def _get_worker_auth_user_id(worker_id: UUID, db: Session, current_user: dict) -> tuple[Worker, str]:
+    """Fetch worker + linked auth_user_id, enforce admin-cannot-modify-super_admin."""
     worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     if not worker:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
@@ -320,18 +320,18 @@ def _get_worker_firebase_uid(worker_id: UUID, db: Session, current_user: dict) -
         )
 
     try:
-        fb_user = get_auth_user(admin_user.firebase_uid)
+        auth_user = get_auth_user(admin_user.auth_user_id)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
-    target_role = (fb_user.custom_claims or {}).get("role", "user")
+    target_role = (auth_user.custom_claims or {}).get("role", "user")
     if current_user.get("role") == "admin" and target_role == "super_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admins cannot modify Super Admin accounts.",
         )
 
-    return worker, admin_user.firebase_uid
+    return worker, admin_user.auth_user_id
 
 
 @router.patch("/{worker_id}/ban")
@@ -340,10 +340,10 @@ def ban_worker(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Ban a worker's Firebase account — prevents login."""
-    _, firebase_uid = _get_worker_firebase_uid(worker_id, db, current_user)
+    """Ban a worker's account — prevents login."""
+    _, auth_user_id = _get_worker_auth_user_id(worker_id, db, current_user)
     try:
-        ban_auth_user(firebase_uid)
+        ban_auth_user(auth_user_id)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
     return {"banned": True}
@@ -355,10 +355,10 @@ def unban_worker(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Unban a worker's Firebase account — restores login access."""
-    _, firebase_uid = _get_worker_firebase_uid(worker_id, db, current_user)
+    """Unban a worker's account — restores login access."""
+    _, auth_user_id = _get_worker_auth_user_id(worker_id, db, current_user)
     try:
-        unban_auth_user(firebase_uid)
+        unban_auth_user(auth_user_id)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
     return {"banned": False}

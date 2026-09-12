@@ -4,7 +4,7 @@ Base URL (local dev): `http://localhost:8000`
 
 Interactive docs (dev only): `http://localhost:8000/docs`
 
-All routes except `GET /health` and `POST /auth/register` require a Firebase ID token in the `Authorization: Bearer <token>` header.
+All routes except `GET /health` and `POST /auth/register` require a Supabase access token in the `Authorization: Bearer <token>` header.
 
 **Role levels:** `user` < `admin` < `super_admin`
 
@@ -20,23 +20,23 @@ All routes except `GET /health` and `POST /auth/register` require a Firebase ID 
 
 ## Auth — `/auth`
 
-Manages Firebase user accounts. Passwords and display names are stored in Firebase Auth, not PostgreSQL.
+Manages user accounts via Supabase GoTrue admin API.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
-| POST | `/auth/register` | None | Self-register. Creates a **disabled** Firebase account pending admin approval. Body: `{email, password, displayName}` |
-| GET | `/auth/users` | admin+ | List all Firebase users. |
-| POST | `/auth/users` | admin+ | Create a new Firebase user with a role. Admins can only create `user` accounts; super_admin can create any role. Body: `{email, password, displayName, role}` |
+| POST | `/auth/register` | None | Self-register. Creates an account pending admin approval. Body: `{email, password, displayName}` |
+| GET | `/auth/users` | admin+ | List all users. |
+| POST | `/auth/users` | admin+ | Create a new user with a role. Admins can only create `user` accounts; super_admin can create any role. Body: `{email, password, displayName, role}` |
 | PATCH | `/auth/users/{uid}/approve` | admin+ | Enable a pending account so the user can sign in. |
 | PATCH | `/auth/users/{uid}/reject` | admin+ | Disable/reject a pending account. |
 | PATCH | `/auth/users/{uid}/role` | admin+ | Change a user's role. Admins cannot elevate; only super_admin can assign admin or super_admin. Body: `{role}` |
-| POST | `/auth/bootstrap-super-admin` | super_admin | Idempotent — ensures the configured super_admin email has the claim. Run once after Firebase setup. |
+| POST | `/auth/bootstrap-super-admin` | super_admin | Idempotent — ensures the configured super_admin email has the claim. Run once after setup. |
 
 ---
 
 ## Workers — `/workers`
 
-Workers are the PostgreSQL `workers` table — separate from Firebase Auth users.
+Workers are the PostgreSQL `workers` table — linked optionally to an auth identity.
 
 | Method | Path | Auth | Description |
 |--------|------|------|-------------|
@@ -75,7 +75,7 @@ RDP machines with an 8-state status enum: `offline`, `online_free`, `assigned`, 
 | POST | `/rdp/{rdp_id}/claim` | user+ | Claim an `online_free` machine. Uses a Redis lock to prevent race conditions. Returns a Guacamole session URL if configured. Query param: `shift_id` (optional). |
 | POST | `/rdp/{rdp_id}/release` | user+ | Release a claimed machine — closes the open allocation and sets status back to `online_free`. |
 
-**Claim flow:** Redis SETNX lock (30s TTL) → verify `status = online_free` → create allocation → fetch Guacamole token → update status to `assigned` → mirror to Firebase → release lock. Claim succeeds even if Guacamole is down.
+**Claim flow:** Redis SETNX lock (30s TTL) → verify `status = online_free` → create allocation → fetch Guacamole token → update status to `assigned` → release lock. Claim succeeds even if Guacamole is down.
 
 ---
 
@@ -87,9 +87,9 @@ Unified session log for all three channel types: `gs_rdp`, `partner_multilog`, `
 |--------|------|------|--------------|-------------|
 | GET | `/sessions` | user+ | `type`, `limit` (1–200, default 50) | List sessions. Workers see own; admins see all. |
 | GET | `/sessions/{session_id}` | user+ | — | Get one session. Workers can only fetch their own. |
-| POST | `/sessions` | user+ | — | Create a session. Workers may only create for themselves. Active sessions (no `end_time`) are mirrored to Firestore. |
-| PATCH | `/sessions/{session_id}` | user+ | — | Update a session. Workers cannot change `payroll_approval_state`, `payroll_period_id`, or `admin_notes`. When `end_time` is set the session is removed from the Firestore active mirror. |
-| POST | `/sessions/{session_id}/heartbeat` | user+ | — | Stamps `last_heartbeat_at` into `type_specific_fields`, writes heartbeat key to Redis (`ex=3600`), and refreshes the Firestore active session mirror. |
+| POST | `/sessions` | user+ | — | Create a session. Workers may only create for themselves. |
+| PATCH | `/sessions/{session_id}` | user+ | — | Update a session. Workers cannot change `payroll_approval_state`, `payroll_period_id`, or `admin_notes`. |
+| POST | `/sessions/{session_id}/heartbeat` | user+ | — | Stamps `last_heartbeat_at` into `type_specific_fields` and writes heartbeat key to Redis (`ex=3600`). |
 
 ---
 
@@ -176,19 +176,18 @@ Configure in Uptime Kuma → Notifications → Webhook:
 
 | Path | What it does |
 |------|-------------|
-| `main.py` | App entry — mounts all routers, CORS, global error handler, lifespan (Firebase init + leaderboard sync loop) |
-| `core/config.py` | All env vars via pydantic-settings (`DATABASE_URL`, `REDIS_URL`, `GUACAMOLE_*`, `FIREBASE_*`, `UPTIME_KUMA_*`, `DEV_AUTH_BYPASS`) |
+| `main.py` | App entry — mounts all routers, CORS, global error handler, lifespan (leaderboard sync loop) |
+| `core/config.py` | All env vars via pydantic-settings (`DATABASE_URL`, `REDIS_URL`, `GUACAMOLE_*`, `SUPABASE_*`, `UPTIME_KUMA_*`) |
 | `core/database.py` | SQLAlchemy engine, `SessionLocal`, `get_db()` dependency |
-| `core/firebase_admin.py` | Firebase Admin SDK init, user CRUD helpers (create, approve, reject, list, role assignment) |
+| `core/supabase_auth.py` | Supabase token verification and user admin (GoTrue API) |
 | `core/guacamole.py` | `GuacamoleClient` — fetches auth token and builds connection URL; caches token in Redis |
 | `core/permissions.py` | `require_user`, `require_admin`, `require_super_admin` FastAPI dependencies |
 | `core/redis.py` | Redis client init, `get_redis()` dependency |
-| `core/security.py` | `get_current_user()` — verifies Firebase ID token; supports `DEV_AUTH_BYPASS` for local dev without Firebase |
+| `core/security.py` | `get_current_user()` — verifies Supabase JWT token |
 | `models/` | SQLModel ORM table definitions (one file per entity) |
 | `schemas/` | Pydantic `*Create`, `*Update`, `*Response` shapes — separate from ORM models |
 | `routers/` | One file per URL prefix; thin HTTP layer that calls services or ORM directly |
-| `routers/deps.py` | `apply_update()` (generic PATCH helper), `get_worker_for_user()` (Firebase UID → Worker row) |
-| `services/firebase_mirror.py` | Writes RDP status and active sessions to Firestore after every PostgreSQL commit |
+| `routers/deps.py` | `apply_update()` (generic PATCH helper), `get_worker_for_user()` (auth_user_id → Worker row) |
 | `services/rdp_health.py` | Processes Uptime Kuma webhook — maps monitor name to RDP machine, updates health fields |
-| `services/leaderboard_sync.py` | Background async loop — recalculates leaderboard from PostgreSQL, pushes to Firestore every 5 minutes |
+| `services/leaderboard_sync.py` | Background async loop — recalculates leaderboard from PostgreSQL |
 | `migrations/` | Alembic versions — run `alembic upgrade head` inside `backend/` to apply |

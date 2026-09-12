@@ -41,7 +41,7 @@ UPTIME_KUMA_URL=http://localhost:3001
 | Uptime Kuma event | PostgreSQL effect |
 | :--- | :--- |
 | TCP up | `last_health_check_at` updated; `offline`/`unhealthy` → `online_free` or `assigned` |
-| TCP down | Status → `offline`; Firebase mirror + `system_alerts` entry |
+| TCP down | Status → `offline`; alerts mirror + `system_alerts` entry |
 | Maintenance | Status → `maintenance` |
 
 Statuses `admin_locked` and `maintenance` (manual) are not overwritten except by explicit maintenance monitors.
@@ -50,7 +50,7 @@ Statuses `admin_locked` and `maintenance` (manual) are not overwritten except by
 
 ```http
 GET /integrations/uptime-kuma/status
-Authorization: Bearer <admin-firebase-token>
+Authorization: Bearer <admin-auth-token>
 ```
 
 ## Notes

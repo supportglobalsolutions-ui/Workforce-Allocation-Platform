@@ -28,7 +28,7 @@ class AdminUser(SQLModel, table=True):
         default_factory=uuid.uuid4,
         sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
     )
-    firebase_uid: str = Field(sa_column=Column(String(128), unique=True, nullable=False))
+    auth_user_id: str = Field(sa_column=Column(String(128), unique=True, nullable=False))
     email: str = Field(sa_column=Column(String(255), unique=True, nullable=False))
     role: AdminRoleEnum = Field(sa_column=Column(AdminRoleType, nullable=False))
     display_name: str = Field(sa_column=Column(String(255), nullable=False))

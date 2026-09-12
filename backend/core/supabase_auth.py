@@ -1,6 +1,6 @@
 """Supabase (GoTrue) authentication — token verification and user admin.
 
-Replaces core/firebase_admin.py. Two distinct concerns live here:
+Two distinct concerns live here:
 
 Token verification
 ------------------
@@ -16,8 +16,7 @@ user themselves and must never be trusted for authorisation.
 User administration
 -------------------
 Thin wrappers over the GoTrue admin REST API (``/auth/v1/admin/users``),
-authenticated with the service-role/secret key. Function names mirror the
-old Firebase module so call sites read the same.
+authenticated with the service-role/secret key.
 """
 from __future__ import annotations
 

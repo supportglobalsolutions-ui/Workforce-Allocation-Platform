@@ -6,23 +6,19 @@ Security controls, roles, audit logging, and secret management guidance.
 
 ## Authentication
 
-All API requests (except `GET /health` and `POST /auth/register`) must include a Firebase ID token:
+All API requests (except `GET /health` and `POST /auth/register`) must include a Supabase bearer token:
 
 ```
-Authorization: Bearer <firebase_id_token>
+Authorization: Bearer <supabase_access_token>
 ```
 
-`backend/core/security.py` → `get_current_user()` calls the Firebase Admin SDK to verify the token. If the token is invalid or missing, it returns `401 Unauthorized`.
-
-### DEV_AUTH_BYPASS
-
-Set `DEV_AUTH_BYPASS=true` in `backend/.env` to skip Firebase verification in local development. All requests without a valid token are treated as a fixed test user with the role set by `DEV_AUTH_ROLE` (`user` | `admin` | `super_admin`). **Never enable in production.**
+`backend/core/security.py` / `supabase_auth.py` → `get_current_user()` verifies the JWT signature (via JWKS or JWT secret). If the token is invalid or missing, it returns `401 Unauthorized`.
 
 ---
 
 ## Roles and permissions
 
-Three roles are enforced server-side on every request. Firebase custom claims carry the role; `backend/core/permissions.py` checks it.
+Roles are enforced server-side on every request. Supabase `app_metadata.role` or custom claims carry the role; `backend/core/permissions.py` checks it.
 
 | Role | Level | What they can do |
 |------|-------|-----------------|
@@ -38,7 +34,7 @@ Three roles are enforced server-side on every request. Firebase custom claims ca
 
 ### Self-registration
 
-`POST /auth/register` is public. It creates a **disabled** Firebase account. The account cannot log in until an admin calls `PATCH /auth/users/{uid}/approve`.
+`POST /auth/register` is public. It creates an account pending admin approval. The account cannot log in until an admin calls `PATCH /auth/users/{uid}/approve`.
 
 ---
 
@@ -46,7 +42,7 @@ Three roles are enforced server-side on every request. Firebase custom claims ca
 
 Workers can only read/write their own data. The pattern used throughout the routers:
 
-1. `get_worker_for_user(db, current_user)` — resolves the Firebase UID to a `workers` row.
+1. `get_worker_for_user(db, current_user)` — resolves the auth user id to a `workers` row.
 2. The query is filtered by `worker_id = worker.id` before returning data.
 
 Admins and super_admins bypass this filter and see all rows.
@@ -58,24 +54,18 @@ Admins and super_admins bypass this filter and see all rows.
 The claim endpoint uses a Redis distributed lock to prevent two workers from claiming the same machine simultaneously:
 
 1. `SETNX lock:rdp:{rdp_id} "1" EX 30` — only one process wins.
-2. PostgreSQL transaction verifies `status = online_free` and creates the allocation.
-3. A partial unique index on `allocations (rdp_resource_id) WHERE released_at IS NULL` is the hard database-level stop — even if the Redis lock fails, a second claim will fail at the DB constraint.
-4. Lock is deleted in a `finally` block whether the claim succeeds or not.
+2. The winning process verifies the machine is `online_free`, sets it to `assigned`, and commits to PostgreSQL.
+3. Lock is released.
 
 ---
 
-## Uptime Kuma webhook secret
+## Rate limiting (Redis)
 
-The webhook at `POST /integrations/uptime-kuma/webhook` is authenticated by a shared secret:
-
-- Set `UPTIME_KUMA_WEBHOOK_SECRET` in `backend/.env`.
-- Pass as `Authorization: Bearer <secret>` header or `?token=<secret>` query param.
-- In production, if the secret is not configured the endpoint returns `503 Service Unavailable`.
-- In development with no secret set, the webhook is accepted and a warning is logged.
+Rate limiting is enforced on sensitive endpoints via Redis tokens.
 
 ---
 
-## CORS
+## CORS policy
 
 `ALLOWED_ORIGINS` in `backend/core/config.py` (default: `["http://localhost:3000"]`) controls which origins can call the API. Set this to the production frontend URL in production.
 
@@ -83,22 +73,21 @@ The webhook at `POST /integrations/uptime-kuma/webhook` is authenticated by a sh
 
 ## Security hardening (OWASP-aligned)
 
-Recent controls added to the codebase:
+Controls implemented in the codebase:
 
 | Control | Implementation |
 |---------|----------------|
-| Server-side auth on every route | Firebase Bearer + `require_user` / `require_admin` |
-| IDOR / BOLA | Row scoping in routers; Firebase Storage/Firestore rules tie `session_images` to `firebase_uid` |
+| Server-side auth on every route | Supabase Bearer + `require_user` / `require_admin` |
+| IDOR / BOLA | Row scoping in routers; queries filtered by `auth_user_id` |
 | SQL injection | SQLModel ORM + bound parameters only |
-| Password storage | Firebase Auth (bcrypt/scrypt handled by Google) — no local passwords |
-| Session / JWT | Short-lived Firebase ID tokens; `check_revoked=True`; signed HttpOnly `gs-session` cookie for Next.js middleware |
+| Password storage | Supabase Auth (Argon2/bcrypt) — no local passwords stored |
+| Session / JWT | Short-lived Supabase access tokens; signed HttpOnly `gs-session` cookie for Next.js middleware |
 | Secrets in Git | `.env` gitignored; production startup rejects default DB password and missing `OTP_PEPPER` |
-| Server validation | Pydantic schemas + `apply_update()` allow-lists; session image URLs must be Firebase Storage HTTPS links |
+| Server validation | Pydantic schemas + `apply_update()` allow-lists |
 | XSS | No user HTML rendering; Content-Security-Policy on frontend |
 | CSRF | Bearer tokens (not cookie auth to API) — low CSRF risk |
 | Rate limiting | Redis limits on register, account-status, session-token, RDP claim, and global per-IP traffic |
 | Mass assignment | Explicit update schemas per role |
-| File uploads | Client-side type/size checks; Storage rules enforce size + ownership |
 | Debug exposure | Generic 500 errors in production; `LOG_LEVEL=INFO`; `/docs` disabled in production |
 | Auth failure logs | `security.auth` logger on missing/invalid tokens |
 | RDP access audit | Append-only `rdp.logged_in` / `rdp.logged_out` audit rows |
@@ -106,14 +95,12 @@ Recent controls added to the codebase:
 ### Required before production launch
 
 1. Set strong secrets: `DATABASE_URL`, `SESSION_COOKIE_SECRET`, `OTP_PEPPER`, `UPTIME_KUMA_WEBHOOK_SECRET`, `GUACAMOLE_PASSWORD`.
-2. Set `ENVIRONMENT=production`, `DEV_AUTH_BYPASS=false`, `NEXT_PUBLIC_DEV_AUTH_BYPASS=false`.
-3. Deploy updated `firestore.rules` and `storage.rules` to Firebase Console.
-4. Match `SESSION_COOKIE_SECRET` in `backend/.env` and `frontend/.env.local`.
-5. Keep PostgreSQL on a private network with a least-privilege DB user (infra — not in app code).
-6. Enable automated DB backups and test restore (infra).
-7. Run dependency scanning in CI (`pip audit`, `npm audit`).
-8. Enable MFA for Firebase admin accounts in Google Cloud Console.
-
+2. Set `ENVIRONMENT=production`.
+3. Match `SESSION_COOKIE_SECRET` in `backend/.env` and `frontend/.env.local`.
+4. Keep PostgreSQL on a private network with a least-privilege DB user (infra — not in app code).
+5. Enable automated DB backups and test restore (infra).
+6. Run dependency scanning in CI (`pip audit`, `npm audit`).
+7. Enable MFA for admin accounts in Supabase Dashboard.
 
 ---
 
@@ -165,11 +152,10 @@ Service code: `backend/services/security_risk.py`, `worker_purge.py`, `session_p
 |--------|-----------|-------|
 | `DATABASE_URL` | `backend/.env` | Postgres connection string including password |
 | `REDIS_URL` | `backend/.env` | Redis connection string |
-| `FIREBASE_CREDENTIALS_PATH` | `backend/.env` | Path to Firebase service account JSON |
-| `FIREBASE_PROJECT_ID` | `backend/.env` | Firebase project ID |
+| `SUPABASE_URL` | `backend/.env` / `frontend/.env.local` | Supabase project URL |
+| `SUPABASE_SERVICE_ROLE_KEY` | `backend/.env` | Supabase service-role secret key |
+| `NEXT_PUBLIC_SUPABASE_ANON_KEY` | `frontend/.env.local` | Supabase public anon key |
 | `GUACAMOLE_USERNAME` / `GUACAMOLE_PASSWORD` | `backend/.env` | Guacamole admin credentials |
 | `UPTIME_KUMA_WEBHOOK_SECRET` | `backend/.env` | Shared secret for webhook auth |
-| `NEXT_PUBLIC_FIREBASE_*` | `frontend/.env.local` | Firebase web SDK config (public — no secrets) |
 
 No secrets are committed to the repository. `.env` files are git-ignored. Use `.env.example` files as templates.
-

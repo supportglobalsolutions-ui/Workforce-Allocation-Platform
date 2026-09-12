@@ -96,8 +96,8 @@ def seed_super_admin(check: bool) -> None:
         row = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
         if row:
             changed = []
-            if row.firebase_uid != uid:
-                row.firebase_uid = uid
+            if row.auth_user_id != uid:
+                row.auth_user_id = uid
                 changed.append("auth uid")
             if row.role != SUPER_ADMIN_ORG_ROLE:
                 row.role = SUPER_ADMIN_ORG_ROLE
@@ -117,7 +117,7 @@ def seed_super_admin(check: bool) -> None:
             print("  admin_users row MISSING (would be created)")
         else:
             db.add(AdminUser(
-                firebase_uid=uid,
+                auth_user_id=uid,
                 email=email,
                 role=SUPER_ADMIN_ORG_ROLE,
                 display_name="Peter Kelvin Kibiru",

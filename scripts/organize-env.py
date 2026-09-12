@@ -74,12 +74,13 @@ SECTIONS: list[tuple[str, list[str], list[tuple[str, str]]]] = [
     ]),
 
     ("SUPABASE  -  AUTH / JWT VERIFICATION", [
-        "Used to validate Supabase access tokens on the backend once auth",
-        "moves off Firebase. JWKS is preferred; the shared secret is the",
-        "legacy HS256 path.",
+        "Used to validate Supabase access tokens on the backend.",
+        "JWKS is preferred; the shared secret is the legacy HS256 path.",
     ], [
+        ("SUPABASE_URL", "Supabase project URL"),
+        ("SUPABASE_SERVICE_ROLE_KEY", "SECRET - Supabase service role key"),
         ("SUPABASE_JWKS_URL", "public JWKS endpoint for RS256 verification"),
-        ("SUPABASE_JWT_SECRET", "SECRET - legacy HS256 signing key"),
+        ("SUPABASE_JWT_SECRET", "legacy HS256 signing key"),
     ]),
 
     ("APPLICATION SIGNING SECRETS", [
@@ -95,48 +96,14 @@ SECTIONS: list[tuple[str, list[str], list[tuple[str, str]]]] = [
         ("OTP_PEPPER", "pepper for destructive-action confirmation codes"),
     ]),
 
-    ("DEVELOPMENT AUTH BYPASS", [
-        "Never enable in production - validate_production_settings() refuses",
-        "to boot if DEV_AUTH_BYPASS is true while ENVIRONMENT=production.",
-    ], [
-        ("DEV_AUTH_BYPASS", "true = treat unauthenticated requests as a test user"),
-        ("DEV_AUTH_ROLE", "user | admin | super_admin"),
-    ]),
-
-    ("FIREBASE  -  ADMIN SDK  (BACKEND)", [
-        "Server-side credentials. The service account is found automatically",
-        "at the repo root as admin.json, so the path is usually optional.",
-    ], [
-        ("FIREBASE_CREDENTIALS_PATH", "path to the service-account JSON"),
-        ("FIREBASE_PROJECT_ID", ""),
-        ("FIREBASE_DATABASE_URL", ""),
-    ]),
-
-    ("FIREBASE  -  WEB SDK  (FRONTEND, PUBLIC)", [
-        "Every NEXT_PUBLIC_ value is inlined into the browser bundle and is",
-        "therefore public. Firebase web config is designed to be public;",
-        "access is controlled by Firebase security rules, not by secrecy.",
-        "",
-        "Required for the frontend to render at all - lib/firebase.ts calls",
-        "getAuth() at module scope, so a missing API key 500s every page.",
-    ], [
-        ("NEXT_PUBLIC_FIREBASE_API_KEY", ""),
-        ("NEXT_PUBLIC_FIREBASE_AUTH_DOMAIN", ""),
-        ("NEXT_PUBLIC_FIREBASE_PROJECT_ID", ""),
-        ("NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET", ""),
-        ("NEXT_PUBLIC_FIREBASE_MESSAGING_SENDER_ID", ""),
-        ("NEXT_PUBLIC_FIREBASE_APP_ID", ""),
-        ("NEXT_PUBLIC_FIREBASE_MEASUREMENT_ID", "optional - analytics"),
-        ("NEXT_PUBLIC_FIREBASE_DATABASE_URL", "optional"),
-    ]),
-
-    ("FRONTEND  -  OTHER PUBLIC SETTINGS", [
-        "Also shipped to the browser.",
+    ("FRONTEND  -  PUBLIC SETTINGS", [
+        "Shipped to the browser.",
     ], [
         ("NEXT_PUBLIC_API_URL", "backend origin behind the /api rewrite"),
         ("NEXT_PUBLIC_GUACAMOLE_URL", "Guacamole origin behind the /remote rewrite"),
-        ("NEXT_PUBLIC_SUPABASE_URL", "only once RLS policies exist"),
-        ("NEXT_PUBLIC_SUPABASE_ANON_KEY", "only once RLS policies exist"),
+        ("NEXT_PUBLIC_SUPABASE_URL", "Supabase public project URL"),
+        ("NEXT_PUBLIC_SUPABASE_ANON_KEY", "Supabase public anon key"),
+    ]),
         ("NEXT_PUBLIC_DEV_AUTH_BYPASS", "must mirror DEV_AUTH_BYPASS"),
         ("NEXT_PUBLIC_DEV_AUTH_ROLE", "must mirror DEV_AUTH_ROLE"),
     ]),

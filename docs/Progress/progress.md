@@ -12,7 +12,7 @@ _Last updated: 2026-07-06_
 ## 1. Executive summary
 
 The platform's foundations are solid and the MVP core is largely functional. The
-full data model, three-store architecture (PostgreSQL + Firebase + Redis),
+full data model, PostgreSQL + Redis architecture,
 authentication, RDP claim/release, shift flow, session logging, and RDP health
 monitoring are all implemented. The remaining work is mostly *business-logic
 engines* (quality scoring, payroll calculation/export) and *leadership
@@ -36,7 +36,7 @@ aggregation/reporting*, plus wiring the audit log into every action.
 | Worker | Shifts, RDP board, stats, leaderboard | shifts, rdp, sessions, quality, leaderboard, workers | worker/dashboard, rdp-claim-board, active-session, external-session, session-history, assessments, leaderboard | Done (core) |
 | Admin / Ops | Approvals, RDP assignment, live oversight | shifts, rdp, sessions, quality, payroll, audit | admin/dashboard, workers, rdp, live-sessions, quality, assessments, payroll(+calculate/export/receipts), audit-logs, notifications, partners, users, settings | Partial |
 | Leadership | Org command, payroll export, audit | leaderboard, audit (no dedicated analytics endpoints yet) | leadership/ceo-command, analytics, utilization, financial | Partial (UI scaffold) |
-| Infrastructure | Health monitor, Firebase, PostgreSQL, Uptime Kuma | uptime_kuma webhook, rdp_health, firebase_mirror, mirror_reconcile | — | Done |
+| Infrastructure | Health monitor, Supabase, PostgreSQL, Uptime Kuma | uptime_kuma webhook, rdp_health, supabase_auth | — | Done |
 
 ---
 
@@ -44,10 +44,10 @@ aggregation/reporting*, plus wiring the audit log into every action.
 
 | Technology | Charter role | Status |
 |-----------|--------------|--------|
-| Next.js frontend | SSR dashboards, Firebase SDK | Done — 31 pages across 3 portals |
+| Next.js frontend | SSR dashboards, Supabase SDK | Done — 31 pages across 3 portals |
 | FastAPI backend | Async API, business logic | Done — 11 routers |
 | PostgreSQL | ACID source of truth | Done — 18 models, migrations applied |
-| Firebase (Auth + Firestore) | Real-time sync + login | Done — mirror + reconcile |
+| Supabase Auth | User authentication + role claims | Done |
 | Apache Guacamole | Browser RDP gateway | Done — token fetch on claim |
 | Redis | Distributed claim lock + heartbeats | Done — SETNX lock + heartbeat keys |
 | Uptime Kuma | RDP TCP monitoring | Done — webhook → rdp_health |
@@ -58,7 +58,6 @@ aggregation/reporting*, plus wiring the audit log into every action.
 
 ### Shift scheduling — Done
 Submit / approve / reject with worker-vs-admin field scoping (`routers/shifts.py`).
-Status transitions notify workers via Firestore `shift_notifications`.
 
 ### RDP claim / release — Done
 - Redis `SETNX` lock (`lock:rdp:{id}`) + partial unique index `uq_allocations_active_rdp` = double-claim prevention at two layers (`routers/rdp.py`, `models/allocation.py`).
@@ -82,7 +81,7 @@ All 8 charter states exist in `RdpStatusEnum` plus `maintenance` (ops/Uptime Kum
 
 | Transition | Status |
 |------------|--------|
-| PostgreSQL write + Firestore mirror on every change | Done |
+| PostgreSQL write on every change | Done |
 | Health-driven offline / unhealthy / maintenance / recovery (Uptime Kuma webhook) | Done |
 | Shift approval → `assigned` + `assigned_worker_id` | Done (`services/rdp_state.py`, `routers/shifts.py`) |
 | Claim `online_free` or `assigned` (shift window enforced) → `active` | Done (`routers/rdp.py`) |
@@ -90,7 +89,7 @@ All 8 charter states exist in `RdpStatusEnum` plus `maintenance` (ops/Uptime Kum
 | Auto-release `idle` → `online_free` after 20m (`timed_out`) | Done (`services/rdp_lifecycle.py`) |
 | Admin lock / unlock / maintenance / force-release | Done (`routers/rdp.py`, admin UI wired) |
 | Centralized `transition_rdp_status` | Done (`services/rdp_state.py`) |
-| Claim board Firestore `onSnapshot` live overlay | Done |
+| Claim board live update | Done |
 | Claim/release + Redis lock + repair | Done |
 
 Config: `RDP_HEARTBEAT_IDLE_SECONDS` (600), `RDP_IDLE_AUTO_RELEASE_SECONDS` (1200), `RDP_LIFECYCLE_INTERVAL_SECONDS` (60) in `core/config.py`.
@@ -101,7 +100,7 @@ Config: `RDP_HEARTBEAT_IDLE_SECONDS` (600), `RDP_IDLE_AUTO_RELEASE_SECONDS` (120
 
 - Quality indicators, indicator ratings (1–5 with reason, attributed), and
   composite score records: full CRUD (`routers/quality.py`). Done.
-- Leaderboard read + rank ordering + 5-minute Firestore sync
+- Leaderboard read + rank ordering + 5-minute sync
   (`routers/leaderboard.py`, `services/leaderboard_sync.py`). Done.
 - MCQ assessment data model (`models/mcq.py`). Model only.
 - Gap: the composite-score **calculation engine** (the 4 weighted inputs:
@@ -118,7 +117,6 @@ Config: `RDP_HEARTBEAT_IDLE_SECONDS` (600), `RDP_IDLE_AUTO_RELEASE_SECONDS` (120
 | Zero credential exposure (RDP creds only in Guacamole) | Done |
 | Distributed claim lock | Done (Redis SETNX + DB unique index) |
 | Token-enforced API, server-side role checks every request | Done (`core/security.py`, `core/permissions.py`) |
-| Firestore locked to read-only clients, backend writes via Admin SDK | Done (`firestore.rules`) |
 | Immutable audit log | Partial — table is append-only and has an API, but is **not auto-written** on claim/release/approve/force-release yet |
 | Deployment docs (Nginx, Gunicorn, systemd, TLS) | Done (`BACKEND_SETUP.md`) |
 | Backup plan | Planned |
@@ -135,11 +133,8 @@ utilisation/analytics aggregation endpoints and the export suite are not built y
 
 ## 9. Recent hardening (this work)
 
-Robustness fixes to the PostgreSQL → Firestore mirror:
-
-1. **Self-healing reconciliation** — `reconcile_rdp_statuses` / `reconcile_active_sessions` in `services/firebase_mirror.py`, run periodically by `services/mirror_reconcile.py` (interval `MIRROR_RECONCILE_INTERVAL_SECONDS`, default 300s), wired into `main.py`. Firestore now recovers automatically after transient failures.
-2. **Off-request mirroring** — RDP/session/shift write endpoints schedule mirror writes via FastAPI `BackgroundTasks` using id-based wrappers, so slow Firestore never adds request latency.
-3. **Consistent auth errors** — `routers/auth.py` now uses `http_error_from_firebase` (duplicate email → 409, Firebase unconfigured → 503).
+1. **Supabase Auth Migration** — Seamless GoTrue integration for login and token verification with custom role claims.
+2. **Consistent auth errors** — `routers/auth.py` now uses `http_error_from_auth` (duplicate email → 409, auth unconfigured → 503).
 
 Roles remain intentionally at 3: `user`, `admin`, `super_admin`.
 

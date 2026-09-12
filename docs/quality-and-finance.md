@@ -71,7 +71,7 @@ If there is no payroll period yet, the payroll view falls back to the same calen
 
 The admin Quality page loads `/leaderboard?period=payroll` for a named month (`payroll_period_id`) and `/leaderboard?period=all` for **All periods**. The page itself is a compact worker list (score + period rating + eye). The eye opens a detail modal with component point slices and an editable 1–5 rating for that period. Workers see the latest payroll board. GS and partner workers sit on the **same** board.
 
-Recalculation is triggered by `POST /quality/recalculate` (admin). Firestore is then mirrored every 5 minutes by `leaderboard_sync`.
+Recalculation is triggered by `POST /quality/recalculate` (admin). The leaderboard cache is then refreshed every 5 minutes by `leaderboard_sync`.
 
 ## Component formulas
 
