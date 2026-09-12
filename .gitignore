@@ -66,6 +66,9 @@ backend/data/payslips/
 !**/.env.example
 !**/.env.local.example
 
+# Timestamped copies of env files, kept out of the repo root
+.env-backups/
+
 # Firebase service account key
 **/firebase-service-account.json
 firebase-service-account.json
