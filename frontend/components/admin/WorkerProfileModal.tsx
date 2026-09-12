@@ -127,7 +127,7 @@ export default function WorkerProfileModal({
   const [companies, setCompanies] = useState<PartnerEntity[] | null>(null);
   const [paymentTiers, setPaymentTiers] = useState<{ name: string }[] | null>(null);
 
-  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | null>(null);
+  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | 'unknown' | null>(null);
   const [banLoading, setBanLoading] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
 

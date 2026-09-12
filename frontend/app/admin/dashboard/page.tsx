@@ -130,12 +130,12 @@ function labelStatus(s: string): string {
   return s.replace(/_/g, ' ');
 }
 
-const baseOptions: ChartOptions = {
+const baseOptions = {
   responsive: true,
   maintainAspectRatio: false,
   plugins: {
     legend: {
-      position: 'bottom',
+      position: 'bottom' as const,
       labels: {
         color: MUTED,
         boxWidth: 10,
@@ -155,7 +155,7 @@ const baseOptions: ChartOptions = {
   },
 };
 
-const cartesianOptions: ChartOptions<'bar' | 'line'> = {
+const cartesianOptions: any = {
   ...baseOptions,
   scales: {
     x: {
@@ -386,7 +386,7 @@ export default function AdminDashboard() {
     };
   }, [periodSessions, currentPeriod]);
 
-  const sessionsLineOptions: ChartOptions<'line'> = useMemo(() => ({
+  const sessionsLineOptions: any = useMemo(() => ({
     ...cartesianOptions,
     scales: {
       x: cartesianOptions.scales?.x,

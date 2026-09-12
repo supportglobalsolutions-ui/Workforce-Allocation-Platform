@@ -220,7 +220,7 @@ function aggregateSnapshots(rows: IntelligenceSnapshot[]): IntelligenceSnapshot 
 function buildClientRevenueRows(snap: IntelligenceSnapshot | null): ClientRevenueRow[] {
   if (!snap) return [];
 
-  const clients = (snap.clients?.data ?? []) as ClientRecord[];
+  const clients = (snap.clients?.data ?? []) as unknown as ClientRecord[];
   const revenueByClient = new Map<string, number>();
   for (const row of snap.revenue_share.data ?? []) {
     if (!row.client_id) continue;

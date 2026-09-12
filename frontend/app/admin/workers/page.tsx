@@ -171,7 +171,7 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | null>(null);
+  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | 'unknown' | null>(null);
   const [banLoading, setBanLoading] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
 

@@ -83,7 +83,7 @@ function TestsBody() {
       const key = `${r.kind}:${r.source_id}`;
       if (!map.has(key)) map.set(key, { key, title: r.title, kind: r.kind, source_id: r.source_id });
     }
-    return [...map.values()].sort((a, b) => a.title.localeCompare(b.title));
+    return Array.from(map.values()).sort((a, b) => a.title.localeCompare(b.title));
   }, [rows, mcq, tasks]);
 
   const selected = sittings.find((s) => s.key === sitting) ?? null;

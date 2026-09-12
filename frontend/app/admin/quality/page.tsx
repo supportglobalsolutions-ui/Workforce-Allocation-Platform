@@ -105,7 +105,7 @@ export default function AdminQualityPage() {
   useEffect(() => {
     api.get<PeriodFilterOption[]>('/payroll/periods').then((list) => {
       setPeriods(list);
-      setPeriodId(pickCurrentPeriod(list)?.id || '');
+      setPeriodId(pickCurrentPeriod(list as any)?.id || '');
       setPeriodsReady(true);
     }).catch(() => setPeriodsReady(true));
     api.get<Worker[]>('/workers').then(setWorkers).catch(() => {});
@@ -121,8 +121,8 @@ export default function AdminQualityPage() {
   const entriesByWorker = useMemo(() => new Map(entries.map((entry) => [entry.worker_id, entry])), [entries]);
   const ratingsByWorker = useMemo(() => new Map(ratings.map((rating) => [rating.worker_id, rating])), [ratings]);
   const hoursByWorker = useMemo(() => {
-    const start = selectedPeriod?.start_date.slice(0, 10);
-    const end = selectedPeriod?.end_date.slice(0, 10);
+    const start = selectedPeriod?.start_date?.slice(0, 10);
+    const end = selectedPeriod?.end_date?.slice(0, 10);
     const scoped = start && end
       ? sessionHours.filter((s) => {
           const d = s.start_time.slice(0, 10);

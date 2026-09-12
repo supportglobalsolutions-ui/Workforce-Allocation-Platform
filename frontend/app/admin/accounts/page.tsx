@@ -305,7 +305,7 @@ function AccountDetailModal({
     actorRole === 'super_admin' ||
     (actorRole === 'admin' && user.role !== 'super_admin');
   const isPendingWorker = user.status === 'pending' && user.role === 'user';
-  const roleOptions = assignableRoles(actorRole).filter((r) => r !== 'partner');
+  const roleOptions: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner');
   // Admins may promote workers ↔ ops lead; they cannot touch Executive accounts.
   // Partner role is assigned via Partner account modal.
   const canChangeRole =
@@ -329,7 +329,7 @@ function AccountDetailModal({
     setCountry('');
     setPartners(null);
     setCountries(null);
-    const opts = assignableRoles(actorRole).filter((r) => r !== 'partner');
+    const opts: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner');
     setNextRole(opts.includes(user.role) ? user.role : (opts[0] ?? user.role));
   }, [user.uid, user.role, actorRole]);
 
@@ -550,7 +550,7 @@ export default function AccountsPage() {
   const actorUid = session?.uid ?? null;
   const allAssignable = assignableRoles(actorRole);
   // Inline "New account" form: Worker / Ops Lead / Executive (Partner uses Add Partner modal).
-  const createRoleOptions = allAssignable.filter((r) => r !== 'partner');
+  const createRoleOptions: AuthRole[] = allAssignable.filter((r) => r !== 'partner');
   const canCreate = createRoleOptions.length > 0;
   const canPromote = allAssignable.some((r) => r === 'admin' || r === 'super_admin');
   const canPartner = allAssignable.includes('partner');
