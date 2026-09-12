@@ -2,13 +2,20 @@ from sqlalchemy.pool import NullPool
 from sqlmodel import create_engine, Session, SQLModel  # noqa: F401
 
 from .config import settings
+from .db_url import normalize_db_url
 
 engine_options = {
     "echo": not settings.is_production,
     "pool_pre_ping": True,
 }
 
-if settings.DATABASE_USE_PGBOUNCER:
+DATABASE_URL, _url_is_pooled = normalize_db_url(settings.DATABASE_URL)
+
+# Trust the DSN over the flag: a :6543 URL is pgbouncer whether or not anyone
+# remembered to set DATABASE_USE_PGBOUNCER.
+USE_PGBOUNCER = settings.DATABASE_USE_PGBOUNCER or _url_is_pooled
+
+if USE_PGBOUNCER:
     # Supabase's :6543 endpoint is pgbouncer in transaction mode; it already
     # multiplexes connections. A second pool on top of it just holds server
     # backends open and burns through the project's connection budget.
@@ -27,14 +34,7 @@ else:
     engine_options["poolclass"] = NullPool
 
 
-def _with_sslmode(url: str) -> str:
-    """Supabase refuses plaintext connections; default sslmode=require."""
-    if "supabase" in url and "sslmode=" not in url:
-        return f"{url}{'&' if '?' in url else '?'}sslmode=require"
-    return url
-
-
-engine = create_engine(_with_sslmode(settings.DATABASE_URL), **engine_options)
+engine = create_engine(DATABASE_URL, **engine_options)
 
 
 def get_db():

@@ -94,3 +94,4 @@ frontend/app/admin/.env
 # TypeScript
 *.tsbuildinfo
 next-env.d.ts
+WORKING_DATABASE_URL.txt

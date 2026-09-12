@@ -6,6 +6,8 @@ from alembic import context
 from dotenv import load_dotenv
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
+
+from core.db_url import normalize_db_url, to_session_pooler
 import models  # noqa: F401 — registers all SQLModel table classes
 
 config = context.config
@@ -23,10 +25,21 @@ if not db_url:
         "pooler — not the transaction pooler on :6543."
     )
 
-# Supabase terminates non-SSL connections; make that failure mode obvious here
-# rather than as an opaque timeout mid-migration.
-if "supabase" in db_url and "sslmode=" not in db_url:
-    db_url = f"{db_url}{'&' if '?' in db_url else '?'}sslmode=require"
+# Strip Prisma-only params (psycopg2 rejects ?pgbouncer=true outright) and
+# default sslmode=require for Supabase.
+db_url, is_pooled = normalize_db_url(db_url)
+
+# DDL and transactional migrations misbehave through pgbouncer's transaction
+# mode, so never migrate over :6543. The session pooler is the same host and
+# credentials on :5432 — switch automatically and say so.
+if is_pooled:
+    switched = to_session_pooler(db_url)
+    if switched != db_url:
+        print(
+            "alembic: DATABASE_URL points at the :6543 transaction pooler; "
+            "using the :5432 session pooler for migrations instead."
+        )
+        db_url = switched
 
 config.set_main_option("sqlalchemy.url", db_url)
 

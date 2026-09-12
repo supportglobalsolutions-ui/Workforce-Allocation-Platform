@@ -27,7 +27,10 @@ class TaskAssessment(SQLModel, table=True):
     instructions: str = Field(sa_column=Column(Text, nullable=False))
     media_urls: Optional[list[Any]] = Field(
         default=None,
-        sa_column=Column(JSONB, nullable=False, server_default="'[]'::jsonb"),
+        # Must be text(): a plain string is treated as a literal and gets
+        # re-quoted to '''[]''::jsonb', which is not valid JSON. Matches the
+        # pattern used by every other JSONB column in models/.
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
     is_timed: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, default=False))
     time_limit_minutes: Optional[int] = Field(default=None, sa_column=Column(Integer, nullable=True))
