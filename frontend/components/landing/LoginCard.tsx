@@ -11,6 +11,7 @@ import { useAuth } from '@/lib/auth/AuthProvider';
 import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 import type { LoginOtpChallenge } from '@/lib/auth/supabase-auth';
+import ErrorToast from '@/components/shared/ErrorToast';
 
 interface LoginCardProps {
   onSuccess?: () => void;
@@ -157,12 +158,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
             />
           </div>
 
-          {error && (
-            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs">
-              <AlertCircle size={15} className="shrink-0" />
-              <span>{error}</span>
-            </div>
-          )}
+          <ErrorToast message={error} onDismiss={() => setError('')} />
 
           <button
             type="submit"
@@ -267,12 +263,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           </Link>
         </div>
 
-        {error && (
-          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-500 text-xs">
-            <AlertCircle size={15} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        <ErrorToast message={error} onDismiss={() => setError('')} />
 
         <button
           type="submit"

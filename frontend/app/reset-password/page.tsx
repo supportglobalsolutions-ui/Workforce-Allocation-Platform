@@ -7,6 +7,7 @@ import GlobalSolutionsLogo from '@/components/landing/GlobalSolutionsLogo';
 import AuthPageShell, { AuthGlassCard } from '@/components/landing/AuthPageShell';
 import { supabase } from '@/lib/supabase';
 import { api } from '@/lib/api';
+import ErrorToast from '@/components/shared/ErrorToast';
 
 type RecoveryStage = 'request' | 'sent' | 'update' | 'complete';
 
@@ -160,12 +161,7 @@ export default function ResetPasswordPage() {
           </form>
         )}
 
-        {error && (
-          <div className="mt-4 flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-xs">
-            <AlertCircle size={15} className="shrink-0" />
-            <span>{error}</span>
-          </div>
-        )}
+        <ErrorToast message={error} onDismiss={() => setError('')} />
 
         {(stage === 'request' || stage === 'sent') && (
           <Link href="/login" className="mt-6 flex items-center justify-center gap-2 text-xs text-[#0df5c4] hover:underline font-semibold">
