@@ -2,7 +2,6 @@
 
 import { ReactNode } from 'react';
 import LandingNavbar from './LandingNavbar';
-import { useTheme } from '@/lib/theme/ThemeProvider';
 
 /** Shared auth shell — respects dark / light theme. */
 export default function AuthPageShell({
@@ -12,11 +11,11 @@ export default function AuthPageShell({
   children: ReactNode;
   header?: ReactNode;
 }) {
-  const { isDark } = useTheme();
+  const isDark = true;
 
   return (
     <div
-      className={`relative min-h-screen w-full flex flex-col overflow-x-hidden transition-colors ${
+      className={`force-dark-page relative min-h-screen w-full flex flex-col overflow-x-hidden transition-colors ${
         isDark
           ? 'bg-[#010e0b] text-white selection:bg-[#0df5c4]/30 selection:text-white'
           : 'bg-[#f4faf7] text-emerald-950 selection:bg-emerald-500/20'
@@ -30,11 +29,10 @@ export default function AuthPageShell({
         />
         {isDark ? (
           <>
-            <div className="absolute inset-0 bg-gradient-to-r from-[#010e0b]/90 via-[#010e0b]/65 to-[#010e0b]/30" />
+            <div className="absolute inset-0 bg-[#010e0b]/70" />
             <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,rgba(3,40,32,0.06)_50%,transparent_80%)] blur-3xl" />
             <div className="absolute -top-10 -left-32 w-[500px] h-[250px] rotate-[-25deg] bg-gradient-to-r from-transparent via-[#0df5c4]/10 to-transparent blur-2xl" />
             <div className="absolute top-1/4 -right-32 w-[600px] h-[300px] rotate-[-30deg] bg-gradient-to-r from-transparent via-[#0df5c4]/8 to-transparent blur-2xl" />
-            <div className="absolute -bottom-32 left-1/2 -translate-x-1/2 w-[1400px] h-[600px] rounded-[100%] bg-[radial-gradient(ellipse_at_center,#062b23_0%,#02120e_55%,#010a08_100%)] border-t border-[#0df5c4]/30 shadow-[0_-20px_80px_rgba(13,245,196,0.15)] opacity-90" />
             <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(13,245,196,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(13,245,196,0.02)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
           </>
         ) : (
@@ -65,7 +63,7 @@ export function AuthGlassCard({
   children: ReactNode;
   className?: string;
 }) {
-  const { isDark } = useTheme();
+  const isDark = true;
 
   return (
     <div

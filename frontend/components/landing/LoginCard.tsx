@@ -10,7 +10,6 @@ import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
-import { useTheme } from '@/lib/theme/ThemeProvider';
 
 interface LoginCardProps {
   onSuccess?: () => void;
@@ -24,7 +23,7 @@ const DEFAULT_SUPER_ADMIN_PASSWORD = '';
 
 export default function LoginCard({ onSuccess, className = '' }: LoginCardProps) {
   const { login, session, isLoading } = useAuth();
-  const { isDark } = useTheme();
+  const isDark = true;
   const router = useRouter();
 
   const [email, setEmail] = useState(DEFAULT_SUPER_ADMIN_EMAIL);
@@ -75,17 +74,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   return (
     <AuthGlassCard className={className}>
       <div className="flex flex-col items-center text-center mb-6">
-        <GlobalSolutionsLogo size="md" showText={false} />
-        <h2
-          className={`text-xl sm:text-2xl font-display font-bold mt-3 tracking-tight ${
-            isDark ? 'text-white' : 'text-emerald-950'
-          }`}
-        >
-          Global Solutions
-        </h2>
-        <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-[#0df5c4] mt-1">
-          REMOTE • SMART • GLOBAL
-        </p>
+        <GlobalSolutionsLogo size="lg" />
 
         {autofilled && (
           <div className="mt-3.5 inline-flex items-center gap-1.5 px-3 py-1 rounded-full text-[11px] font-medium bg-[#0df5c4]/10 border border-[#0df5c4]/30 text-[#0df5c4]">

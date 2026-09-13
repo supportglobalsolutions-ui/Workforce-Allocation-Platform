@@ -90,9 +90,18 @@ html.light {
     overflow: hidden;
   }
 
-  html.light body {
-    background-color: var(--background);
-  }
+html.light body {
+  background-color: var(--background);
+}
+
+/* Marketing and authentication pages deliberately retain the Global Solutions dark theme. */
+html.light .force-dark-page {
+  color-scheme: dark;
+}
+
+html.light .force-dark-page .text-white {
+  color: #fff;
+}
 
   /* Luxe light canvas — faint emerald & gold washes over the mint-porcelain base */
   html.light .bg-brand-background {
