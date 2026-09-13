@@ -149,7 +149,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               };
             }
             if (status === 'pending') {
-              return { ok: false, error: 'Your account is awaiting admin approval.' };
+              return { ok: false, error: 'Your account is pending admin approval. You can sign in after an administrator approves it.' };
             }
             if (status === 'rejected') {
               return {
@@ -160,7 +160,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           } catch {
             /* fall through */
           }
-          return { ok: false, error: 'Your account has been disabled. Contact an administrator.' };
+          return { ok: false, error: 'Your account is pending admin approval. You can sign in after an administrator approves it.' };
         }
 
         return { ok: false, error: getAuthErrorMessage(err) };

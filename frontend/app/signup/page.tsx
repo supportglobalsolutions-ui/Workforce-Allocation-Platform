@@ -8,11 +8,28 @@ import GlobalSolutionsLogo from '@/components/landing/GlobalSolutionsLogo';
 import AuthPageShell, { AuthGlassCard } from '@/components/landing/AuthPageShell';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { useAuth } from '@/lib/auth/AuthProvider';
-import { apiRegisterUser, requestSignupOtp, verifySignupOtp } from '@/lib/auth/supabase-auth';
+import { apiRegisterUser, apiListSignupCountries, requestSignupOtp, verifySignupOtp } from '@/lib/auth/supabase-auth';
 import { getAuthErrorMessage } from '@/lib/auth/errors';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 
 type Step = 'email' | 'code' | 'password' | 'done';
+
+function countryNameList(): string[] {
+  try {
+    const names = new Intl.DisplayNames(['en'], { type: 'region' });
+    const out: string[] = [];
+    for (let i = 65; i <= 90; i += 1) {
+      for (let j = 65; j <= 90; j += 1) {
+        const code = String.fromCharCode(i) + String.fromCharCode(j);
+        const name = names.of(code);
+        if (name && name !== code) out.push(name);
+      }
+    }
+    return out.sort((a, b) => a.localeCompare(b));
+  } catch {
+    return ['Kenya', 'Uganda', 'Tanzania', 'Nigeria', 'Ghana', 'South Africa', 'United Kingdom', 'United States'];
+  }
+}
 
 export default function SignupPage() {
   const { session, isLoading } = useAuth();
@@ -30,11 +47,31 @@ export default function SignupPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
+  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [firstName, setFirstName] = useState('');
+  const [lastName, setLastName] = useState('');
+  const [phone, setPhone] = useState('');
+  const [country, setCountry] = useState('');
+  const [residence, setResidence] = useState('');
+  const [username, setUsername] = useState('');
+  const [countries, setCountries] = useState<string[]>([]);
 
   useEffect(() => {
     if (!session) return;
     router.replace(ROLE_LANDING[session.primaryPortal]);
   }, [session, router]);
+
+  useEffect(() => {
+    if (step !== 'password' || countries.length) return;
+    const fallback = countryNameList();
+    apiListSignupCountries()
+      .then((rows) => {
+        const names = rows.map((row) => row.name).filter(Boolean);
+        setCountries(names.length ? names : fallback);
+      })
+      .catch(() => setCountries(fallback));
+  }, [step, countries.length]);
 
   const inputClass = isDark
     ? 'w-full bg-[#04201a]/80 text-white placeholder-[#50756b] text-sm rounded-xl pl-10 pr-4 py-3 border border-[#0df5c4]/25 focus:border-[#0df5c4] focus:ring-1 focus:ring-[#0df5c4] outline-none transition-all'
@@ -89,10 +126,23 @@ export default function SignupPage() {
     e.preventDefault();
     if (loading) return;
     setError('');
+    if (password !== confirmPassword) {
+      setError('Passwords do not match.');
+      return;
+    }
     setLoading(true);
     try {
-      const displayName = email.split('@')[0] || 'User';
-      await apiRegisterUser(email, password, displayName, verificationToken);
+      await apiRegisterUser({
+        email,
+        password,
+        firstName: firstName.trim(),
+        lastName: lastName.trim(),
+        phone: phone.trim(),
+        country,
+        residence: residence.trim(),
+        username: username.trim() || undefined,
+        verificationToken,
+      });
       setStep('done');
     } catch (err: unknown) {
       setError(getAuthErrorMessage(err));
@@ -133,7 +183,7 @@ export default function SignupPage() {
 
   return (
     <AuthPageShell>
-      <AuthGlassCard>
+      <AuthGlassCard wide={step === 'password'} className="max-h-[88vh] overflow-y-auto">
         <div className="flex flex-col items-center text-center mb-6">
           <GlobalSolutionsLogo size="md" showText={false} />
           <h1 className="text-xl sm:text-2xl font-display font-bold mt-3 tracking-tight">
@@ -245,35 +295,84 @@ export default function SignupPage() {
 
         {step === 'password' && (
           <form onSubmit={handleCreate} className="space-y-4">
-            <p className={`text-xs text-center ${isDark ? 'text-[#98b7af]' : 'text-emerald-800/60'}`}>
-              Email confirmed. Choose a password to create the account.
+            <p className="text-xs text-center text-[#98b7af]">
+              Email confirmed. Add your details, then choose a password. An administrator will approve the account before you can sign in.
             </p>
-            <div>
-              <label className={labelClass}>Password</label>
-              <div className="relative">
-                <Lock
-                  size={16}
-                  className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0df5c4]/70 pointer-events-none"
-                />
-                <input
-                  type={showPassword ? 'text' : 'password'}
-                  required
-                  minLength={8}
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Min 8 characters"
-                  className={`${inputClass} pr-10`}
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className={`absolute right-3.5 top-1/2 -translate-y-1/2 transition-colors ${
-                    isDark ? 'text-[#98b7af] hover:text-[#0df5c4]' : 'text-emerald-700/50 hover:text-emerald-700'
-                  }`}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
-                </button>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div>
+                <label className={labelClass}>First name</label>
+                <input required value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First name" className={`${inputClass} pl-4`} />
+              </div>
+              <div>
+                <label className={labelClass}>Last name</label>
+                <input required value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" className={`${inputClass} pl-4`} />
+              </div>
+              <div>
+                <label className={labelClass}>Phone number</label>
+                <input required minLength={7} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+254 700 000 000" className={`${inputClass} pl-4`} />
+              </div>
+              <div>
+                <label className={labelClass}>Country</label>
+                <select required value={country} onChange={(e) => setCountry(e.target.value)} className={`${inputClass} pl-4`}>
+                  <option value="">Select country</option>
+                  {countries.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className={labelClass}>Place of residence</label>
+                <input required minLength={2} value={residence} onChange={(e) => setResidence(e.target.value)} placeholder="City or town" className={`${inputClass} pl-4`} />
+              </div>
+              <div>
+                <label className={labelClass}>Username</label>
+                <input value={username} onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32))} placeholder="Optional" className={`${inputClass} pl-4`} />
+              </div>
+              <div>
+                <label className={labelClass}>Password</label>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0df5c4]/70 pointer-events-none" />
+                  <input
+                    type={showPassword ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    placeholder="Min 8 characters"
+                    className={`${inputClass} pr-10`}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowPassword((v) => !v)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#98b7af] hover:text-[#0df5c4] transition-colors"
+                    aria-label={showPassword ? 'Hide password' : 'Show password'}
+                  >
+                    {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
+              </div>
+              <div>
+                <label className={labelClass}>Confirm password</label>
+                <div className="relative">
+                  <Lock size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0df5c4]/70 pointer-events-none" />
+                  <input
+                    type={showConfirmPassword ? 'text' : 'password'}
+                    required
+                    minLength={8}
+                    value={confirmPassword}
+                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    placeholder="Re-enter password"
+                    className={`${inputClass} pr-10`}
+                    autoComplete="new-password"
+                  />
+                  <button
+                    type="button"
+                    onClick={() => setShowConfirmPassword((v) => !v)}
+                    className="absolute right-3.5 top-1/2 -translate-y-1/2 text-[#98b7af] hover:text-[#0df5c4] transition-colors"
+                    aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
+                  >
+                    {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                  </button>
+                </div>
               </div>
             </div>
             {error && (

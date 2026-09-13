@@ -75,35 +75,37 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
-          if (e.data?.evidenceUrl) {
-            router.push(e.data.evidenceUrl);
-            return;
-          }
-          const sid = e.data?.sessionId ?? sessionId;
-          const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
-          if (sid) q.set('session', sid);
-          router.push(`/worker/session-history?${q.toString()}`);
+          const dest = e.data?.evidenceUrl as string | undefined;
+          if (dest) window.location.replace(dest);
         }
       };
     } catch { /* ignore */ }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, [rdpId, router, sessionId]);
 
-  const handleEndConnection = useCallback(() => {
+  const handleEndConnection = useCallback(async () => {
     if (ending) return;
     setEnding(true);
     setError(null);
     setEndStep('idle');
-    const sid = sessionId;
+    let sid = sessionId;
+    if (!sid) {
+      try {
+        sid = (await getMyActiveRdp())?.session_id ?? null;
+      } catch {
+        sid = null;
+      }
+    }
     const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
     if (sid) q.set('session', sid);
     const dest = `/worker/session-history?${q.toString()}`;
+    const tab = window.open(dest, '_blank');
     try {
       const ch = new BroadcastChannel('rdp-events');
-      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid, evidenceUrl: dest });
+      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid, evidenceUrl: dest, openedBy: 'control' });
       ch.close();
     } catch { /* ignore */ }
-    router.push(dest);
+    if (!tab) router.push(dest);
     void endRdpConnection(rdpId).catch(() => { /* already left session page */ });
   }, [ending, rdpId, router, sessionId]);
 

@@ -276,18 +276,44 @@ def create_auth_user(
     return user or {}
 
 
-def register_pending_user(email: str, password: str, display_name: str) -> dict:
+def register_pending_user(
+    email: str,
+    password: str,
+    display_name: str,
+    *,
+    first_name: str = "",
+    last_name: str = "",
+    phone: str = "",
+    country: str = "",
+    residence: str = "",
+    username: str = "",
+) -> dict:
     """Self-service signup. Banned until an admin approves, so the account
-    exists but cannot authenticate."""
+    exists but cannot authenticate. Profile details stay in user_metadata
+    until approval creates the worker row."""
     user = _admin_request("POST", "/users", json={
         "email": email,
         "password": password,
         "email_confirm": True,
         "ban_duration": "876000h",  # ~100 years; lifted on approval
-        "user_metadata": {"full_name": display_name},
+        "user_metadata": {
+            "full_name": display_name,
+            "first_name": first_name,
+            "last_name": last_name,
+            "phone": phone,
+            "country": country,
+            "residence": residence,
+            "username": username,
+            "signup_status": "pending",
+        },
         "app_metadata": {_APP_ROLE_KEY: "user", _APP_STATUS_KEY: "pending"},
-    })
-    return user or {}
+    }) or {}
+    uid = user.get("id")
+    if uid:
+        # Some GoTrue creates drop custom metadata when ban_duration is set.
+        _merge_app_metadata(uid, {_APP_ROLE_KEY: "user", _APP_STATUS_KEY: "pending"})
+        return get_auth_user(uid) or user
+    return user
 
 
 def approve_auth_user(uid: str) -> dict:
@@ -347,15 +373,29 @@ def user_to_dict(u: dict) -> dict:
     user_md = u.get("user_metadata") or {}
     banned_until = u.get("banned_until")
     is_banned = bool(banned_until) and banned_until not in ("", "none")
-    status = app_md.get(_APP_STATUS_KEY) or ("banned" if is_banned else "approved")
+    status = app_md.get(_APP_STATUS_KEY) or user_md.get("signup_status")
+    if status not in VALID_STATUSES:
+        # Self-signup is banned until approval. A ban without an explicit
+        # status is that queue, not a rules ban.
+        status = "pending" if is_banned else "approved"
+    first = (user_md.get("first_name") or "").strip()
+    last = (user_md.get("last_name") or "").strip()
+    full = (user_md.get("full_name") or user_md.get("display_name") or "").strip()
+    display = " ".join(part for part in (first, last) if part) or full
     return {
         "uid": u.get("id", ""),
         "email": u.get("email", "") or "",
-        "displayName": user_md.get("full_name") or user_md.get("display_name") or "",
+        "displayName": display,
+        "firstName": first,
+        "lastName": last,
+        "phone": (user_md.get("phone") or "").strip(),
+        "country": (user_md.get("country") or "").strip(),
+        "residence": (user_md.get("residence") or "").strip(),
+        "username": (user_md.get("username") or "").strip(),
         "role": app_md.get(_APP_ROLE_KEY, "user"),
         "status": status,
         "banned": status == "banned",
-        "disabled": is_banned,
+        "disabled": is_banned and status != "pending",
         "createdAt": u.get("created_at"),
         "partnerEntityId": app_md.get(_APP_PARTNER_KEY),
     }

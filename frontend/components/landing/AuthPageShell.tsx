@@ -49,13 +49,15 @@ export default function AuthPageShell({
 export function AuthGlassCard({
   children,
   className = '',
+  wide = false,
 }: {
   children: ReactNode;
   className?: string;
+  wide?: boolean;
 }) {
   return (
     <div
-      className={`relative z-20 w-full max-w-[430px] rounded-3xl p-7 sm:p-9 transition-all bg-[#031513]/62 backdrop-blur-lg border border-[#0df5c4]/35 shadow-[0_0_60px_rgba(13,245,196,0.18)] text-white ${className}`}
+      className={`relative z-20 w-full ${wide ? 'max-w-3xl' : 'max-w-[430px]'} rounded-3xl p-7 sm:p-9 transition-all bg-[#031513]/62 backdrop-blur-lg border border-[#0df5c4]/35 shadow-[0_0_60px_rgba(13,245,196,0.18)] text-white ${className}`}
     >
       <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-[#0df5c4] to-transparent opacity-70" />
       {children}

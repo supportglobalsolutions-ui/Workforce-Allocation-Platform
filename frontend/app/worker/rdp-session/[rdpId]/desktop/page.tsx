@@ -71,7 +71,7 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
-          // Ended from the control page — this desktop tab closes itself.
+          if (e.data?.openedBy === 'desktop') return;
           const dest = e.data?.evidenceUrl || evidenceUrl(rdpId, e.data?.sessionId);
           window.close();
           setTimeout(() => {
@@ -83,28 +83,26 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, [rdpId]);
 
-  const leaveToEvidence = useCallback((sid?: string | null) => {
+  const leaveToEvidence = useCallback(async (sid?: string | null) => {
     sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
-    const dest = evidenceUrl(rdpId, sid ?? sessionId);
-    try {
-      const ch = new BroadcastChannel('rdp-events');
-      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid ?? sessionId, evidenceUrl: dest });
-      ch.close();
-    } catch { /* ignore */ }
-    // Close only this tab. The opener stays open and shows the session record.
-    // window.close() is permitted because this tab was created by window.open;
-    // if it was opened by hand instead, fall back to navigating.
-    window.close();
-    setTimeout(() => {
-      if (!window.closed) window.location.replace(dest);
-    }, 150);
+    let session = sid ?? sessionId;
+    if (!session) {
+      try {
+        const active = await getMyActiveRdp();
+        if (active?.rdp_resource_id === rdpId) session = active.session_id;
+      } catch {
+        session = null;
+      }
+    }
+    const dest = evidenceUrl(rdpId, session);
+    // Stay in this tab (already the extra window) so the evidence form is already open.
+    window.location.replace(dest);
   }, [rdpId, sessionId]);
 
   const handleDisconnect = useCallback(() => {
     setShowMenu(false);
     setConfirming(false);
     const sid = sessionId;
-    // Leave immediately — no "Disconnecting…" wait.
     leaveToEvidence(sid);
     void endRdpConnection(rdpId).catch(() => { /* already left */ });
   }, [rdpId, sessionId, leaveToEvidence]);

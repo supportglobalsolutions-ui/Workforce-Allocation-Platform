@@ -326,12 +326,12 @@ function AccountDetailModal({
   useEffect(() => {
     setWorkerType('gs_registered');
     setPartnerId('');
-    setCountry('');
+    setCountry(user.country || '');
     setPartners(null);
     setCountries(null);
     const opts: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner');
     setNextRole(opts.includes(user.role) ? user.role : (opts[0] ?? user.role));
-  }, [user.uid, user.role, actorRole]);
+  }, [user.uid, user.role, user.country, actorRole]);
 
   useEffect(() => {
     if (!isPendingWorker || countries !== null) return;
@@ -375,19 +375,43 @@ function AccountDetailModal({
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Account Info</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+              {user.status === 'pending' && (
+                <>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Full name</p>
+                    <p className="text-sm text-gray-800">{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.displayName || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Phone</p>
+                    <p className="text-sm text-gray-800">{user.phone || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Country</p>
+                    <p className="text-sm text-gray-800">{user.country || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Place of residence</p>
+                    <p className="text-sm text-gray-800">{user.residence || '—'}</p>
+                  </div>
+                  <div>
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Username</p>
+                    <p className="text-sm text-gray-800">{user.username || '—'}</p>
+                  </div>
+                </>
+              )}
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</p>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
                   user.status === 'banned'   ? 'bg-red-100 text-red-700 border border-red-300' :
-                  user.disabled              ? 'bg-gray-100 text-gray-500 border border-gray-200' :
-                  user.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
                   user.status === 'pending'  ? 'bg-amber-50 text-amber-700 border border-amber-200' :
+                  user.status === 'approved' ? 'bg-emerald-50 text-emerald-700 border border-emerald-200' :
+                  user.disabled              ? 'bg-gray-100 text-gray-500 border border-gray-200' :
                                                'bg-red-50 text-red-600 border border-red-200'
                 }`}>
                   {user.status === 'banned' ? <><Ban size={9} /> Banned</> :
-                   user.disabled            ? 'Disabled' :
+                   user.status === 'pending'  ? <><AlertCircle size={9} /> Pending approval</> :
                    user.status === 'approved' ? <><CheckCircle size={9} /> Active</> :
-                   user.status === 'pending'  ? <><AlertCircle size={9} /> Pending</> :
+                   user.disabled            ? 'Disabled' :
                                                <><XCircle size={9} /> Rejected</>}
                 </span>
               </div>
@@ -403,7 +427,9 @@ function AccountDetailModal({
               </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Login</p>
-                <p className="text-sm text-gray-800 font-medium">{user.disabled ? 'Disabled' : 'Enabled'}</p>
+                <p className="text-sm text-gray-800 font-medium">
+                  {user.status === 'pending' ? 'Waiting for approval' : user.disabled ? 'Disabled' : 'Enabled'}
+                </p>
               </div>
               {user.role === 'partner' && (
                 <div className="col-span-2">
@@ -512,7 +538,7 @@ function AccountDetailModal({
                     </button>
                     <button type="button" onClick={() => onReject(user.uid)}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
-                      <XCircle size={13} /> Reject
+                      <XCircle size={13} /> Reject & delete
                     </button>
                   </div>
                 </div>
@@ -693,6 +719,8 @@ export default function AccountsPage() {
   }
 
   async function handleReject(uid: string) {
+    const ok = window.confirm('Reject this request and delete the account? This cannot be undone.');
+    if (!ok) return;
     setActingOn(uid); setActionError('');
     try { await apiRejectUser(uid); await loadUsers(); setSelectedUser(null); }
     catch (err: unknown) { setActionError(err instanceof Error ? err.message : 'Failed to reject.'); }

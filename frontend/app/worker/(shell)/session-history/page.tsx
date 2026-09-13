@@ -94,15 +94,27 @@ export default function SessionHistoryPage() {
   });
 
   useEffect(() => {
-    Promise.all([
-      api.get<WorkSession[]>('/sessions?limit=200'),
-      api.get<RDPResource[]>('/rdp'),
-    ])
-      .then(([sessionList, machineList]) => {
+    const q = new URLSearchParams(window.location.search);
+    const session = q.get('session');
+    if (session) setSelectedId(session);
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      Promise.all([
+        api.get<WorkSession[]>('/sessions?limit=200'),
+        api.get<RDPResource[]>('/rdp'),
+      ]).then(([sessionList, machineList]) => {
+        if (cancelled) return false;
         setSessions(sessionList);
         setMachines(machineList);
+        let opened = false;
         setSelectedId((prev) => {
-          if (prev) return prev;
+          if (prev && sessionList.some((s) => s.id === prev)) {
+            opened = true;
+            return prev;
+          }
           if (!pendingRdpId) return prev;
           const match =
             sessionList.find(
@@ -110,11 +122,30 @@ export default function SessionHistoryPage() {
                 s.rdp_resource_id === pendingRdpId &&
                 !(s.evidence_complete || (s.start_image_url && s.end_image_url && s.image_start_at && s.image_end_at)),
             ) || sessionList.find((s) => s.rdp_resource_id === pendingRdpId);
+          if (match) opened = true;
           return match?.id ?? prev;
         });
+        return opened;
+      });
+
+    load()
+      .then((opened) => {
+        if (cancelled) return;
+        if (opened || !pendingRdpId) {
+          setLoading(false);
+          return;
+        }
+        window.setTimeout(() => {
+          if (cancelled) return;
+          load().finally(() => { if (!cancelled) setLoading(false); });
+        }, 800);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load sessions'))
-      .finally(() => setLoading(false));
+      .catch((e) => {
+        if (!cancelled) setError(e instanceof Error ? e.message : 'Failed to load sessions');
+        setLoading(false);
+      });
+
+    return () => { cancelled = true; };
   }, [pendingRdpId]);
 
   const machineName = (id: string | null) => {
@@ -210,8 +241,28 @@ export default function SessionHistoryPage() {
     duration_minutes: s.duration_minutes,
   }));
 
+  const lookupRows = sessions.map((s) => ({
+    id: s.id,
+    date: new Date(s.start_time).toLocaleString(),
+    start_time: s.start_time,
+    end_time: s.end_time,
+    machine: machineName(s.rdp_resource_id),
+    duration: formatDuration(enteredPayMinutes(s)),
+    work_hours: formatDuration(enteredPayMinutes(s)),
+    rdp_uptime: formatDuration(rdpConnectedMinutes(s)),
+    rdp_minutes: rdpConnectedMinutes(s),
+    type: TYPE_LABELS[s.session_type] ?? s.session_type,
+    status: s.close_status ?? 'pending',
+    start_image_url: s.start_image_url,
+    end_image_url: s.end_image_url,
+    image_start_at: s.image_start_at,
+    image_end_at: s.image_end_at,
+    evidence_complete: s.evidence_complete,
+    duration_minutes: s.duration_minutes,
+  }));
+
   const selectedSession = selectedId
-    ? rows.find((r) => r.id === selectedId) ?? null
+    ? lookupRows.find((r) => r.id === selectedId) ?? null
     : null;
 
   const selectedFull = selectedId ? sessions.find((s) => s.id === selectedId) : null;
@@ -239,14 +290,13 @@ export default function SessionHistoryPage() {
         <div className="glass-panel p-4">
           <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Evidence needed</p>
           <p className="text-2xl font-black text-theme-heading mt-1">{incomplete.length}</p>
-          <p className="text-xs text-theme-muted mt-1">Sessions missing images or entered work times</p>
+          <p className="text-xs text-theme-muted mt-1">Missing images or times</p>
         </div>
       </div>
 
-      {incomplete.length > 0 && (
+      {incomplete.length > 0 && !selectedId && (
         <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 text-sm">
-          After RDP logout, add start &amp; end images and the required work start and stop / end times for{' '}
-          {incomplete.length} session{incomplete.length === 1 ? '' : 's'}. Open a session with the eye icon to complete.
+          {incomplete.length} session{incomplete.length === 1 ? '' : 's'} still need a start image, end image, and both times.
         </div>
       )}
 

@@ -15,11 +15,11 @@ from core.supabase_auth import (
     ban_auth_user,
     bootstrap_super_admin,
     create_auth_user,
+    delete_auth_user,
     get_auth_user,
     get_auth_user_by_email,
     list_auth_users,
     register_pending_user,
-    reject_auth_user,
     set_user_role,
     send_password_recovery_email,
     update_auth_user_password,
@@ -82,7 +82,12 @@ class UpdateRoleRequest(BaseModel):
 class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    displayName: str = Field(min_length=1, max_length=120)
+    firstName: str = Field(min_length=1, max_length=80)
+    lastName: str = Field(min_length=1, max_length=80)
+    phone: str = Field(min_length=7, max_length=32)
+    country: str = Field(min_length=2, max_length=80)
+    residence: str = Field(min_length=2, max_length=120)
+    username: Optional[str] = Field(default=None, max_length=32)
     verificationToken: str = Field(min_length=20, max_length=256)
 
 
@@ -243,6 +248,11 @@ def register_user(body: RegisterRequest, request: Request):
     Creates a banned Supabase user pending admin approval.
     """
     email = body.email.strip().lower()
+    first = body.firstName.strip()
+    last = body.lastName.strip()
+    username = (body.username or "").strip().lower()
+    if username and not username.replace("_", "").isalnum():
+        raise HTTPException(status_code=400, detail="Username can only use letters, numbers, and underscores.")
     check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=email)
     check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
     assert_signup_proof(email, body.verificationToken)
@@ -255,13 +265,28 @@ def register_user(body: RegisterRequest, request: Request):
         user = register_pending_user(
             email=body.email,
             password=body.password,
-            display_name=body.displayName,
+            display_name=f"{first} {last}".strip(),
+            first_name=first,
+            last_name=last,
+            phone=body.phone.strip(),
+            country=body.country.strip(),
+            residence=body.residence.strip(),
+            username=username,
         )
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
     consume_signup_proof(email, body.verificationToken)
     return user_to_dict(user)
+
+
+@router.get("/register-countries")
+def register_countries(db: Session = Depends(get_db)):
+    """Public country list for the signup form."""
+    from models.currency import Country
+
+    rows = db.exec(select(Country).where(Country.is_active == True).order_by(Country.name)).all()  # noqa: E712
+    return [{"id": str(row.id), "name": row.name} for row in rows]
 
 
 @router.post("/register-otp/challenge")
@@ -431,9 +456,9 @@ def create_user(
     if body.role in {"user", "partner"}:
         _ensure_login_profile(
             db,
-            uid=user.uid,
-            email=user.email or body.email,
-            display_name=user.display_name or body.displayName,
+            uid=user.get("id", ""),
+            email=user.get("email") or body.email,
+            display_name=(user.get("user_metadata") or {}).get("full_name") or body.displayName,
             as_partner=body.role == "partner",
             partner_entity_id=partner_entity_id,
         )
@@ -475,6 +500,10 @@ def approve_user(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
+    profile = user_to_dict(user if isinstance(user, dict) else {})
+    email = profile.get("email") or f"{uid}@unknown.local"
+    display_name = profile.get("displayName") or email.split("@")[0] or "New Worker"
+
     # Eagerly provision admin_users + workers so the admin can finish the
     # profile immediately instead of waiting for the worker's first login.
     if worker_type is not None:
@@ -482,9 +511,9 @@ def approve_user(
         if not admin_row:
             admin_row = AdminUser(
                 auth_user_id=uid,
-                email=user.email or f"{uid}@unknown.local",
+                email=email,
                 role=AdminRoleEnum.technical_admin,
-                display_name=user.display_name or (user.email or "").split("@")[0] or "New Worker",
+                display_name=display_name,
                 status=AccountStatusEnum.active,
             )
             db.add(admin_row)
@@ -492,13 +521,25 @@ def approve_user(
             db.refresh(admin_row)
 
         worker = db.exec(select(Worker).where(Worker.admin_user_id == admin_row.id)).first()
+        profile = user_to_dict(user if isinstance(user, dict) else {})
+        display_name = profile.get("displayName") or admin_row.display_name
+        country_name = body.country or profile.get("country") or "Unassigned"
+        username = (profile.get("username") or "").strip().lower() or None
+        if username:
+            taken = db.exec(select(Worker).where(Worker.username == username)).first()
+            if taken and taken.admin_user_id != admin_row.id:
+                username = None
+        if display_name and admin_row.display_name != display_name:
+            admin_row.display_name = display_name
+            db.add(admin_row)
         if not worker:
             worker = Worker(
                 admin_user_id=admin_row.id,
                 worker_type=worker_type,
                 partner_entity_id=body.partner_entity_id if worker_type == WorkerTypeEnum.partner_worker else None,
-                display_name=admin_row.display_name,
-                country=body.country or "Unassigned",
+                display_name=display_name or "New Worker",
+                username=username,
+                country=country_name,
                 pay_tier="unassigned",
                 status=WorkerStatusEnum.active,
                 start_date=date.today(),
@@ -509,8 +550,10 @@ def approve_user(
             worker.partner_entity_id = (
                 body.partner_entity_id if worker_type == WorkerTypeEnum.partner_worker else None
             )
-            if body.country:
-                worker.country = body.country
+            worker.display_name = display_name or worker.display_name
+            worker.country = country_name
+            if username:
+                worker.username = username
         db.add(worker)
         db.commit()
 
@@ -520,14 +563,23 @@ def approve_user(
 @router.patch("/users/{uid}/reject")
 def reject_user(
     uid: str,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Reject and disable a pending account request."""
+    """Reject a pending request and delete the account."""
+    del current_user
+    admin = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    if admin:
+        worker = db.exec(select(Worker).where(Worker.admin_user_id == admin.id)).first()
+        if worker:
+            db.delete(worker)
+        db.delete(admin)
+        db.commit()
     try:
-        user = reject_auth_user(uid)
+        delete_auth_user(uid)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
-    return user_to_dict(user)
+    return {"ok": True, "deleted": True}
 
 
 @router.patch("/users/{uid}/role")
@@ -557,7 +609,7 @@ def update_user_role(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
-    target_role = (target.custom_claims or {}).get("role", "user")
+    target_role = (target.get("app_metadata") or {}).get("role", "user")
     if actor_role == "admin" and target_role == "super_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -568,7 +620,7 @@ def update_user_role(
     if body.role == "partner":
         partner_entity_id = _ensure_partner_entity_id(
             db,
-            display_name=target.display_name or (target.email or "").split("@")[0] or "Partner",
+            display_name=(target.get("user_metadata") or {}).get("full_name") or (target.get("email") or "").split("@")[0] or "Partner",
             entity_id=partner_entity_id,
         )
 
@@ -581,8 +633,8 @@ def update_user_role(
         _ensure_login_profile(
             db,
             uid=uid,
-            email=target.email or f"{uid}@unknown.local",
-            display_name=target.display_name or (target.email or "").split("@")[0] or "Partner",
+            email=target.get("email") or f"{uid}@unknown.local",
+            display_name=(target.get("user_metadata") or {}).get("full_name") or (target.get("email") or "").split("@")[0] or "Partner",
             as_partner=True,
             partner_entity_id=partner_entity_id,
         )
@@ -608,8 +660,9 @@ def get_account_status(email: str, request: Request):
         user = get_auth_user_by_email(email)
     except Exception:
         return {"status": "unknown"}
-    claims = user.custom_claims or {}
-    status = claims.get("status", "approved" if not user.disabled else "pending")
+    claims = user.get("app_metadata") or {} if isinstance(user, dict) else {}
+    profile = user_to_dict(user) if isinstance(user, dict) else {}
+    status = profile.get("status") or claims.get("status") or "unknown"
     return {"status": status}
 
 
@@ -811,7 +864,7 @@ def ban_user(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
-    target_role = (target.custom_claims or {}).get("role", "user")
+    target_role = (target.get("app_metadata") or {}).get("role", "user")
     actor_role = current_user["role"]
 
     if actor_role == "admin" and target_role == "super_admin":
@@ -838,7 +891,7 @@ def unban_user(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
-    target_role = (target.custom_claims or {}).get("role", "user")
+    target_role = (target.get("app_metadata") or {}).get("role", "user")
     actor_role = current_user["role"]
 
     if actor_role == "admin" and target_role == "super_admin":

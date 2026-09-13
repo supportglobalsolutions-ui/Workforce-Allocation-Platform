@@ -43,6 +43,8 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let mouse: any;
     let resizeObserver: ResizeObserver | null = null;
+    let resizeFrame: number | null = null;
+    let resizeRemote: (() => void) | null = null;
 
     (async () => {
       try {
@@ -106,7 +108,9 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           setStatus('error');
         };
 
-        // Scale remote display to fit the container.
+        // Keep the RDP canvas matched to the actual browser viewport. A
+        // fullscreen transition happens after this component mounts, so a
+        // one-time initial size leaves a black band below the remote desktop.
         const fitDisplay = () => {
           const disp = client.getDisplay();
           const box = displayRef.current;
@@ -117,11 +121,26 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           const scale = Math.min(box.clientWidth / dw, box.clientHeight / dh);
           if (scale > 0 && Number.isFinite(scale)) disp.scale(scale);
         };
-        client.getDisplay().onresize = fitDisplay;
+        resizeRemote = () => {
+          if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+          resizeFrame = requestAnimationFrame(() => {
+            resizeFrame = null;
+            fitDisplay();
+            const box = displayRef.current;
+            if (!box || client.getDisplay().getWidth() === 0) return;
+            // Guacamole forwards this to RDP as a display-size update. This
+            // prevents a 16:9 desktop from retaining the smaller pre-fullscreen
+            // dimensions after the browser enters fullscreen.
+            client.sendSize?.(Math.floor(box.clientWidth), Math.floor(box.clientHeight));
+          });
+        };
+        client.getDisplay().onresize = resizeRemote;
         if (displayRef.current) {
-          resizeObserver = new ResizeObserver(fitDisplay);
+          resizeObserver = new ResizeObserver(resizeRemote);
           resizeObserver.observe(displayRef.current);
         }
+        window.addEventListener('resize', resizeRemote);
+        document.addEventListener('fullscreenchange', resizeRemote);
 
         // Mouse input (scale coordinates back to remote resolution).
         mouse = new Guacamole.Mouse(displayEl);
@@ -165,6 +184,9 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         connectData.append('GUAC_IMAGE', 'image/jpeg');
 
         client.connect(connectData.toString());
+        // Fullscreen sizing may settle a frame or two after connect.
+        requestAnimationFrame(resizeRemote);
+        window.setTimeout(resizeRemote, 180);
       } catch (e) {
         if (!mounted) return;
         setError(e instanceof Error ? e.message : 'Failed to start remote session');
@@ -175,6 +197,11 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
     return () => {
       mounted = false;
       resizeObserver?.disconnect();
+      if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
+      if (resizeRemote) {
+        window.removeEventListener('resize', resizeRemote);
+        document.removeEventListener('fullscreenchange', resizeRemote);
+      }
       if (keyboard) {
         keyboard.onkeydown = null;
         keyboard.onkeyup = null;

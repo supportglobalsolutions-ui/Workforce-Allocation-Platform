@@ -232,6 +232,12 @@ export interface ManagedUser {
   uid: string;
   email: string;
   displayName: string;
+  firstName?: string;
+  lastName?: string;
+  phone?: string;
+  country?: string;
+  residence?: string;
+  username?: string;
   role: AuthRole;
   status: AccountStatus;
   disabled: boolean;
@@ -268,17 +274,20 @@ export const apiUpdateUserRole = (
     : {}),
 });
 
-export const apiRegisterUser = (
-  email: string,
-  password: string,
-  displayName: string,
-  verificationToken: string,
-) => api.post<ManagedUser>('/auth/register', {
-  email,
-  password,
-  displayName,
-  verificationToken,
-});
+export const apiRegisterUser = (body: {
+  email: string;
+  password: string;
+  firstName: string;
+  lastName: string;
+  phone: string;
+  country: string;
+  residence: string;
+  username?: string;
+  verificationToken: string;
+}) => api.post<ManagedUser>('/auth/register', body);
+
+export const apiListSignupCountries = () =>
+  api.get<{ id: string; name: string }[]>('/auth/register-countries');
 
 export const requestSignupOtp = (email: string, resend = false) =>
   api.post<SignupOtpChallenge>('/auth/register-otp/challenge', { email, resend });

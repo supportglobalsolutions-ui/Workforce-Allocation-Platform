@@ -101,11 +101,11 @@ export default function SessionDetailPanel({
   const saveEvidence = async () => {
     if (!allowEvidenceEdit) return;
     if (!startAt || !endAt) {
-      setError('Start time and stop / end time are required for every session.');
+      setError('Enter a start time and an end time.');
       return;
     }
     if (workMinutes == null) {
-      setError('Stop / end time must be after the start time.');
+      setError('End time must be after the start time.');
       return;
     }
     setSaving(true);
@@ -165,16 +165,14 @@ export default function SessionDetailPanel({
             <p className="text-sm font-medium text-gray-800">{session.type}</p>
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5">RDP uptime</p>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5">Connected</p>
             <p className="text-sm font-bold text-gray-800 tabular-nums">{showRdp}</p>
-            <p className="text-[10px] text-gray-400 mt-0.5">Machine connected</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-emerald-600 mb-0.5">Work hours</p>
             <p className={`text-sm font-bold tabular-nums ${workMinutes == null ? 'text-gray-400' : 'text-emerald-700'}`}>
-              {workMinutes == null ? 'Not entered' : formatMins(workMinutes)}
+              {workMinutes == null ? '—' : formatMins(workMinutes)}
             </p>
-            <p className="text-[10px] text-gray-400 mt-0.5">Screenshots · payroll</p>
           </div>
           <div>
             <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-1">Status</p>
@@ -197,9 +195,10 @@ export default function SessionDetailPanel({
             />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time entered by worker</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time</span>
                 <input
                   type="datetime-local"
+                  required
                   value={startAt}
                   onChange={(e) => setStartAt(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
@@ -207,7 +206,7 @@ export default function SessionDetailPanel({
               </label>
             ) : (
               <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Start time entered by worker</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Start time</span>
                 {formatClock(session.image_start_at)}
               </p>
             )}
@@ -226,9 +225,10 @@ export default function SessionDetailPanel({
             />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Stop / end time entered by worker</span>
+                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">End time</span>
                 <input
                   type="datetime-local"
+                  required
                   value={endAt}
                   onChange={(e) => setEndAt(e.target.value)}
                   className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
@@ -236,7 +236,7 @@ export default function SessionDetailPanel({
               </label>
             ) : (
               <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Stop / end time entered by worker</span>
+                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">End time</span>
                 {formatClock(session.image_end_at)}
               </p>
             )}
@@ -246,23 +246,17 @@ export default function SessionDetailPanel({
         {error && <p className="px-6 text-xs text-red-600 mb-2">{error}</p>}
 
         {allowEvidenceEdit && (
-          <div className="px-6 pb-3">
+          <div className="px-6 pb-6">
             <button
               type="button"
               disabled={saving || !startAt || !endAt}
               onClick={saveEvidence}
               className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5"
             >
-              {saving ? 'Saving…' : 'Save work times & calculate work hours'}
+              {saving ? 'Saving…' : 'Save times'}
             </button>
           </div>
         )}
-
-        <div className="px-6 pb-5">
-          <p className="text-center text-[11px] text-gray-400">
-            RDP uptime is how long the machine was connected. Work hours are the difference between the worker-entered start and stop / end times used by payroll.
-          </p>
-        </div>
       </div>
     </div>
   );

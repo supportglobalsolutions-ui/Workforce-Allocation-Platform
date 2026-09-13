@@ -189,6 +189,34 @@ def _fetch_message(client: httpx.Client, resend_id: str) -> tuple[Optional[str],
     return normalize_event(((resp.json() or {}).get("last_event") or "")), None
 
 
+async def run_email_events_loop(interval_seconds: int = 300) -> None:
+    """
+    Keep delivery outcomes current in the background.
+
+    Resend accepting a message only means it was queued. Without this poll the
+    log sits at "sent" forever while the provider knows the address bounced or
+    is suppressed — so a worker who never receives a verification code looks,
+    from inside the app, like a successful send.
+    """
+    import asyncio
+
+    from core.database import engine
+
+    logger.info("Email delivery-event poll started (every %ss)", interval_seconds)
+    while True:
+        try:
+            def _tick() -> dict[str, Any]:
+                with Session(engine) as db:
+                    return sync_delivery_events(db, limit=100)
+
+            stats = await asyncio.to_thread(_tick)
+            if stats.get("updated"):
+                logger.info("Email delivery events updated: %s", stats)
+        except Exception:
+            logger.exception("Email delivery-event poll failed")
+        await asyncio.sleep(interval_seconds)
+
+
 def sync_delivery_events(
     db: Session,
     *,
