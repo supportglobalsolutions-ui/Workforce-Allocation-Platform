@@ -70,7 +70,20 @@ export type LoginOtpChallenge = {
   sent_to: string | null;
   ttl_seconds: number | null;
   expires_at: string | null;
+  resends_remaining?: number;
+  sending?: boolean;
 };
+
+export type SignupOtpChallenge = {
+  sent_to: string | null;
+  ttl_seconds: number | null;
+  resends_remaining?: number;
+  sending?: boolean;
+};
+
+export function isPrivilegedLoginRole(role: string | null | undefined): boolean {
+  return role === 'admin' || role === 'super_admin';
+}
 
 /** Password sign-in only — does not set the app session cookie. */
 export async function signInWithPassword(
@@ -87,8 +100,8 @@ export async function signInWithPassword(
   };
 }
 
-export async function requestLoginOtp(): Promise<LoginOtpChallenge> {
-  return api.post<LoginOtpChallenge>('/auth/login-otp/challenge', {});
+export async function requestLoginOtp(resend = false): Promise<LoginOtpChallenge> {
+  return api.post<LoginOtpChallenge>('/auth/login-otp/challenge', { resend });
 }
 
 /** Record a *failed* password attempt toward rate limits (do not call on success). */
@@ -140,9 +153,18 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
 }
 
 export async function signOut(): Promise<void> {
-  await clearLoginOtp();
-  await clearSessionCookie();
-  await supabase.auth.signOut();
+  // Clear local UI auth first; server MFA clear is best-effort in background.
+  void clearLoginOtp();
+  void clearSessionCookie();
+  try {
+    await supabase.auth.signOut({ scope: 'local' });
+  } catch {
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      /* ignore */
+    }
+  }
 }
 
 export function subscribeAuthState(
@@ -246,8 +268,23 @@ export const apiUpdateUserRole = (
     : {}),
 });
 
-export const apiRegisterUser = (email: string, password: string, displayName: string) =>
-  api.post<ManagedUser>('/auth/register', { email, password, displayName });
+export const apiRegisterUser = (
+  email: string,
+  password: string,
+  displayName: string,
+  verificationToken: string,
+) => api.post<ManagedUser>('/auth/register', {
+  email,
+  password,
+  displayName,
+  verificationToken,
+});
+
+export const requestSignupOtp = (email: string, resend = false) =>
+  api.post<SignupOtpChallenge>('/auth/register-otp/challenge', { email, resend });
+
+export const verifySignupOtp = (email: string, code: string) =>
+  api.post<{ verification_token: string }>('/auth/register-otp/verify', { email, code });
 
 export const apiApproveUser = (
   uid: string,

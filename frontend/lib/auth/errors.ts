@@ -18,8 +18,11 @@ export function getAuthErrorMessage(err: unknown): string {
   ) {
     return 'Your account is awaiting admin approval or has been disabled.';
   }
+  if (lower.includes('too many failed sign-in') || lower.includes('resend the verification code')) {
+    return raw;
+  }
   if (lower.includes('too many requests') || lower.includes('rate limit')) {
-    return 'Too many failed sign-in attempts (5). Try again in about 15 minutes.';
+    return 'Too many failed sign-in attempts (10). Try again in about 15 minutes.';
   }
   if (
     lower.includes('already registered') ||

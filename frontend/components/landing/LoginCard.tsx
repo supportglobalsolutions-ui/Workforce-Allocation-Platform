@@ -23,7 +23,7 @@ const DEFAULT_SUPER_ADMIN_EMAIL = '';
 const DEFAULT_SUPER_ADMIN_PASSWORD = '';
 
 export default function LoginCard({ onSuccess, className = '' }: LoginCardProps) {
-  const { login, verifyOtp, resendOtp, cancelOtp, session, isLoading } = useAuth();
+  const { login, verifyOtp, resendOtp, cancelOtp, session, isLoading, pendingLoginOtp } = useAuth();
   const isDark = true;
   const router = useRouter();
 
@@ -36,14 +36,14 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   const [otpCode, setOtpCode] = useState('');
 
   useEffect(() => {
-    if (!session || otpChallenge) return;
+    if (!session || pendingLoginOtp || otpChallenge) return;
     setAuthRoleCookie(session.authRole);
     if (onSuccess) {
       onSuccess();
     } else {
       router.replace(ROLE_LANDING[session.primaryPortal]);
     }
-  }, [session, router, onSuccess, otpChallenge]);
+  }, [session, router, onSuccess, otpChallenge, pendingLoginOtp]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -70,11 +70,13 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (loading || !otpChallenge?.challenge_id) return;
+    if (loading) return;
+    const challengeId = pendingLoginOtp?.challenge?.challenge_id ?? otpChallenge?.challenge_id;
+    if (!challengeId) return;
     setError('');
     setLoading(true);
     try {
-      const result = await verifyOtp(otpChallenge.challenge_id, otpCode);
+      const result = await verifyOtp(challengeId, otpCode);
       if (!result.ok) {
         setError(result.error ?? 'Invalid code.');
       } else {
@@ -122,23 +124,27 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
     ? 'text-[10px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5 block'
     : 'text-[10px] font-bold uppercase tracking-wider text-emerald-800/55 mb-1.5 block';
 
-  if (otpChallenge?.required) {
-    const reasonLabel =
-      otpChallenge.reason === 'privileged'
-        ? 'Admin / executive sign-in requires email verification every time.'
-        : 'First sign-in requires email verification.';
+  const activeChallenge = pendingLoginOtp?.challenge ?? otpChallenge;
+  const showOtp = Boolean(pendingLoginOtp) || Boolean(otpChallenge?.required);
+  const sendingCode = Boolean(pendingLoginOtp?.sending) || (!activeChallenge?.challenge_id && showOtp);
+  const sentTo = pendingLoginOtp?.sentTo ?? activeChallenge?.sent_to ?? 'your email';
+  const resendsLeft = pendingLoginOtp?.resendsRemaining ?? activeChallenge?.resends_remaining ?? 5;
 
+  if (showOtp) {
     return (
       <AuthGlassCard className={className}>
         <div className="flex flex-col items-center text-center mb-6">
           <GlobalSolutionsLogo size="lg" showOperations={false} />
           <div className="mt-4 flex items-center gap-2 text-[#0df5c4]">
             <ShieldCheck size={18} />
-            <span className="text-sm font-bold">Check your email</span>
+            <span className="text-sm font-bold">
+              {sendingCode ? 'Sending verification code…' : 'Check your email'}
+            </span>
           </div>
           <p className="mt-2 text-xs text-[#98b7af] max-w-xs">
-            {reasonLabel} We sent a 6-digit code to{' '}
-            <span className="text-white font-semibold">{otpChallenge.sent_to ?? 'your email'}</span>.
+            Admin sign-in needs email verification.{' '}
+            {sendingCode ? 'Sending a 6-digit code to ' : 'We sent a 6-digit code to '}
+            <span className="text-white font-semibold">{sentTo}</span>.
           </p>
         </div>
 
@@ -153,8 +159,9 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
               maxLength={8}
               value={otpCode}
               onChange={(e) => setOtpCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
-              placeholder="••••••"
-              className={`${inputClass} pl-4 tracking-[0.35em] text-center font-mono text-lg`}
+              placeholder={sendingCode ? 'Sending…' : '••••••'}
+              disabled={sendingCode || !activeChallenge?.challenge_id}
+              className={`${inputClass} pl-4 tracking-[0.35em] text-center font-mono text-lg disabled:opacity-60`}
             />
           </div>
 
@@ -162,10 +169,10 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
 
           <button
             type="submit"
-            disabled={loading || otpCode.length < 6}
+            disabled={loading || sendingCode || !activeChallenge?.challenge_id || otpCode.length < 6}
             className="w-full mt-2 group relative flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-[0.99] transition-all shadow-[0_0_28px_rgba(13,245,196,0.35)] disabled:opacity-60"
           >
-            {loading ? (
+            {loading || sendingCode ? (
               <SpinningDots size="md" className="text-[#01241c]" />
             ) : (
               <>
@@ -187,10 +194,10 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           <button
             type="button"
             onClick={handleResend}
-            disabled={loading}
+            disabled={loading || sendingCode || resendsLeft <= 0}
             className="text-[#0df5c4] hover:underline font-semibold disabled:opacity-50"
           >
-            Resend code
+            {resendsLeft <= 0 ? 'No resends left' : `Resend code (${resendsLeft})`}
           </button>
         </div>
       </AuthGlassCard>

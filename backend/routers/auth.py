@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
 
@@ -28,7 +28,7 @@ from core.supabase_auth import (
     verify_supabase_token,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
-from core.rate_limit import check_rate_limit
+from core.rate_limit import check_rate_limit, current_rate_count
 from core.session_cookie import sign_session
 from models.admin_users import AdminUser
 from models.enums import (
@@ -43,11 +43,22 @@ from models.worker import Worker
 from .deps import get_admin_user
 from core.security import get_current_user
 from services.login_otp import (
+    OTP_RESEND_LIMIT,
+    OTP_RESEND_WINDOW_SECONDS,
     clear_login_mfa,
+    deliver_login_otp_email,
     has_login_mfa,
     issue_login_otp,
     login_otp_required,
     verify_login_otp,
+)
+from services.signup_otp import (
+    OTP_RESEND_LIMIT as SIGNUP_OTP_RESEND_LIMIT,
+    assert_signup_proof,
+    consume_signup_proof,
+    deliver_signup_otp_email,
+    issue_signup_otp,
+    verify_signup_otp,
 )
 
 router = APIRouter()
@@ -72,6 +83,7 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     displayName: str = Field(min_length=1, max_length=120)
+    verificationToken: str = Field(min_length=20, max_length=256)
 
 
 class SessionTokenRequest(BaseModel):
@@ -87,6 +99,20 @@ class ApproveUserRequest(BaseModel):
 
 class LoginOtpVerifyRequest(BaseModel):
     challenge_id: UUID
+    code: str = Field(min_length=6, max_length=8, pattern=r"^\d+$")
+
+
+class LoginOtpChallengeRequest(BaseModel):
+    resend: bool = False
+
+
+class SignupOtpChallengeRequest(BaseModel):
+    email: EmailStr
+    resend: bool = False
+
+
+class SignupOtpVerifyRequest(BaseModel):
+    email: EmailStr
     code: str = Field(min_length=6, max_length=8, pattern=r"^\d+$")
 
 
@@ -191,15 +217,35 @@ def _ensure_login_profile(
     return worker
 
 
-# ── Endpoints ─────────────────────────────────────────────────────────────────
+FAILED_LOGIN_LIMIT = 10
+FAILED_LOGIN_WINDOW_SECONDS = 900
+FAILED_LOGIN_DETAIL = (
+    "Too many failed sign-in attempts (10). Try again in about 15 minutes."
+)
+OTP_RESEND_DETAIL = (
+    "You can resend the verification code 5 times per hour. Try again later."
+)
+
+
+def _queue_otp_email(background_tasks: BackgroundTasks, payload: dict, *, signup: bool) -> dict:
+    delivery = payload.pop("_delivery", None)
+    if delivery:
+        if signup:
+            background_tasks.add_task(deliver_signup_otp_email, **delivery)
+        else:
+            background_tasks.add_task(deliver_login_otp_email, **delivery)
+    return payload
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
 def register_user(body: RegisterRequest, request: Request):
     """
-    Public self-registration. Creates a banned Supabase user pending admin approval.
+    Public self-registration. Requires a code sent to the email first.
+    Creates a banned Supabase user pending admin approval.
     """
-    check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=body.email.lower())
+    email = body.email.strip().lower()
+    check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=email)
     check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
+    assert_signup_proof(email, body.verificationToken)
     if len(body.password) < 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -214,7 +260,76 @@ def register_user(body: RegisterRequest, request: Request):
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
+    consume_signup_proof(email, body.verificationToken)
     return user_to_dict(user)
+
+
+@router.post("/register-otp/challenge")
+def register_otp_challenge(
+    body: SignupOtpChallengeRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Send a code before a worker account exists. Resend is limited to 5 per hour."""
+    email = body.email.strip().lower()
+    try:
+        existing = get_auth_user_by_email(email)
+    except Exception:
+        existing = None
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists.",
+        )
+
+    resends_remaining = SIGNUP_OTP_RESEND_LIMIT
+    if body.resend:
+        used = check_rate_limit(
+            request,
+            scope="signup-otp-resend",
+            limit=SIGNUP_OTP_RESEND_LIMIT,
+            window_seconds=OTP_RESEND_WINDOW_SECONDS,
+            key_suffix=email,
+            detail=OTP_RESEND_DETAIL,
+        )
+        resends_remaining = max(SIGNUP_OTP_RESEND_LIMIT - used, 0)
+    else:
+        # Allow a few fresh starts, but don't treat them as resends.
+        check_rate_limit(
+            request,
+            scope="signup-otp-start",
+            limit=8,
+            window_seconds=OTP_RESEND_WINDOW_SECONDS,
+            key_suffix=email,
+            detail="Too many verification emails for this address. Try again in about an hour.",
+        )
+        used = current_rate_count(
+            request,
+            scope="signup-otp-resend",
+            key_suffix=email,
+        )
+        resends_remaining = max(SIGNUP_OTP_RESEND_LIMIT - used, 0)
+
+    return _queue_otp_email(
+        background_tasks,
+        issue_signup_otp(email, resends_remaining=resends_remaining),
+        signup=True,
+    )
+
+
+@router.post("/register-otp/verify")
+def register_otp_verify(body: SignupOtpVerifyRequest, request: Request):
+    """Confirm the signup code and return a one-time token for account creation."""
+    email = body.email.strip().lower()
+    check_rate_limit(
+        request,
+        scope="signup-otp-verify",
+        limit=10,
+        window_seconds=900,
+        key_suffix=email,
+        detail="Too many incorrect codes. Try again in about 15 minutes.",
+    )
+    return verify_signup_otp(email, body.code)
 
 
 _ORG_ROLE_TO_AUTH_ROLE = {
@@ -543,14 +658,20 @@ def login_attempt(body: LoginAttemptRequest, request: Request):
     Frontend must call this only after signInWithPassword fails.
     """
     email = body.email.strip().lower()
-    # Failed password attempts only (frontend must call after a failed sign-in).
-    check_rate_limit(request, scope="login-attempt-ip", limit=5, window_seconds=900)
+    check_rate_limit(
+        request,
+        scope="login-attempt-ip",
+        limit=FAILED_LOGIN_LIMIT,
+        window_seconds=FAILED_LOGIN_WINDOW_SECONDS,
+        detail=FAILED_LOGIN_DETAIL,
+    )
     check_rate_limit(
         request,
         scope="login-attempt-email",
-        limit=5,
-        window_seconds=900,
+        limit=FAILED_LOGIN_LIMIT,
+        window_seconds=FAILED_LOGIN_WINDOW_SECONDS,
         key_suffix=email,
+        detail=FAILED_LOGIN_DETAIL,
     )
     return {"ok": True}
 
@@ -612,23 +733,44 @@ def password_reset(
 @router.post("/login-otp/challenge")
 def login_otp_challenge(
     request: Request,
+    background_tasks: BackgroundTasks,
+    body: LoginOtpChallengeRequest = Body(default_factory=LoginOtpChallengeRequest),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    """After password auth: send login OTP when first-time or privileged role."""
+    """After password auth: send login OTP for admin / super_admin only."""
     email = (current_user.get("email") or "").lower()
-    check_rate_limit(request, scope="login-otp-challenge", limit=6, window_seconds=3600)
-    if email:
-        check_rate_limit(
+    resend = bool(body.resend)
+    resends_remaining = OTP_RESEND_LIMIT
+    if resend and email:
+        used = check_rate_limit(
             request,
-            scope="login-otp-challenge-email",
-            limit=3,
-            window_seconds=3600,
+            scope="login-otp-resend",
+            limit=OTP_RESEND_LIMIT,
+            window_seconds=OTP_RESEND_WINDOW_SECONDS,
+            key_suffix=email,
+            detail=OTP_RESEND_DETAIL,
+        )
+        resends_remaining = max(OTP_RESEND_LIMIT - used, 0)
+    elif email:
+        used = current_rate_count(
+            request,
+            scope="login-otp-resend",
             key_suffix=email,
         )
+        resends_remaining = max(OTP_RESEND_LIMIT - used, 0)
 
     admin = get_admin_user(db, current_user)
-    return issue_login_otp(db, admin=admin, auth_role=current_user.get("role", "user"))
+    return _queue_otp_email(
+        background_tasks,
+        issue_login_otp(
+            db,
+            admin=admin,
+            auth_role=current_user.get("role", "user"),
+            resends_remaining=resends_remaining,
+        ),
+        signup=False,
+    )
 
 
 @router.post("/login-otp/verify")

@@ -1,9 +1,8 @@
 """
 Login OTP via Resend.
 
-Required when:
-- first login ever (admin_users.first_login_verified_at is null), OR
-- every login for privileged roles (admin / super_admin / executive)
+Required on every sign-in for privileged roles (admin / super_admin).
+Workers do not get a login code — they verify email at registration instead.
 
 Codes go to the user's own email using the GlobalSolutions branded template.
 After verify, Redis stores a short-lived MFA ok flag used by session-token.
@@ -42,6 +41,8 @@ PURPOSE_LOGIN = "login"
 PRIVILEGED_ROLES = frozenset({"admin", "super_admin"})
 # How long a verified login MFA flag lasts (covers session cookie lifetime).
 MFA_OK_TTL_SECONDS = 60 * 60 * 12  # 12 hours
+OTP_RESEND_LIMIT = 5
+OTP_RESEND_WINDOW_SECONDS = 60 * 60
 
 
 def _mfa_key(uid: str) -> str:
@@ -75,9 +76,46 @@ def has_login_mfa(uid: str) -> bool:
 
 
 def login_otp_required(admin: AdminUser, auth_role: str) -> bool:
-    if (auth_role or "").strip() in PRIVILEGED_ROLES:
-        return True
-    return admin.first_login_verified_at is None
+    """Admins and executives confirm every sign-in. Workers sign in with password only."""
+    del admin  # role decides; workers are not gated here
+    return (auth_role or "").strip() in PRIVILEGED_ROLES
+
+
+def deliver_login_otp_email(
+    *,
+    challenge_id: str,
+    to_email: str,
+    code: str,
+    title: str,
+    intro: str,
+) -> None:
+    """Send the login code after the API has already returned the verification screen."""
+    from uuid import UUID as UUIDType
+
+    from core.database import engine
+
+    html = render_login_otp_html(title=title, intro=intro).replace("{{CODE}}", code)
+    text = render_login_otp_text(title=title, intro=intro).replace("{{CODE}}", code)
+    try:
+        with Session(engine) as session:
+            log = send_email(
+                session,
+                to_email=to_email,
+                subject=f"GlobalSolutions · {title}",
+                html=html,
+                text=text,
+                template="otp",
+            )
+            if log.status == "sent":
+                return
+            challenge = session.get(AdminOtpChallenge, UUIDType(challenge_id))
+            if challenge and challenge.consumed_at is None:
+                challenge.consumed_at = _utcnow()
+                session.add(challenge)
+                session.commit()
+            logger.error("Login OTP email failed: %s", log.error)
+    except Exception:
+        logger.exception("Login OTP email failed for %s", to_email)
 
 
 def issue_login_otp(
@@ -85,6 +123,7 @@ def issue_login_otp(
     *,
     admin: AdminUser,
     auth_role: str,
+    resends_remaining: int = OTP_RESEND_LIMIT,
 ) -> dict:
     """Send a login OTP to the account email. Clears any prior MFA flag."""
     if not login_otp_required(admin, auth_role):
@@ -95,10 +134,12 @@ def issue_login_otp(
             "sent_to": None,
             "ttl_seconds": None,
             "expires_at": None,
+            "resends_remaining": OTP_RESEND_LIMIT,
+            "sending": False,
         }
 
     clear_login_mfa(admin.auth_user_id)
-    reason = "privileged" if (auth_role or "").strip() in PRIVILEGED_ROLES else "first_login"
+    reason = "privileged"
     to_email = (admin.email or "").strip()
     if not to_email or "@" not in to_email:
         raise HTTPException(status_code=400, detail="Account has no email for verification.")
@@ -138,38 +179,11 @@ def issue_login_otp(
     db.commit()
     db.refresh(challenge)
 
-    if reason == "privileged":
-        intro = (
-            "A sign-in to your GlobalSolutions Operations account needs confirmation. "
-            "Enter this code to finish logging in."
-        )
-        title = "Confirm your sign-in"
-    else:
-        intro = (
-            "Welcome to GlobalSolutions. Confirm this first sign-in with the code below "
-            "to secure your account."
-        )
-        title = "Verify your first sign-in"
-
-    html = render_login_otp_html(title=title, intro=intro)
-    text = render_login_otp_text(title=title, intro=intro)
-
-    log = send_email(
-        db,
-        to_email=to_email,
-        subject=f"GlobalSolutions · {title}",
-        html=html.replace("{{CODE}}", code),
-        text=text.replace("{{CODE}}", code),
-        template="otp",
+    intro = (
+        "A sign-in to your GlobalSolutions Operations account needs confirmation. "
+        "Enter this code to finish logging in."
     )
-    if log.status != "sent":
-        challenge.consumed_at = _utcnow()
-        db.add(challenge)
-        db.commit()
-        raise HTTPException(
-            status_code=502,
-            detail=f"Could not send the verification code: {log.error or 'email failed'}",
-        )
+    title = "Confirm your sign-in"
 
     return {
         "required": True,
@@ -178,6 +192,15 @@ def issue_login_otp(
         "sent_to": mask_email(to_email),
         "ttl_seconds": int(OTP_TTL.total_seconds()),
         "expires_at": challenge.expires_at.isoformat() if challenge.expires_at else None,
+        "resends_remaining": resends_remaining,
+        "sending": True,
+        "_delivery": {
+            "challenge_id": str(challenge.id),
+            "to_email": to_email,
+            "code": code,
+            "title": title,
+            "intro": intro,
+        },
     }
 
 

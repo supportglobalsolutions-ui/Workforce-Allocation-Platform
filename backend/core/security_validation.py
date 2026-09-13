@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from urllib.parse import urlparse
 
 from core.config import settings
@@ -27,14 +28,35 @@ def validate_production_settings() -> None:
         logger.warning("SESSION_COOKIE_SECRET unset — falling back to OTP_PEPPER for signed cookies")
 
 
+_STORAGE_OBJECT_PATH = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,300}$")
+
+
 def validate_session_image_url(url: str) -> str:
-    """Allow only HTTPS Supabase Storage URLs for session evidence.
+    """Allow only this project's Supabase Storage objects as session evidence.
 
     Restricting the host stops a worker submitting a link to an arbitrary
     server as proof of work, which would both leak request metadata and let
     the "evidence" change after review.
+
+    Two accepted forms:
+      * a bucket-relative object path ("<session_id>/start.jpg") — what the app
+        stores now that the bucket is private and read through signed URLs;
+      * a legacy HTTPS Supabase Storage URL, still present on older rows.
     """
-    parsed = urlparse(url.strip())
+    value = url.strip()
+    if not value:
+        raise ValueError("Image URL is required")
+
+    parsed = urlparse(value)
+
+    # Bucket-relative path: no scheme and no host, so it cannot point off-site.
+    if not parsed.scheme and not parsed.netloc:
+        if value.startswith("/") or "\\" in value or ".." in value:
+            raise ValueError("Image path is invalid")
+        if not _STORAGE_OBJECT_PATH.match(value):
+            raise ValueError("Image path is invalid")
+        return value
+
     if parsed.scheme != "https":
         raise ValueError("Image URL must use HTTPS")
     host = (parsed.hostname or "").lower()
@@ -43,6 +65,6 @@ def validate_session_image_url(url: str) -> str:
 
     project_host = (urlparse(settings.SUPABASE_URL).hostname or "").lower()
     if project_host and host == project_host and "/storage/v1/object/" in parsed.path:
-        return url.strip()
+        return value
 
     raise ValueError("Image URL must be a Supabase Storage link for this project")

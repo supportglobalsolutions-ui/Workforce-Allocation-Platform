@@ -5,13 +5,19 @@ import { Maximize2, Minimize2, Power } from 'lucide-react';
 
 import RdpViewer from '@/components/rdp/RdpViewer';
 import { api } from '@/lib/api';
-import { endRdpConnection } from '@/lib/rdp';
+import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
   nickname: string;
   country: string;
   client_group: string;
+}
+
+function evidenceUrl(rdpId: string, sessionId?: string | null) {
+  const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
+  if (sessionId) q.set('session', sessionId);
+  return `/worker/session-history?${q.toString()}`;
 }
 
 /** Dedicated full-screen tab for the remote desktop. */
@@ -21,8 +27,8 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   const [loading, setLoading] = useState(true);
   const [showMenu, setShowMenu] = useState(false);
   const [confirming, setConfirming] = useState(false);
-  const [disconnecting, setDisconnecting] = useState(false);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
     document.title = 'Remote desktop';
@@ -30,11 +36,15 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
       .then((r) => { setMachine(r); document.title = `${r.nickname} — Remote desktop`; })
       .catch(() => setMachine(null))
       .finally(() => setLoading(false));
+    getMyActiveRdp()
+      .then((active) => {
+        if (active?.rdp_resource_id === rdpId && active.session_id) {
+          setSessionId(active.session_id);
+        }
+      })
+      .catch(() => { /* ignore */ });
   }, [rdpId]);
 
-  // Browsers only grant fullscreen from a user gesture, so an automatic request
-  // on mount is usually rejected. Try anyway, then track the real state and let
-  // the worker toggle it from the control bar.
   useEffect(() => {
     document.documentElement.requestFullscreen?.().catch(() => {});
     const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
@@ -55,40 +65,49 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
     }
   }, []);
 
-  // If the session is ended from the control page, this tab must not linger.
   useEffect(() => {
     let ch: BroadcastChannel | null = null;
     try {
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
+          // Ended from the control page — this desktop tab closes itself.
+          const dest = e.data?.evidenceUrl || evidenceUrl(rdpId, e.data?.sessionId);
           window.close();
+          setTimeout(() => {
+            if (!window.closed) window.location.replace(dest);
+          }, 150);
         }
       };
     } catch { /* ignore */ }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, [rdpId]);
 
-  /** Close tab — called by both the red button and Guacamole's disconnect event. */
-  const closeTab = useCallback(() => {
+  const leaveToEvidence = useCallback((sid?: string | null) => {
     sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
+    const dest = evidenceUrl(rdpId, sid ?? sessionId);
     try {
       const ch = new BroadcastChannel('rdp-events');
-      ch.postMessage({ type: 'session-ended', rdpId });
+      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid ?? sessionId, evidenceUrl: dest });
       ch.close();
     } catch { /* ignore */ }
+    // Close only this tab. The opener stays open and shows the session record.
+    // window.close() is permitted because this tab was created by window.open;
+    // if it was opened by hand instead, fall back to navigating.
     window.close();
-  }, [rdpId]);
+    setTimeout(() => {
+      if (!window.closed) window.location.replace(dest);
+    }, 150);
+  }, [rdpId, sessionId]);
 
   const handleDisconnect = useCallback(() => {
-    if (disconnecting) return;
-    setDisconnecting(true);
     setShowMenu(false);
     setConfirming(false);
-    // Close immediately — API + Guacamole cleanup continue in the background.
-    closeTab();
-    void endRdpConnection(rdpId).catch(() => { /* already closing */ });
-  }, [disconnecting, rdpId, closeTab]);
+    const sid = sessionId;
+    // Leave immediately — no "Disconnecting…" wait.
+    leaveToEvidence(sid);
+    void endRdpConnection(rdpId).catch(() => { /* already left */ });
+  }, [rdpId, sessionId, leaveToEvidence]);
 
   if (loading) {
     return (
@@ -107,10 +126,25 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         />
       )}
 
-      {/* ── Control bar ── */}
-      <div className="absolute top-0 left-1/2 -translate-x-1/2 z-30">
-        {/* overflow-hidden lives here so it rounds the buttons without
-            clipping the menu that drops out of the wrapper below */}
+      {/* Windowed: show the Global Solutions bar so the desktop reads as part of
+          the platform. Full screen: nothing but the remote desktop. */}
+      {!isFullscreen && (
+        <div className="absolute top-0 inset-x-0 z-10 h-11 flex items-center gap-3 px-4 bg-[#0b1220] border-b border-white/10">
+          <span className="font-bold text-sm text-white tracking-tight">
+            Global<span className="text-emerald-accent">Solutions</span>
+          </span>
+          <span className="text-[11px] uppercase tracking-wide text-white/40">Remote desktop</span>
+          {machine && (
+            <span className="text-xs text-white/60">
+              {machine.nickname} · {machine.country} · {machine.client_group}
+            </span>
+          )}
+        </div>
+      )}
+
+      <div
+        className={`absolute left-1/2 -translate-x-1/2 z-30 ${isFullscreen ? 'top-0' : 'top-11'}`}
+      >
         <div className="flex items-stretch rounded-b-lg overflow-hidden shadow-lg shadow-black/60">
           <button
             type="button"
@@ -134,9 +168,7 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         {showMenu && (
           <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30">
             {confirming ? (
-              /* ── Confirmation modal ── */
               <div className="w-[22rem] rounded-2xl overflow-hidden shadow-2xl shadow-black/80 border border-red-900/40">
-                {/* top accent strip */}
                 <div className="h-[3px] bg-gradient-to-r from-red-800 via-red-500 to-red-800" />
                 <div className="bg-[#0f0808] px-6 pt-5 pb-6 space-y-5">
                   <div className="flex items-start gap-4">
@@ -147,7 +179,7 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
                       <p className="text-[15px] font-bold text-white leading-snug">Disconnect session?</p>
                       <p className="mt-1 text-sm text-white/55 leading-relaxed">
                         <span className="text-white/80 font-medium">{machine?.nickname}</span>
-                        {' '}will be released back to the pool.
+                        {' '}will be released. You will add start &amp; end images next.
                       </p>
                     </div>
                   </div>
@@ -162,16 +194,14 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
                     <button
                       type="button"
                       onClick={handleDisconnect}
-                      disabled={disconnecting}
-                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-500 shadow-md shadow-red-900/60 disabled:opacity-50 transition-colors"
+                      className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-500 shadow-md shadow-red-900/60 transition-colors"
                     >
-                      {disconnecting ? 'Disconnecting…' : 'Yes, disconnect'}
+                      Yes, disconnect
                     </button>
                   </div>
                 </div>
               </div>
             ) : (
-              /* ── First-click item ── */
               <div className="rounded-xl overflow-hidden shadow-xl border border-red-900/30 bg-[#0f0808] min-w-[180px]">
                 <button
                   type="button"
@@ -187,8 +217,10 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         )}
       </div>
 
-      {/* Pass closeTab so Guacamole's own disconnect event closes the tab instantly */}
-      <RdpViewer rdpId={rdpId} className="h-full" onDisconnect={closeTab} />
+      {/* Sits below the Global Solutions bar when windowed, full-bleed when maximised. */}
+      <div className={`absolute inset-x-0 bottom-0 ${isFullscreen ? 'top-0' : 'top-11'}`}>
+        <RdpViewer rdpId={rdpId} className="h-full" onDisconnect={() => leaveToEvidence(sessionId)} />
+      </div>
     </div>
   );
 }

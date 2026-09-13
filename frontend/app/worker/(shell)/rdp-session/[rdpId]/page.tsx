@@ -75,27 +75,37 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
-          router.push('/worker/rdp-claim-board');
+          if (e.data?.evidenceUrl) {
+            router.push(e.data.evidenceUrl);
+            return;
+          }
+          const sid = e.data?.sessionId ?? sessionId;
+          const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
+          if (sid) q.set('session', sid);
+          router.push(`/worker/session-history?${q.toString()}`);
         }
       };
     } catch { /* ignore */ }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
-  }, [rdpId, router]);
+  }, [rdpId, router, sessionId]);
 
   const handleEndConnection = useCallback(() => {
     if (ending) return;
     setEnding(true);
     setError(null);
     setEndStep('idle');
+    const sid = sessionId;
+    const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
+    if (sid) q.set('session', sid);
+    const dest = `/worker/session-history?${q.toString()}`;
     try {
       const ch = new BroadcastChannel('rdp-events');
-      ch.postMessage({ type: 'session-ended', rdpId });
+      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid, evidenceUrl: dest });
       ch.close();
     } catch { /* ignore */ }
-    // Navigate immediately; release runs in the background.
-    router.push('/worker/rdp-claim-board');
+    router.push(dest);
     void endRdpConnection(rdpId).catch(() => { /* already left session page */ });
-  }, [ending, rdpId, router]);
+  }, [ending, rdpId, router, sessionId]);
 
   const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
   const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');

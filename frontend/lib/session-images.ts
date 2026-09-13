@@ -60,9 +60,57 @@ function compressImage(file: File, onProgress?: (pct: number) => void): Promise<
   });
 }
 
+export const SESSION_IMAGE_BUCKET = 'session-images';
+
+/** How long a generated view link stays valid. */
+const SIGNED_URL_TTL_SECONDS = 60 * 60;
+
+/**
+ * The bucket is private, so the database stores the object PATH
+ * ("<sessionId>/start.jpg") rather than a URL.
+ *
+ * Rows written before the bucket was made private hold a full public URL —
+ * everything after "/session-images/" is still the object path, so those keep
+ * working without a data migration.
+ */
+export function storagePathFromValue(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const marker = `/${SESSION_IMAGE_BUCKET}/`;
+  const idx = trimmed.indexOf(marker);
+  if (idx !== -1) {
+    return trimmed.slice(idx + marker.length).split('?')[0];
+  }
+  if (/^https?:\/\//i.test(trimmed)) return null; // foreign URL — cannot sign
+  return trimmed.replace(/^\/+/, '');
+}
+
+/**
+ * Turn a stored value into a temporary viewable URL.
+ * Returns the original value unchanged if it is a URL we cannot sign.
+ */
+export async function getSessionImageUrl(
+  value: string | null | undefined,
+): Promise<string | null> {
+  const path = storagePathFromValue(value);
+  if (!path) return value ?? null;
+
+  const { data, error } = await supabase.storage
+    .from(SESSION_IMAGE_BUCKET)
+    .createSignedUrl(path, SIGNED_URL_TTL_SECONDS);
+
+  if (error || !data?.signedUrl) {
+    // A legacy public URL still renders even if signing failed.
+    return /^https?:\/\//i.test(value ?? '') ? (value as string) : null;
+  }
+  return data.signedUrl;
+}
+
 /**
  * Upload compressed blob to Supabase Storage.
  * Progress callback: 30 → 85 %.
+ * Returns the object path, which is what gets persisted.
  */
 async function uploadToStorage(
   sessionId: string,
@@ -73,7 +121,7 @@ async function uploadToStorage(
   onProgress?.(50);
   const path = `${sessionId}/${imageType}.jpg`;
   const { error } = await supabase.storage
-    .from('session-images')
+    .from(SESSION_IMAGE_BUCKET)
     .upload(path, blob, {
       contentType: 'image/jpeg',
       upsert: true,
@@ -84,18 +132,18 @@ async function uploadToStorage(
   }
 
   onProgress?.(80);
-  const { data: urlData } = supabase.storage.from('session-images').getPublicUrl(path);
-  return urlData.publicUrl;
+  return path;
 }
 
 /**
  * Full pipeline:
  *   1. Validate original file (max 2 MB)
  *   2. Compress — resize to 1400 px longest edge, re-encode JPEG at 0.82
- *   3. Upload to Supabase Storage → get public URL
- *   4. Persist URL to PostgreSQL via PATCH /sessions/{id}
+ *   3. Upload to the private Supabase Storage bucket
+ *   4. Persist the object path to PostgreSQL via PATCH /sessions/{id}
  *
- * Returns the Supabase Storage download URL (used directly as <img src>).
+ * Returns a signed URL for immediate display. Call getSessionImageUrl() to
+ * view the image later — signed links expire.
  */
 export async function uploadSessionImage(
   sessionId: string,
@@ -112,13 +160,14 @@ export async function uploadSessionImage(
   const compressed = await compressImage(file, onProgress);
 
   // 2 — upload to Supabase Storage (30 → 85 %)
-  const downloadUrl = await uploadToStorage(sessionId, imageType, compressed, onProgress);
+  const path = await uploadToStorage(sessionId, imageType, compressed, onProgress);
 
-  // 3 — persist URL to PostgreSQL (85 → 100 %)
+  // 3 — persist the object path to PostgreSQL (85 → 100 %)
   onProgress?.(90);
   const field = `${imageType}_image_url` as const;
-  await api.patch(`/sessions/${sessionId}`, { [field]: downloadUrl });
+  await api.patch(`/sessions/${sessionId}`, { [field]: path });
 
   onProgress?.(100);
-  return downloadUrl;
+  // Signed link so the caller can render it straight away.
+  return (await getSessionImageUrl(path)) ?? path;
 }

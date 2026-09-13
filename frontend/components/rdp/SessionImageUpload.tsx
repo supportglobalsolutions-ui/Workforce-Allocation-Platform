@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, RefreshCw, Search } from 'lucide-react';
-import { uploadSessionImage, validateImageFile } from '@/lib/session-images';
+import { getSessionImageUrl, uploadSessionImage, validateImageFile } from '@/lib/session-images';
 import ImageInspector from './ImageInspector';
 
 interface Props {
@@ -32,9 +32,20 @@ export default function SessionImageUpload({
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
 
+  // The bucket is private: the stored value is an object path, so it has to be
+  // exchanged for a short-lived signed URL before it can be rendered.
   useEffect(() => {
-    setUrl(initialUrl ?? null);
-    setStatus(initialUrl ? 'success' : 'idle');
+    let cancelled = false;
+    if (!initialUrl) {
+      setUrl(null);
+      setStatus('idle');
+      return;
+    }
+    setStatus('success');
+    getSessionImageUrl(initialUrl)
+      .then((signed) => { if (!cancelled) setUrl(signed); })
+      .catch(() => { if (!cancelled) setUrl(null); });
+    return () => { cancelled = true; };
   }, [initialUrl]);
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {

@@ -44,7 +44,7 @@ export default function TopNav({
   showSidebarToggle = false,
 }: TopNavProps) {
   const pathname = usePathname();
-  const { session, logout, canAccess } = useAuth();
+  const { session, logout, canAccess, isLoggingOut } = useAuth();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [searchOpen, setSearchOpen] = useState(false);
   const [workspaceOpen, setWorkspaceOpen] = useState(false);
@@ -277,11 +277,12 @@ export default function TopNav({
             </span>
             <button
               type="button"
-              onClick={logout}
-              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold text-brand-background bg-gold-accent hover:bg-gold-accent/90 active:scale-[0.98] transition-colors shrink-0"
+              onClick={() => { void logout(); }}
+              disabled={isLoggingOut}
+              className="inline-flex items-center gap-1.5 px-2.5 sm:px-3 py-1.5 rounded-lg text-xs font-bold text-brand-background bg-gold-accent hover:bg-gold-accent/90 active:scale-[0.98] transition-colors shrink-0 disabled:opacity-70 disabled:pointer-events-none"
             >
-              <LogOut size={14} />
-              <span className="hidden sm:inline">Sign out</span>
+              <LogOut size={14} className={isLoggingOut ? 'animate-pulse' : undefined} />
+              <span className="hidden sm:inline">{isLoggingOut ? 'Signing out…' : 'Sign out'}</span>
             </button>
           </>
         )}

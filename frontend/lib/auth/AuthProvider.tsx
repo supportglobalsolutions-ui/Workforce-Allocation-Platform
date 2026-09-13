@@ -12,6 +12,7 @@ import {
   verifyLoginOtp,
   completeLoginSession,
   registerLoginFailure,
+  isPrivilegedLoginRole,
   type LoginOtpChallenge,
 } from './supabase-auth';
 import { clearAuthRoleCookie } from './cookies';
@@ -30,9 +31,18 @@ export type LoginResult =
     }
   | { ok: false; error: string };
 
+export type PendingLoginOtp = {
+  sending: boolean;
+  sentTo: string | null;
+  challenge: LoginOtpChallenge | null;
+  resendsRemaining: number;
+};
+
 interface AuthContextValue {
   session: AuthSession | null;
   isLoading: boolean;
+  isLoggingOut: boolean;
+  pendingLoginOtp: PendingLoginOtp | null;
   login: (email: string, password: string) => Promise<LoginResult>;
   verifyOtp: (challengeId: string, code: string) => Promise<LoginResult>;
   resendOtp: () => Promise<LoginResult>;
@@ -47,6 +57,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [isLoggingOut, setIsLoggingOut] = useState(false);
+  const [pendingLoginOtp, setPendingLoginOtp] = useState<PendingLoginOtp | null>(null);
   const otpPendingRef = useRef(false);
   const pendingAccessTokenRef = useRef<string | null>(null);
 
@@ -67,6 +79,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const s = await completeLoginSession(accessToken);
       otpPendingRef.current = false;
       pendingAccessTokenRef.current = null;
+      setPendingLoginOtp(null);
       setSession(s);
       router.replace(ROLE_LANDING[s.primaryPortal]);
       return { ok: true as const };
@@ -81,17 +94,32 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         const { session: provisional, accessToken } = await signInWithPassword(email, password);
         pendingAccessTokenRef.current = accessToken;
 
-        const challenge = await requestLoginOtp();
+        if (isPrivilegedLoginRole(provisional.authRole)) {
+          setPendingLoginOtp({
+            sending: true,
+            sentTo: email,
+            challenge: null,
+            resendsRemaining: 5,
+          });
+        }
+
+        const challenge = await requestLoginOtp(false);
         if (!challenge.required) {
+          setPendingLoginOtp(null);
           return finishLogin(accessToken);
         }
 
-        // Hold provisional identity without unlocking the app cookie.
-        void provisional;
+        setPendingLoginOtp({
+          sending: false,
+          sentTo: challenge.sent_to,
+          challenge,
+          resendsRemaining: challenge.resends_remaining ?? 5,
+        });
         return { ok: true, otpRequired: true, challenge };
       } catch (err: unknown) {
         otpPendingRef.current = false;
         pendingAccessTokenRef.current = null;
+        setPendingLoginOtp(null);
         try {
           await registerLoginFailure(email);
         } catch (rateErr: unknown) {
@@ -164,14 +192,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const resendOtp = useCallback(async (): Promise<LoginResult> => {
     try {
-      const challenge = await requestLoginOtp();
+      setPendingLoginOtp((current) => (
+        current
+          ? { ...current, sending: true }
+          : { sending: true, sentTo: null, challenge: null, resendsRemaining: 5 }
+      ));
+      const challenge = await requestLoginOtp(true);
       if (!challenge.required || !challenge.challenge_id) {
         const token = pendingAccessTokenRef.current;
+        setPendingLoginOtp(null);
         if (token) return finishLogin(token);
         return { ok: false, error: 'Could not resend code. Sign in again.' };
       }
+      setPendingLoginOtp({
+        sending: false,
+        sentTo: challenge.sent_to,
+        challenge,
+        resendsRemaining: challenge.resends_remaining ?? 0,
+      });
       return { ok: true, otpRequired: true, challenge };
     } catch (err: unknown) {
+      setPendingLoginOtp((current) => (current ? { ...current, sending: false } : null));
       return { ok: false, error: getAuthErrorMessage(err) };
     }
   }, [finishLogin]);
@@ -179,36 +220,51 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const cancelOtp = useCallback(async () => {
     otpPendingRef.current = false;
     pendingAccessTokenRef.current = null;
+    setPendingLoginOtp(null);
     await signOut();
     setSession(null);
   }, []);
 
   const logout = useCallback(async () => {
+    if (isLoggingOut) return;
     const blocked = logoutBlockReason();
     if (blocked) {
       window.alert(blocked);
       return;
     }
 
+    setIsLoggingOut(true);
+
+    // Optional RDP check — don't hang logout if the API is slow.
+    let activeId: string | null = null;
     try {
-      const active = await getMyActiveRdp();
-      if (active?.rdp_resource_id) {
-        const confirmed = window.confirm(
-          'You have an open RDP connection. End connection and log out?',
-        );
-        if (!confirmed) return;
-        await endRdpConnection(active.rdp_resource_id);
-      }
+      const active = await Promise.race([
+        getMyActiveRdp(),
+        new Promise<null>((resolve) => setTimeout(() => resolve(null), 600)),
+      ]);
+      activeId = active?.rdp_resource_id ?? null;
     } catch {
-      /* still allow logout */
+      activeId = null;
     }
+
+    if (activeId) {
+      const confirmed = window.confirm(
+        'You have an open RDP connection. End connection and log out?',
+      );
+      if (!confirmed) {
+        setIsLoggingOut(false);
+        return;
+      }
+      void endRdpConnection(activeId).catch(() => { /* still sign out */ });
+    }
+
     otpPendingRef.current = false;
     pendingAccessTokenRef.current = null;
-    await signOut();
     clearAuthRoleCookie();
     setSession(null);
     router.replace('/login');
-  }, [router]);
+    void signOut().finally(() => setIsLoggingOut(false));
+  }, [router, isLoggingOut]);
 
   const canAccess = useCallback(
     (portal: PortalRole) => canAccessPortal(session, portal),
@@ -220,6 +276,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       value={{
         session,
         isLoading,
+        isLoggingOut,
+        pendingLoginOtp,
         login,
         verifyOtp,
         resendOtp,

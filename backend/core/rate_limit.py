@@ -21,6 +21,28 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
+def _rate_key(request: Request, scope: str, key_suffix: str = "") -> str:
+    ip = _client_ip(request)
+    key = f"rate:{scope}:{ip}"
+    if key_suffix:
+        key = f"{key}:{key_suffix}"
+    return key
+
+
+def current_rate_count(
+    request: Request,
+    *,
+    scope: str,
+    key_suffix: str = "",
+) -> int:
+    """Current counter for this scope (0 if unset or Redis is down)."""
+    try:
+        raw = get_redis().get(_rate_key(request, scope, key_suffix))
+        return int(raw or 0)
+    except (redis_lib.RedisError, TypeError, ValueError):
+        return 0
+
+
 def check_rate_limit(
     request: Request,
     *,
@@ -28,12 +50,13 @@ def check_rate_limit(
     limit: int,
     window_seconds: int,
     key_suffix: str = "",
-) -> None:
-    """Raise 429 when the limit for this scope + IP (+ optional suffix) is exceeded."""
-    ip = _client_ip(request)
-    key = f"rate:{scope}:{ip}"
-    if key_suffix:
-        key = f"{key}:{key_suffix}"
+    detail: str | None = None,
+) -> int:
+    """Raise 429 when the limit for this scope + IP (+ optional suffix) is exceeded.
+
+    Returns the count after this request when under the limit.
+    """
+    key = _rate_key(request, scope, key_suffix)
 
     try:
         redis_client = get_redis()
@@ -41,14 +64,16 @@ def check_rate_limit(
         pipe.incr(key)
         pipe.expire(key, window_seconds, nx=True)
         count, _ = pipe.execute()
-        if int(count) > limit:
+        count = int(count)
+        if count > limit:
             retry_after = max(redis_client.ttl(key), 1)
-            logger.warning("Rate limit exceeded scope=%s ip=%s count=%s", scope, ip, count)
+            logger.warning("Rate limit exceeded scope=%s count=%s", scope, count)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests. Please try again later.",
+                detail=detail or "Too many requests. Please try again later.",
                 headers={"Retry-After": str(retry_after)},
             )
+        return count
     except HTTPException:
         raise
     except redis_lib.RedisError as exc:
@@ -59,6 +84,7 @@ def check_rate_limit(
                 detail="Service temporarily unavailable.",
             ) from exc
         logger.warning("Rate limiter skipped (Redis unavailable): %s", exc)
+        return 0
 
 
 def enforce_global_rate_limit(request: Request) -> None:

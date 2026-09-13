@@ -82,7 +82,16 @@ export default function SessionHistoryPage() {
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [dateRangeFilter, setDateRangeFilter] = useState('');
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // ?session=<id> or ?rdp=<id>&evidence=1 — land on that session after disconnect.
+  const [selectedId, setSelectedId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    return new URLSearchParams(window.location.search).get('session');
+  });
+  const [pendingRdpId] = useState<string | null>(() => {
+    if (typeof window === 'undefined') return null;
+    const q = new URLSearchParams(window.location.search);
+    return q.get('evidence') === '1' ? q.get('rdp') : null;
+  });
 
   useEffect(() => {
     Promise.all([
@@ -92,10 +101,21 @@ export default function SessionHistoryPage() {
       .then(([sessionList, machineList]) => {
         setSessions(sessionList);
         setMachines(machineList);
+        setSelectedId((prev) => {
+          if (prev) return prev;
+          if (!pendingRdpId) return prev;
+          const match =
+            sessionList.find(
+              (s) =>
+                s.rdp_resource_id === pendingRdpId &&
+                !(s.evidence_complete || (s.start_image_url && s.end_image_url && s.image_start_at && s.image_end_at)),
+            ) || sessionList.find((s) => s.rdp_resource_id === pendingRdpId);
+          return match?.id ?? prev;
+        });
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load sessions'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [pendingRdpId]);
 
   const machineName = (id: string | null) => {
     if (!id) return '—';

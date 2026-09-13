@@ -124,17 +124,40 @@ def _record_rdp_logout(
     )
 
 
-def _rdp_response(db: Session, resource: RDPResource) -> RDPResourceResponse:
+def _rdp_response(
+    db: Session,
+    resource: RDPResource,
+    *,
+    viewer: dict | None = None,
+    viewer_worker_id: UUID | None = None,
+) -> RDPResourceResponse:
+    """
+    Serialise a machine for the caller.
+
+    Identities are admin-only: a worker may see that a machine is taken, and
+    that they themselves hold it, but not which colleague is on it. Pass
+    `viewer` to apply that masking — omitting it returns the full record.
+    """
     resp = RDPResourceResponse.model_validate(resource)
+    is_admin = viewer is None or viewer.get("role") in {"admin", "super_admin"}
+
     if resource.assigned_worker_id:
-        worker = db.get(Worker, resource.assigned_worker_id)
-        resp.assigned_worker_name = worker.display_name if worker else None
+        if is_admin or (
+            viewer_worker_id is not None
+            and resource.assigned_worker_id == viewer_worker_id
+        ):
+            worker = db.get(Worker, resource.assigned_worker_id)
+            resp.assigned_worker_name = worker.display_name if worker else None
+        else:
+            resp.assigned_worker_name = "In use"
+            resp.assigned_worker_id = None
     if resource.client_id:
         client = db.get(Client, resource.client_id)
         if client:
             resp.client_name = client.name
             resp.owner_type = client.owner_type.value if client.owner_type else None
-            resp.owner_name = client_owner_name(db, client)
+            # The owner is a person (partner/account holder) — admins only.
+            resp.owner_name = client_owner_name(db, client) if is_admin else None
     return resp
 
 
@@ -516,15 +539,14 @@ def get_my_active_rdp(
         )
     ).first()
 
-    guacamole_viewer_path: str | None = None
-    if resource.guacamole_connection_id:
-        try:
-            guac = GuacamoleClient(redis_client)
-            guacamole_viewer_path = guac.get_proxied_connection_path(
-                resource.guacamole_connection_id
-            )
-        except Exception:
-            guacamole_viewer_path = None
+    # The desktop tab opens the WebSocket tunnel and mints its own token, so
+    # there is nothing to fetch from Guacamole here. This endpoint is polled on
+    # every session-page load — a round-trip per call was pure latency.
+    guacamole_viewer_path = (
+        f"/worker/rdp-session/{resource.id}/desktop"
+        if resource.guacamole_connection_id
+        else None
+    )
 
     return {
         "allocation_id": str(alloc.id),
@@ -536,12 +558,26 @@ def get_my_active_rdp(
     }
 
 
+def _viewer_worker_id(db: Session, current_user: dict) -> UUID | None:
+    """The caller's own worker id, when they have one. None for pure admins."""
+    if current_user.get("role") in {"admin", "super_admin"}:
+        return None
+    try:
+        return get_worker_for_user(db, current_user).id
+    except Exception:
+        return None
+
+
 @router.get("", response_model=list[RDPResourceResponse])
 def list_rdp_resources(
     db: Session = Depends(get_db),
-    _: dict = Depends(require_user),
+    current_user: dict = Depends(require_user),
 ):
-    return [_rdp_response(db, resource) for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()]
+    viewer_worker_id = _viewer_worker_id(db, current_user)
+    return [
+        _rdp_response(db, resource, viewer=current_user, viewer_worker_id=viewer_worker_id)
+        for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()
+    ]
 
 
 @router.get("/guacamole/health")
@@ -691,12 +727,17 @@ async def proxy_guacamole_tunnel(
 def get_rdp_resource(
     rdp_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_user),
+    current_user: dict = Depends(require_user),
 ):
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    return _rdp_response(db, resource)
+    return _rdp_response(
+        db,
+        resource,
+        viewer=current_user,
+        viewer_worker_id=_viewer_worker_id(db, current_user),
+    )
 
 
 def _provision_guacamole(
