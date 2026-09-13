@@ -2,8 +2,9 @@
 
 import { ReactNode } from 'react';
 import LandingNavbar from './LandingNavbar';
+import LiveDateTime from './LiveDateTime';
 
-/** Shared auth shell — respects dark / light theme. */
+/** Shared auth shell — same cinematic cyber background as landing. */
 export default function AuthPageShell({
   children,
   header,
@@ -11,38 +12,14 @@ export default function AuthPageShell({
   children: ReactNode;
   header?: ReactNode;
 }) {
-  const isDark = true;
-
   return (
-    <div
-      className={`force-dark-page relative min-h-screen w-full flex flex-col overflow-x-hidden transition-colors ${
-        isDark
-          ? 'bg-[#010e0b] text-white selection:bg-[#0df5c4]/30 selection:text-white'
-          : 'bg-[#f4faf7] text-emerald-950 selection:bg-emerald-500/20'
-      }`}
-    >
+    <div className="force-dark-page relative min-h-screen w-full flex flex-col overflow-x-hidden bg-[#010c09] text-white selection:bg-[#0df5c4]/30 selection:text-white">
       <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
-        <div
-          className={`absolute inset-0 bg-[url('/images/landing-art-bg.png')] bg-cover bg-center transition-opacity duration-500 ${
-            isDark ? 'opacity-50 mix-blend-screen' : 'opacity-20 mix-blend-multiply'
-          }`}
-        />
-        {isDark ? (
-          <>
-            <div className="absolute inset-0 bg-[#010e0b]/70" />
-            <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,rgba(3,40,32,0.06)_50%,transparent_80%)] blur-3xl" />
-            <div className="absolute -top-10 -left-32 w-[500px] h-[250px] rotate-[-25deg] bg-gradient-to-r from-transparent via-[#0df5c4]/10 to-transparent blur-2xl" />
-            <div className="absolute top-1/4 -right-32 w-[600px] h-[300px] rotate-[-30deg] bg-gradient-to-r from-transparent via-[#0df5c4]/8 to-transparent blur-2xl" />
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(13,245,196,0.02)_1px,transparent_1px),linear-gradient(to_bottom,rgba(13,245,196,0.02)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
-          </>
-        ) : (
-          <>
-            <div className="absolute inset-0 bg-gradient-to-r from-[#f4faf7]/94 via-[#f4faf7]/78 to-[#f4faf7]/55" />
-            <div className="absolute inset-0 bg-[linear-gradient(to_right,rgba(10,122,85,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(10,122,85,0.04)_1px,transparent_1px)] bg-[size:4rem_4rem]" />
-            <div className="absolute -top-24 left-1/2 -translate-x-1/2 w-[900px] h-[420px] rounded-full bg-emerald-200/40 blur-3xl" />
-            <div className="absolute -bottom-40 left-1/2 -translate-x-1/2 w-[1200px] h-[480px] rounded-[100%] bg-gradient-to-t from-emerald-100/80 to-transparent border-t border-emerald-200/60" />
-          </>
-        )}
+        <div className="absolute inset-0 bg-[url('/images/landing-cinematic-bg.png')] bg-cover bg-center" />
+        {/* Light veil — keep the clean globe visible like the right side of the screen */}
+        <div className="absolute inset-0 bg-[#010c09]/45" />
+        <div className="absolute inset-0 bg-gradient-to-b from-[#010c09]/25 via-transparent to-[#010c09]/60" />
+        <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,transparent_70%)] blur-3xl" />
       </div>
 
       <LandingNavbar variant="login" />
@@ -51,11 +28,24 @@ export default function AuthPageShell({
         {header}
         {children}
       </main>
+
+      <footer className="relative z-20 w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 py-5 grid grid-cols-1 sm:grid-cols-3 items-center gap-3 text-xs text-[#9eb9ae]">
+        <div className="flex items-center justify-center sm:justify-start gap-2 tracking-[0.22em] font-mono text-[11px] font-semibold text-[#d4af37]">
+          <span className="w-0.5 h-3.5 bg-[#d4af37]" />
+          <span>GLOBAL TALENT. REAL IMPACT.</span>
+        </div>
+        <div className="flex justify-center order-first sm:order-none">
+          <LiveDateTime className="text-xs sm:text-sm font-mono font-semibold tracking-wide text-[#b7c9c2]" />
+        </div>
+        <div className="flex justify-center sm:justify-end">
+          <span className="font-mono text-[11px] text-[#d4af37]">© {new Date().getFullYear()} Global Solutions</span>
+        </div>
+      </footer>
     </div>
   );
 }
 
-/** Glass card chrome for auth forms — dark cyber or light white. */
+/** Glass card chrome for auth forms. */
 export function AuthGlassCard({
   children,
   className = '',
@@ -63,21 +53,11 @@ export function AuthGlassCard({
   children: ReactNode;
   className?: string;
 }) {
-  const isDark = true;
-
   return (
     <div
-      className={`relative z-20 w-full max-w-[430px] rounded-3xl p-7 sm:p-9 transition-all ${
-        isDark
-          ? 'bg-[#031513]/85 backdrop-blur-2xl border border-[#0df5c4]/35 shadow-[0_0_60px_rgba(13,245,196,0.18)] text-white'
-          : 'bg-white/95 backdrop-blur-xl border border-emerald-200/80 shadow-[0_20px_60px_rgba(15,31,26,0.08)] text-emerald-950'
-      } ${className}`}
+      className={`relative z-20 w-full max-w-[430px] rounded-3xl p-7 sm:p-9 transition-all bg-[#031513]/62 backdrop-blur-lg border border-[#0df5c4]/35 shadow-[0_0_60px_rgba(13,245,196,0.18)] text-white ${className}`}
     >
-      <div
-        className={`absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent to-transparent opacity-70 ${
-          isDark ? 'via-[#0df5c4]' : 'via-emerald-400'
-        }`}
-      />
+      <div className="absolute top-0 left-10 right-10 h-[1px] bg-gradient-to-r from-transparent via-[#0df5c4] to-transparent opacity-70" />
       {children}
     </div>
   );

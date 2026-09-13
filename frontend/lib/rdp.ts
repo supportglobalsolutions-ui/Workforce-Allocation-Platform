@@ -76,7 +76,16 @@ export interface RdpResource {
   status_changed_at: string;
 }
 
-export interface RdpResourceCreateBody {
+/** Write-only — forwarded to Guacamole, never stored in the app DB. */
+export interface RdpCredentials {
+  rdp_username?: string | null;
+  rdp_password?: string | null;
+  rdp_domain?: string | null;
+  /** Default true: the backend creates/updates the Guacamole connection for you. */
+  auto_provision?: boolean;
+}
+
+export interface RdpResourceCreateBody extends RdpCredentials {
   nickname: string;
   country: string;
   client_group: string;
@@ -88,7 +97,7 @@ export interface RdpResourceCreateBody {
   health_notes?: string | null;
 }
 
-export interface RdpResourceUpdateBody {
+export interface RdpResourceUpdateBody extends RdpCredentials {
   nickname?: string;
   country?: string;
   client_group?: string;
@@ -97,6 +106,30 @@ export interface RdpResourceUpdateBody {
   monitor_port?: number | null;
   guacamole_connection_id?: string | null;
   health_notes?: string | null;
+}
+
+export interface RdpProvisionResult {
+  rdp_resource_id: string;
+  guacamole_connection_id: string | null;
+  created: boolean;
+  provisioned: boolean;
+  error?: string | null;
+}
+
+export interface GuacamoleHealth {
+  guacamole_url: string;
+  reachable: boolean;
+  authenticated: boolean;
+  error: string | null;
+  connection_count: number;
+  machines: {
+    id: string;
+    nickname: string;
+    monitor_host: string | null;
+    guacamole_connection_id: string | null;
+    connection_state: 'ok' | 'stale' | 'missing' | 'unknown';
+    ready: boolean;
+  }[];
 }
 
 export const listRdpResources = () => api.get<RdpResource[]>('/rdp');
@@ -110,6 +143,12 @@ export const createRdpResource = (body: RdpResourceCreateBody) =>
 
 export const updateRdpResource = (rdpId: string, body: RdpResourceUpdateBody) =>
   api.patch<RdpResource>(`/rdp/${rdpId}`, body);
+
+/** Create or repair this machine's Guacamole connection (idempotent). */
+export const provisionRdpConnection = (rdpId: string, creds: RdpCredentials = {}) =>
+  api.post<RdpProvisionResult>(`/rdp/${rdpId}/provision`, { auto_provision: true, ...creds });
+
+export const getGuacamoleHealth = () => api.get<GuacamoleHealth>('/rdp/guacamole/health');
 
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);

@@ -70,12 +70,24 @@ RDP machines with an 8-state status enum: `offline`, `online_free`, `assigned`, 
 |--------|------|------|-------------|
 | GET | `/rdp` | user+ | List all RDP machines ordered by nickname. |
 | GET | `/rdp/{rdp_id}` | user+ | Get one machine. |
-| POST | `/rdp` | admin+ | Add a new RDP machine. Body: `RDPResourceCreate`. |
-| PATCH | `/rdp/{rdp_id}` | admin+ | Update a machine (status, health notes, etc.). Body: `RDPResourceUpdate`. |
+| POST | `/rdp` | admin+ | Add a new RDP machine. Body: `RDPResourceCreate`. Auto-provisions the Guacamole connection. |
+| PATCH | `/rdp/{rdp_id}` | admin+ | Update a machine (status, health notes, etc.). Body: `RDPResourceUpdate`. Re-syncs Guacamole when host/port/nickname/credentials change. |
+| POST | `/rdp/{rdp_id}/provision` | admin+ | Create or repair this machine's Guacamole connection. Idempotent. Body: `RdpProvisionBody`. |
+| GET | `/rdp/guacamole/health` | admin+ | Guacamole reachability + per-machine connection state (`ok` / `stale` / `missing` / `unknown`). |
 | POST | `/rdp/{rdp_id}/claim` | user+ | Claim an `online_free` machine. Uses a Redis lock to prevent race conditions. Returns a Guacamole session URL if configured. Query param: `shift_id` (optional). |
 | POST | `/rdp/{rdp_id}/release` | user+ | Release a claimed machine — closes the open allocation and sets status back to `online_free`. |
 
 **Claim flow:** Redis SETNX lock (30s TTL) → verify `status = online_free` → create allocation → fetch Guacamole token → update status to `assigned` → release lock. Claim succeeds even if Guacamole is down.
+
+**Guacamole auto-provisioning:** `POST /rdp` and `PATCH /rdp/{id}` accept write-only credential
+fields — `rdp_username`, `rdp_password`, `rdp_domain`, plus `auto_provision` (default `true`).
+The backend creates or updates the connection through the Guacamole REST API and stores the
+returned identifier in `guacamole_connection_id`. Credentials are forwarded to Guacamole and
+never persisted in the app database or returned by any endpoint; omitting `rdp_password` on an
+update keeps the one Guacamole already holds. Provisioning resolves in order: the stored
+connection id, then a connection whose name matches the nickname (adopted), then create.
+A provisioning failure during create/update is recorded in `health_notes` rather than failing
+the write — except when credentials were explicitly supplied, which returns `502`.
 
 ---
 

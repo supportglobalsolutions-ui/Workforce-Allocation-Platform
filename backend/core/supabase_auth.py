@@ -58,6 +58,20 @@ def _auth_base() -> str:
     return f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1"
 
 
+def _public_auth_request(path: str, payload: dict[str, Any]) -> None:
+    """Call a public GoTrue endpoint without ever exposing the service key."""
+    if not settings.SUPABASE_URL or not settings.SUPABASE_PUBLISHABLE_KEY:
+        raise RuntimeError("Supabase password recovery is not configured.")
+    with httpx.Client(timeout=30.0) as client:
+        response = client.post(
+            f"{_auth_base()}{path}",
+            headers={"apikey": settings.SUPABASE_PUBLISHABLE_KEY, "Content-Type": "application/json"},
+            json=payload,
+        )
+    if response.status_code >= 400:
+        raise ValueError(f"Supabase auth API {response.status_code}: {response.text[:300]}")
+
+
 def is_auth_ready() -> bool:
     """True when enough config exists to verify tokens and call the admin API."""
     has_verify = bool(settings.SUPABASE_JWKS_URL or settings.SUPABASE_JWT_SECRET)
@@ -302,6 +316,16 @@ def unban_auth_user(uid: str) -> dict:
 
 def delete_auth_user(uid: str) -> None:
     _admin_request("DELETE", f"/users/{uid}")
+
+
+def send_password_recovery_email(email: str, redirect_to: str) -> None:
+    """Request a recovery email through GoTrue's public endpoint."""
+    _public_auth_request("/recover", {"email": email, "redirect_to": redirect_to})
+
+
+def update_auth_user_password(uid: str, password: str) -> None:
+    """Set a password with the server-only Supabase admin key."""
+    _admin_request("PUT", f"/users/{uid}", json={"password": password})
 
 
 def get_auth_user(uid: str) -> dict:

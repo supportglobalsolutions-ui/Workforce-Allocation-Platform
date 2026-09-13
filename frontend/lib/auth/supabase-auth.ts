@@ -2,7 +2,11 @@
 
 import type { User } from '@supabase/supabase-js';
 import { supabase } from '@/lib/supabase';
-import { syncSessionCookie, clearSessionCookie } from './session-cookie';
+import {
+  syncSessionCookie,
+  clearSessionCookie,
+  LoginOtpRequiredError,
+} from './session-cookie';
 import {
   AuthRole,
   AuthSession,
@@ -15,7 +19,6 @@ export async function sessionFromUser(user: User, accessToken?: string): Promise
   const appMeta = user.app_metadata || {};
   const userMeta = user.user_metadata || {};
 
-  // Extract custom claims from JWT access token if available
   let jwtClaims: Record<string, any> = {};
   if (accessToken) {
     try {
@@ -33,14 +36,12 @@ export async function sessionFromUser(user: User, accessToken?: string): Promise
     } catch {}
   }
 
-  // Priority: custom claim user_role -> custom claim role -> app_metadata.role -> default 'user'
   const roleFromClaims =
     (jwtClaims.user_role as AuthRole) ||
     ((jwtClaims.custom_claims as Record<string, any>)?.role as AuthRole) ||
     (jwtClaims.app_metadata?.role as AuthRole) ||
     (appMeta.role as AuthRole | undefined);
 
-  // Note: standard Supabase JWTs set claims.role = "authenticated". We want the application role.
   const role: AuthRole =
     roleFromClaims && (roleFromClaims as string) !== 'authenticated'
       ? roleFromClaims
@@ -62,30 +63,107 @@ export async function sessionFromUser(user: User, accessToken?: string): Promise
   };
 }
 
-export async function signIn(email: string, password: string): Promise<AuthSession> {
+export type LoginOtpChallenge = {
+  required: boolean;
+  reason: 'first_login' | 'privileged' | null;
+  challenge_id: string | null;
+  sent_to: string | null;
+  ttl_seconds: number | null;
+  expires_at: string | null;
+};
+
+/** Password sign-in only — does not set the app session cookie. */
+export async function signInWithPassword(
+  email: string,
+  password: string,
+): Promise<{ session: AuthSession; accessToken: string }> {
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.user || !data.session) {
     throw error || new Error('Login failed');
   }
-  await syncSessionCookie(data.session.access_token);
-  return sessionFromUser(data.user, data.session.access_token);
+  return {
+    session: await sessionFromUser(data.user, data.session.access_token),
+    accessToken: data.session.access_token,
+  };
+}
+
+export async function requestLoginOtp(): Promise<LoginOtpChallenge> {
+  return api.post<LoginOtpChallenge>('/auth/login-otp/challenge', {});
+}
+
+/** Rate-limit gate before password auth (IP + email). */
+export async function registerLoginAttempt(email: string): Promise<void> {
+  try {
+    await api.post('/auth/login-attempt', { email });
+  } catch (err) {
+    // Don't block sign-in if the rate-limit endpoint is temporarily unavailable.
+    const msg = err instanceof Error ? err.message : '';
+    if (/too many requests/i.test(msg)) throw err;
+  }
+}
+
+export async function verifyLoginOtp(challengeId: string, code: string): Promise<void> {
+  await api.post('/auth/login-otp/verify', {
+    challenge_id: challengeId,
+    code,
+  });
+}
+
+export async function clearLoginOtp(): Promise<void> {
+  try {
+    await api.post('/auth/login-otp/clear', {});
+  } catch {
+    /* best-effort on logout */
+  }
+}
+
+/** Finish login after OTP (or when OTP is not required). */
+export async function completeLoginSession(accessToken: string): Promise<AuthSession> {
+  try {
+    await syncSessionCookie(accessToken);
+  } catch (err) {
+    if (err instanceof LoginOtpRequiredError) {
+      throw err;
+    }
+    throw err;
+  }
+  const { data } = await supabase.auth.getSession();
+  if (!data.session?.user) {
+    throw new Error('Session expired. Sign in again.');
+  }
+  return sessionFromUser(data.session.user, data.session.access_token);
+}
+
+export async function signIn(email: string, password: string): Promise<AuthSession> {
+  const { session, accessToken } = await signInWithPassword(email, password);
+  await syncSessionCookie(accessToken);
+  return session;
 }
 
 export async function signOut(): Promise<void> {
+  await clearLoginOtp();
   await clearSessionCookie();
   await supabase.auth.signOut();
 }
 
 export function subscribeAuthState(
   callback: (session: AuthSession | null) => void,
+  options?: { skipIf?: () => boolean },
 ): () => void {
-  // Initial session check
   supabase.auth.getSession().then(async ({ data: { session } }) => {
+    if (options?.skipIf?.()) {
+      callback(null);
+      return;
+    }
     if (session?.user) {
       try {
         await syncSessionCookie(session.access_token);
         callback(await sessionFromUser(session.user, session.access_token));
-      } catch {
+      } catch (err) {
+        if (err instanceof LoginOtpRequiredError) {
+          callback(null);
+          return;
+        }
         callback(null);
       }
     } else {
@@ -94,6 +172,9 @@ export function subscribeAuthState(
   });
 
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+    if (options?.skipIf?.()) {
+      return;
+    }
     if (event === 'SIGNED_OUT' || !session?.user) {
       await clearSessionCookie();
       callback(null);
@@ -102,7 +183,11 @@ export function subscribeAuthState(
     try {
       await syncSessionCookie(session.access_token);
       callback(await sessionFromUser(session.user, session.access_token));
-    } catch {
+    } catch (err) {
+      if (err instanceof LoginOtpRequiredError) {
+        // Password ok but OTP pending — do not treat as fully signed in.
+        return;
+      }
       callback(null);
     }
   });

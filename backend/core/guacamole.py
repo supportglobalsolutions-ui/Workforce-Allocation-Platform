@@ -82,6 +82,123 @@ class GuacamoleClient:
         token, _ = self._get_token()
         return token
 
+    # ── Connection management (auto-provisioning) ─────────────────────────
+
+    def list_connections(self) -> dict[str, dict]:
+        """All connections visible to the API user, keyed by identifier."""
+        token, data_source = self._get_token()
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{self._base}/api/session/data/{data_source}/connections",
+                params={"token": token},
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    def find_connection_by_name(self, name: str) -> dict | None:
+        """Guacamole enforces unique names per group — find one by its name."""
+        for identifier, meta in self.list_connections().items():
+            if isinstance(meta, dict) and meta.get("name") == name:
+                return {**meta, "identifier": meta.get("identifier") or identifier}
+        return None
+
+    def get_connection(self, connection_id: str) -> dict | None:
+        token, data_source = self._get_token()
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                params={"token": token},
+            )
+        if resp.status_code == 404:
+            return None
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_connection_parameters(self, connection_id: str) -> dict[str, str]:
+        """Stored protocol parameters (hostname/port/username/password/...)."""
+        token, data_source = self._get_token()
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.get(
+                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}/parameters",
+                params={"token": token},
+            )
+        if resp.status_code == 404:
+            return {}
+        resp.raise_for_status()
+        data = resp.json()
+        return data if isinstance(data, dict) else {}
+
+    def create_connection(
+        self,
+        *,
+        name: str,
+        parameters: dict[str, str],
+        attributes: dict[str, str] | None = None,
+        protocol: str = "rdp",
+        parent_identifier: str = "ROOT",
+    ) -> str:
+        """Create a connection and return its Guacamole identifier."""
+        token, data_source = self._get_token()
+        payload = {
+            "parentIdentifier": parent_identifier,
+            "name": name,
+            "protocol": protocol,
+            "parameters": parameters,
+            "attributes": attributes or {},
+        }
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.post(
+                f"{self._base}/api/session/data/{data_source}/connections",
+                params={"token": token},
+                json=payload,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+        identifier = data.get("identifier")
+        if not identifier:
+            raise RuntimeError("Guacamole did not return a connection identifier")
+        return str(identifier)
+
+    def update_connection(
+        self,
+        connection_id: str,
+        *,
+        name: str,
+        parameters: dict[str, str],
+        attributes: dict[str, str] | None = None,
+        protocol: str = "rdp",
+        parent_identifier: str = "ROOT",
+    ) -> None:
+        token, data_source = self._get_token()
+        payload = {
+            "identifier": str(connection_id),
+            "parentIdentifier": parent_identifier,
+            "name": name,
+            "protocol": protocol,
+            "parameters": parameters,
+            "attributes": attributes or {},
+        }
+        with httpx.Client(timeout=15.0) as client:
+            resp = client.put(
+                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                params={"token": token},
+                json=payload,
+            )
+            resp.raise_for_status()
+
+    def delete_connection(self, connection_id: str) -> bool:
+        token, data_source = self._get_token()
+        with httpx.Client(timeout=10.0) as client:
+            resp = client.delete(
+                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                params={"token": token},
+            )
+        if resp.status_code == 404:
+            return False
+        resp.raise_for_status()
+        return True
+
     def list_active_connections(self) -> dict[str, dict]:
         token, data_source = self._get_token()
         with httpx.Client(timeout=10.0) as client:

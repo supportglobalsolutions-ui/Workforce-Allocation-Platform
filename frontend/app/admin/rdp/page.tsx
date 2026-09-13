@@ -1,16 +1,19 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, X } from 'lucide-react';
+import { Plus, Pencil, X, RefreshCw } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import StatusBadge from '@/components/platform/StatusBadge';
 import {
   createRdpResource,
   forceReleaseRdp,
+  getGuacamoleHealth,
+  GuacamoleHealth,
   listRdpResources,
   lockRdp,
   maintenanceRdp,
+  provisionRdpConnection,
   RdpResource,
   unlockRdp,
   updateRdpResource,
@@ -31,6 +34,9 @@ interface MachineForm {
   client_id: string;
   monitor_host: string;
   monitor_port: string;
+  rdp_username: string;
+  rdp_password: string;
+  rdp_domain: string;
   guacamole_connection_id: string;
   health_notes: string;
 }
@@ -42,6 +48,9 @@ const EMPTY_FORM: MachineForm = {
   client_id: '',
   monitor_host: '',
   monitor_port: '3389',
+  rdp_username: '',
+  rdp_password: '',
+  rdp_domain: '',
   guacamole_connection_id: '',
   health_notes: '',
 };
@@ -54,6 +63,10 @@ function formFromMachine(m: RdpResource): MachineForm {
     client_id: m.client_id ?? '',
     monitor_host: m.monitor_host ?? '',
     monitor_port: String(m.monitor_port ?? 3389),
+    // Credentials live in Guacamole, not here — blank means "leave unchanged".
+    rdp_username: '',
+    rdp_password: '',
+    rdp_domain: '',
     guacamole_connection_id: m.guacamole_connection_id ?? '',
     health_notes: m.health_notes ?? '',
   };
@@ -70,6 +83,11 @@ function bodyFromForm(form: MachineForm) {
     monitor_port: monitorPort,
     guacamole_connection_id: form.guacamole_connection_id.trim() || null,
     health_notes: form.health_notes.trim() || null,
+    // Omit blank credentials so an edit never wipes what Guacamole already has.
+    ...(form.rdp_username.trim() ? { rdp_username: form.rdp_username.trim() } : {}),
+    ...(form.rdp_password ? { rdp_password: form.rdp_password } : {}),
+    ...(form.rdp_domain.trim() ? { rdp_domain: form.rdp_domain.trim() } : {}),
+    auto_provision: true,
   };
 }
 
@@ -94,9 +112,15 @@ export default function RdpManagementPage() {
   const [editForm, setEditForm] = useState<MachineForm>(EMPTY_FORM);
   const [savingEdit, setSavingEdit] = useState(false);
 
+  const [health, setHealth] = useState<GuacamoleHealth | null>(null);
+
+  const reloadHealth = () =>
+    getGuacamoleHealth().then(setHealth).catch(() => setHealth(null));
+
   const reload = () =>
     listRdpResources()
       .then(setMachines)
+      .then(reloadHealth)
       .catch((e) => {
         setError(e instanceof Error ? e.message : 'Failed to load machines');
       });
@@ -105,6 +129,9 @@ export default function RdpManagementPage() {
     reload().finally(() => setLoading(false));
     api.get<ClientOption[]>('/clients').then(setClients).catch(() => setClients([]));
   }, []);
+
+  const connectionState = (id: string) =>
+    health?.machines.find((m) => m.id === id)?.connection_state ?? 'unknown';
 
   const clientName = (id: string | null) =>
     id ? clients.find((c) => c.id === id)?.name ?? null : null;
@@ -240,15 +267,53 @@ export default function RdpManagementPage() {
           className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
         />
       </label>
-      <label className="block sm:col-span-2">
-        <span className="text-xs text-brand-on-surface-variant mb-1 block">Guacamole connection ID</span>
+      <label className="block">
+        <span className="text-xs text-brand-on-surface-variant mb-1 block">RDP username</span>
         <input
-          value={form.guacamole_connection_id}
-          onChange={(e) => setForm((f) => ({ ...f, guacamole_connection_id: e.target.value }))}
-          placeholder="From Guacamole after you register the connection"
+          autoComplete="off"
+          value={form.rdp_username}
+          onChange={(e) => setForm((f) => ({ ...f, rdp_username: e.target.value }))}
+          placeholder="Administrator"
           className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
         />
       </label>
+      <label className="block">
+        <span className="text-xs text-brand-on-surface-variant mb-1 block">RDP password</span>
+        <input
+          type="password"
+          autoComplete="new-password"
+          value={form.rdp_password}
+          onChange={(e) => setForm((f) => ({ ...f, rdp_password: e.target.value }))}
+          placeholder="Leave blank to keep the current one"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+        />
+      </label>
+      <label className="block">
+        <span className="text-xs text-brand-on-surface-variant mb-1 block">Domain (optional)</span>
+        <input
+          value={form.rdp_domain}
+          onChange={(e) => setForm((f) => ({ ...f, rdp_domain: e.target.value }))}
+          placeholder="WORKGROUP"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+        />
+      </label>
+      <label className="block">
+        <span className="text-xs text-brand-on-surface-variant mb-1 block">
+          Guacamole connection ID (auto)
+        </span>
+        <input
+          value={form.guacamole_connection_id}
+          onChange={(e) => setForm((f) => ({ ...f, guacamole_connection_id: e.target.value }))}
+          placeholder="Created automatically on save"
+          className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white"
+        />
+      </label>
+      <p className="sm:col-span-2 text-xs text-brand-on-surface-variant">
+        The Guacamole connection is created and kept in sync automatically from the host, port and
+        credentials above — you never need to open the Guacamole console. Credentials are stored in
+        Guacamole only, never in this platform&apos;s database. Fill the ID field only to adopt a
+        connection you built by hand.
+      </p>
       <label className="block sm:col-span-2">
         <span className="text-xs text-brand-on-surface-variant mb-1 block">Health notes</span>
         <input
@@ -291,6 +356,27 @@ export default function RdpManagementPage() {
         ]}
       />
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
+
+      {health && (
+        <div
+          className={`glass-panel p-3 mb-4 text-xs flex flex-wrap items-center gap-x-4 gap-y-1 ${
+            health.authenticated ? 'text-brand-on-surface-variant' : 'text-danger'
+          }`}
+        >
+          <span>
+            Guacamole:{' '}
+            <strong className={health.authenticated ? 'text-success' : 'text-danger'}>
+              {health.authenticated ? 'connected' : 'unreachable'}
+            </strong>{' '}
+            ({health.guacamole_url})
+          </span>
+          <span>{health.connection_count} connection(s) registered</span>
+          <span>
+            {health.machines.filter((m) => m.ready).length}/{health.machines.length} machines ready
+          </span>
+          {health.error && <span className="text-danger">{health.error}</span>}
+        </div>
+      )}
 
       {showCreate && (
         <form onSubmit={handleCreate} className="glass-panel p-5 mb-6 space-y-4">
@@ -349,6 +435,26 @@ export default function RdpManagementPage() {
                       <p className="text-xs text-brand-on-surface-variant mt-1">
                         Last health check: {formatHealthCheck(m.last_health_check_at)}
                       </p>
+                      {health && (
+                        <p className="text-xs mt-1">
+                          <span className="text-brand-on-surface-variant">Guacamole: </span>
+                          {connectionState(m.id) === 'ok' ? (
+                            <span className="text-success">
+                              ready · connection {m.guacamole_connection_id}
+                            </span>
+                          ) : connectionState(m.id) === 'missing' ? (
+                            <span className="text-danger">
+                              not provisioned — workers cannot connect
+                            </span>
+                          ) : connectionState(m.id) === 'stale' ? (
+                            <span className="text-danger">
+                              connection {m.guacamole_connection_id} no longer exists in Guacamole
+                            </span>
+                          ) : (
+                            <span className="text-brand-on-surface-variant">unknown</span>
+                          )}
+                        </p>
+                      )}
                     </div>
                     <div className="flex flex-wrap gap-2">
                       <button
@@ -357,6 +463,19 @@ export default function RdpManagementPage() {
                         className="btn-secondary text-xs py-1.5 flex items-center gap-1"
                       >
                         <Pencil size={12} /> Edit
+                      </button>
+                      <button
+                        type="button"
+                        disabled={busyId === m.id || !m.monitor_host}
+                        title={
+                          m.monitor_host
+                            ? 'Create or repair this machine’s Guacamole connection'
+                            : 'Add a host/IP first'
+                        }
+                        onClick={() => runAction(m.id, () => provisionRdpConnection(m.id))}
+                        className="btn-secondary text-xs py-1.5 flex items-center gap-1 disabled:opacity-50"
+                      >
+                        <RefreshCw size={12} /> Sync Guacamole
                       </button>
                       {m.status === 'admin_locked' ? (
                         <button

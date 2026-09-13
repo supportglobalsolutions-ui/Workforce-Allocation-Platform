@@ -37,6 +37,12 @@ class AdminUser(SQLModel, table=True):
         default=AccountStatusEnum.active,
         sa_column=Column(AccountStatusType, nullable=False, server_default="active"),
     )
+    # Set when the user completes login OTP for the first time (workers/partners).
+    # Privileged roles (admin / super_admin) still require OTP on every login.
+    first_login_verified_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

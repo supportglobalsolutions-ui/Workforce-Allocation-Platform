@@ -593,3 +593,45 @@ def render_otp_text(*, title: str, intro: str, warning: str) -> str:
         f"Expires in 3 minutes. {warning}\n"
         "If you did not start this, ignore the email."
     )
+
+
+def render_login_otp_html(*, title: str, intro: str) -> str:
+    """Login MFA / first-sign-in code. Callers substitute {{CODE}} after rendering."""
+    body = f"""
+        <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:{_HEADING};">{title}</h2>
+        <p style="margin:0 0 18px; font-size:14px; line-height:1.6; color:{_TEXT};">{intro}</p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+               bgcolor="{_HEADER}"
+               style="margin:0 0 20px; background-color:{_HEADER}; border:1px solid {_EMERALD}; border-radius:10px;">
+          <tr>
+            <td style="padding:22px 16px; text-align:center;">
+              <p style="margin:0 0 8px; font-size:11px; font-weight:700; letter-spacing:0.14em;
+                         text-transform:uppercase; color:{_GOLD};">Sign-in code</p>
+              <p style="margin:0; font-size:32px; font-weight:700; letter-spacing:0.35em;
+                         font-family:Consolas, 'Courier New', monospace; color:{_EMERALD};">
+                {{{{CODE}}}}
+              </p>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0 0 8px; font-size:13px; color:{_MUTED};">
+          This code expires in 3 minutes and can be used only once.
+        </p>
+        <p style="margin:0; font-size:13px; color:{_GOLD};">
+          If you did not try to sign in, ignore this email and contact your administrator.
+        </p>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Security",
+        heading="Sign-in verification",
+        body=body,
+        footer="GlobalSolutions Workforce Platform — never share this code with anyone.",
+    )
+
+
+def render_login_otp_text(*, title: str, intro: str) -> str:
+    return (
+        f"{title}\n\n{intro}\n\nSign-in code: {{{{CODE}}}}\n\n"
+        "Expires in 3 minutes. If you did not try to sign in, ignore this email.\n"
+        "— GlobalSolutions Workforce Platform"
+    )

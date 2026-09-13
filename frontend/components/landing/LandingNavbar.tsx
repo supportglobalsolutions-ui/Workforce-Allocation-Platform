@@ -11,15 +11,15 @@ interface LandingNavbarProps {
 export default function LandingNavbar({ variant = 'landing' }: LandingNavbarProps) {
   return (
     <header
-      className="relative z-40 w-full px-4 sm:px-6 lg:px-12 py-4 sm:py-5 flex items-center justify-between border-b border-[#0df5c4]/15 bg-[#020e0b]/75 backdrop-blur-xl"
+      className="relative z-40 w-full px-4 sm:px-6 lg:px-12 py-4 sm:py-5 flex items-center justify-between border-b border-[#d4af37]/20 bg-transparent backdrop-blur-md"
     >
-      <GlobalSolutionsLogo size="md" />
+      <GlobalSolutionsLogo size="md" showOperations={false} />
 
       <div className="flex items-center gap-3">
         {variant === 'landing' && (
           <Link
             href="/login"
-            className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-semibold text-[#0df5c4] bg-[#03201a]/70 hover:bg-[#0df5c4]/15 border border-[#0df5c4]/30 hover:border-[#0df5c4]/60 shadow-[0_0_15px_rgba(13,245,196,0.15)] transition-all active:scale-95"
+            className="inline-flex items-center gap-1.5 px-3.5 sm:px-4 py-2 rounded-full text-xs sm:text-sm font-semibold text-[#d4af37] bg-[#03201a]/70 hover:bg-[#d4af37]/10 border border-[#d4af37]/40 hover:border-[#d4af37]/75 shadow-[0_0_15px_rgba(212,175,55,0.14)] transition-all active:scale-95"
           >
             <LogIn size={14} />
             <span>Log In</span>
@@ -29,7 +29,7 @@ export default function LandingNavbar({ variant = 'landing' }: LandingNavbarProp
         {variant === 'login' && (
           <Link
             href="/"
-            className="inline-flex text-xs font-semibold text-[#98b7af] hover:text-[#0df5c4] transition-colors"
+            className="inline-flex items-center px-4 py-2 text-sm font-bold tracking-wide text-[#d4af37] hover:text-[#f0cf66] transition-colors"
           >
             ← Home
           </Link>

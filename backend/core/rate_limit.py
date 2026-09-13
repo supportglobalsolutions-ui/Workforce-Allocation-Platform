@@ -42,10 +42,12 @@ def check_rate_limit(
         pipe.expire(key, window_seconds, nx=True)
         count, _ = pipe.execute()
         if int(count) > limit:
+            retry_after = max(redis_client.ttl(key), 1)
             logger.warning("Rate limit exceeded scope=%s ip=%s count=%s", scope, ip, count)
             raise HTTPException(
                 status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many requests. Please wait and try again.",
+                detail="Too many requests. Please try again later.",
+                headers={"Retry-After": str(retry_after)},
             )
     except HTTPException:
         raise

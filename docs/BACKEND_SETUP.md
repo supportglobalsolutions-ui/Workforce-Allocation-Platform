@@ -179,68 +179,50 @@ Run `docker compose down -v` and repeat steps 5 and 6.
 
 ---
 
-### 7. Register your RDP machine in Guacamole
+### 7. Register your RDP machine — from the admin UI, not from Guacamole
 
-This is where you enter the details of the actual Windows machine workers will connect to.
-Do this once per machine.
+**You do not create connections in the Guacamole console.** Add the machine once in
+**Admin → RDP Resource Management → Add Machine** and the backend creates the matching
+Guacamole connection over its REST API, then stores the returned connection ID on the
+machine. Same flow for every machine after the first.
 
-1. Open `http://localhost:8080/guacamole` in your browser
-2. Login: `guacadmin` / `guacadmin`
-3. Top-right corner → click `guacadmin` → **Settings** → **Connections** tab → **New Connection**
-4. Fill in:
+Fill in:
 
-   **Name** — a label for the machine, e.g. `Machine-KE-01`
+| Field | What it is |
+|---|---|
+| **Nickname** | Label for the machine, e.g. `Machine-KE-01`. Also the Guacamole connection name and the Uptime Kuma Friendly Name. |
+| **Monitor host (IP)** | IP of the Windows machine workers connect to |
+| **Monitor port** | `3389` |
+| **RDP username / password** | Windows login for that machine — sent to Guacamole, **never stored in the platform database** |
+| **Domain** | Blank unless on Active Directory |
+| **Guacamole connection ID** | Leave blank — filled in automatically on save |
 
-   **Protocol** — select `RDP`
+Protocol (`rdp`), security mode `Any`, *ignore server certificate*, and a one-user-at-a-time
+connection limit are applied automatically.
 
-   Scroll down to **Parameters**:
+The banner at the top of the page shows whether Guacamole is reachable and how many machines
+are ready. Each machine shows its own connection state:
 
-   **Hostname** — IP address of the Windows machine workers will connect to
+- **ready** — connection exists, workers can claim and connect
+- **not provisioned** — no connection yet; click **Sync Guacamole**
+- **connection … no longer exists** — someone deleted it in Guacamole; click **Sync Guacamole** to rebuild it
 
-   **Port** — `3389`
+**Sync Guacamole** is idempotent and safe to press any time: it updates the existing connection,
+adopts one that already has the same nickname, or creates a new one. Editing the host, port or
+nickname re-syncs automatically. Leaving the password blank on an edit keeps the current one.
 
-   **Username** — Windows login username of the remote machine
+Changing credentials later: edit the machine, type the new password, save.
 
-   **Password** — Windows login password of the remote machine
-
-   **Domain** — leave blank unless on Active Directory
-
-   **Security mode** — `Any`
-
-   **Ignore server certificate** — tick this checkbox
-
-5. Click **Save**
-6. Click the connection name in the list. Look at the URL:
-   ```
-   http://localhost:8080/guacamole/#/manage/connections/7
-   ```
-   The number at the end (`7`) is the **Connection ID**. Write it down.
+> Prefer to build a connection by hand in the Guacamole console? Paste its numeric ID into the
+> **Guacamole connection ID** field and the platform will use it as-is.
 
 ---
 
-### 8. Link the connection ID to the platform database
+### 8. Make the machine claimable
 
-Open pgAdmin → `workforceallocationdb` → Query Tool.
-
-First check what machines exist:
-```sql
-SELECT id, nickname, status, guacamole_connection_id FROM rdp_resources;
-```
-
-Then link the connection:
-```sql
-UPDATE rdp_resources
-SET guacamole_connection_id = '7'
-WHERE nickname = 'Machine-KE-01';
-```
-Replace `7` with your connection ID and `Machine-KE-01` with the machine nickname.
-
-Set it to available so workers can claim it:
-```sql
-UPDATE rdp_resources
-SET status = 'online_free'
-WHERE nickname = 'Machine-KE-01';
-```
+New machines are created as `online_free`, so workers can claim them right away. To change a
+machine's state later, use the **Lock / Unlock / Maintenance** buttons on the same admin page —
+no SQL required.
 
 ---
 
@@ -623,7 +605,10 @@ sudo systemctl start globalsolutions-api
 | `http://localhost:8080/guacamole` shows nothing | Docker Desktop not running — open it and wait 60 seconds |
 | Backend crash: Redis connection refused | Run `docker compose up -d` first |
 | Backend crash: PostgreSQL connection refused | PostgreSQL not running — start it from Windows Services or pgAdmin |
-| Claim button works but no new tab opens | `guacamole_connection_id` is null — run the SQL UPDATE in step 8 |
+| Claim works but the remote desktop never opens | Machine shows **not provisioned** on the admin RDP page — click **Sync Guacamole** |
+| Admin RDP page banner says Guacamole **unreachable** | Containers down (`docker compose up -d`), or `GUACAMOLE_URL` / `GUACAMOLE_PASSWORD` wrong in `backend/.env` |
+| Machine shows **connection … no longer exists** | The connection was deleted in Guacamole — click **Sync Guacamole** to rebuild it |
+| Viewer opens but auth fails on the Windows login screen | Wrong RDP username/password — edit the machine, retype the password, save |
 | Guacamole tab opens but screen is black | Windows Firewall on the remote PC is blocking port 3389 |
 | `venv\Scripts\activate` not found | Run `python -m venv venv` then `pip install -r requirements.txt` |
 | Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v`, regenerate `guacamole_initdb.sql`, then `docker compose up -d` |

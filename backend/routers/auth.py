@@ -3,7 +3,7 @@ from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
 
 from core.auth_errors import http_error_from_auth
@@ -21,6 +21,8 @@ from core.supabase_auth import (
     register_pending_user,
     reject_auth_user,
     set_user_role,
+    send_password_recovery_email,
+    update_auth_user_password,
     unban_auth_user,
     user_to_dict,
     verify_supabase_token,
@@ -38,6 +40,15 @@ from models.enums import (
 )
 from models.partner import PartnerEntity
 from models.worker import Worker
+from .deps import get_admin_user
+from core.security import get_current_user
+from services.login_otp import (
+    clear_login_mfa,
+    has_login_mfa,
+    issue_login_otp,
+    login_otp_required,
+    verify_login_otp,
+)
 
 router = APIRouter()
 
@@ -46,8 +57,8 @@ router = APIRouter()
 
 class CreateUserRequest(BaseModel):
     email: EmailStr
-    password: str
-    displayName: str
+    password: str = Field(min_length=8, max_length=128)
+    displayName: str = Field(min_length=1, max_length=120)
     role: str  # "user" | "partner" | "admin" | "super_admin"
     partnerEntityId: Optional[UUID] = None
 
@@ -59,12 +70,12 @@ class UpdateRoleRequest(BaseModel):
 
 class RegisterRequest(BaseModel):
     email: EmailStr
-    password: str
-    displayName: str
+    password: str = Field(min_length=8, max_length=128)
+    displayName: str = Field(min_length=1, max_length=120)
 
 
 class SessionTokenRequest(BaseModel):
-    id_token: str
+    id_token: str = Field(min_length=20, max_length=8192)
 
 
 class ApproveUserRequest(BaseModel):
@@ -72,6 +83,23 @@ class ApproveUserRequest(BaseModel):
     worker_type: Optional[str] = None        # "gs_registered" | "partner_worker"
     partner_entity_id: Optional[UUID] = None
     country: Optional[str] = None
+
+
+class LoginOtpVerifyRequest(BaseModel):
+    challenge_id: UUID
+    code: str = Field(min_length=6, max_length=8, pattern=r"^\d+$")
+
+
+class LoginAttemptRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordRecoveryRequest(BaseModel):
+    email: EmailStr
+
+
+class PasswordResetRequest(BaseModel):
+    password: str = Field(min_length=12, max_length=128)
 
 
 def _validate_optional_partner_entity(db: Session, role: str, entity_id: Optional[UUID]) -> Optional[str]:
@@ -471,7 +499,11 @@ def get_account_status(email: str, request: Request):
 
 
 @router.post("/session-token")
-def create_session_token(body: SessionTokenRequest, request: Request):
+def create_session_token(
+    body: SessionTokenRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """Verify Supabase ID token and return a signed cookie value for Next.js middleware."""
     check_rate_limit(request, scope="auth-session-token", limit=30, window_seconds=60)
     try:
@@ -486,8 +518,135 @@ def create_session_token(body: SessionTokenRequest, request: Request):
     if role not in {"user", "partner", "admin", "super_admin"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
-    token = sign_session(decoded["uid"], role)
+    uid = decoded["uid"]
+    admin = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    # JIT-provision so first login can still evaluate OTP rules.
+    if not admin:
+        from .deps import get_admin_user as _get_admin
+
+        admin = _get_admin(db, {"uid": uid, "email": decoded.get("email"), "role": role, "name": decoded.get("name")})
+
+    if login_otp_required(admin, role) and not has_login_mfa(uid):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="login_otp_required",
+        )
+
+    token = sign_session(uid, role)
     return {"token": token, "role": role}
+
+
+@router.post("/login-attempt")
+def login_attempt(body: LoginAttemptRequest, request: Request):
+    """
+    Rate-limit password login attempts before calling Supabase.
+    Frontend should call this before signInWithPassword.
+    """
+    email = body.email.strip().lower()
+    check_rate_limit(request, scope="login-attempt-ip", limit=20, window_seconds=900)
+    check_rate_limit(
+        request,
+        scope="login-attempt-email",
+        limit=8,
+        window_seconds=900,
+        key_suffix=email,
+    )
+    return {"ok": True}
+
+
+@router.post("/password-recovery")
+def password_recovery(body: PasswordRecoveryRequest, request: Request):
+    """Send a recovery link, at most three times per email/IP in six hours."""
+    email = body.email.strip().lower()
+    check_rate_limit(request, scope="password-recovery-ip", limit=3, window_seconds=6 * 3600)
+    check_rate_limit(
+        request,
+        scope="password-recovery-email",
+        limit=3,
+        window_seconds=6 * 3600,
+        key_suffix=email,
+    )
+    try:
+        redirect_to = f"{settings.APP_BASE_URL.rstrip('/')}/reset-password"
+        send_password_recovery_email(email, redirect_to)
+    except Exception:
+        # Keep the response generic to prevent account enumeration.
+        pass
+    return {"message": "If this email has an account, a recovery link is on its way."}
+
+
+@router.post("/password-reset")
+def password_reset(
+    body: PasswordResetRequest,
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+):
+    """Complete a recovery-session password update once every 24 hours."""
+    uid = current_user.get("uid")
+    if not uid:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Your recovery session has expired. Request a new link.")
+    check_rate_limit(request, scope="password-reset-ip", limit=5, window_seconds=24 * 3600)
+    check_rate_limit(
+        request,
+        scope="password-reset-user",
+        limit=1,
+        window_seconds=24 * 3600,
+        key_suffix=uid,
+    )
+    try:
+        update_auth_user_password(uid, body.password)
+    except Exception as exc:
+        raise http_error_from_auth(exc) from exc
+    return {"message": "Your password has been updated."}
+
+
+@router.post("/login-otp/challenge")
+def login_otp_challenge(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """After password auth: send login OTP when first-time or privileged role."""
+    email = (current_user.get("email") or "").lower()
+    check_rate_limit(request, scope="login-otp-challenge", limit=10, window_seconds=3600)
+    if email:
+        check_rate_limit(
+            request,
+            scope="login-otp-challenge-email",
+            limit=5,
+            window_seconds=3600,
+            key_suffix=email,
+        )
+
+    admin = get_admin_user(db, current_user)
+    return issue_login_otp(db, admin=admin, auth_role=current_user.get("role", "user"))
+
+
+@router.post("/login-otp/verify")
+def login_otp_verify(
+    body: LoginOtpVerifyRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """Consume login OTP and unlock session-token / cookie issuance."""
+    check_rate_limit(request, scope="login-otp-verify", limit=20, window_seconds=900)
+    admin = get_admin_user(db, current_user)
+    return verify_login_otp(
+        db,
+        admin=admin,
+        challenge_id=body.challenge_id,
+        code=body.code,
+    )
+
+
+@router.post("/login-otp/clear")
+def login_otp_clear(
+    current_user: dict = Depends(get_current_user),
+):
+    """Clear MFA flag on logout so the next privileged login requires OTP again."""
+    clear_login_mfa(current_user["uid"])
+    return {"ok": True}
 
 
 @router.patch("/users/{uid}/ban")

@@ -28,6 +28,12 @@ interface Me {
   worker_type: string;
 }
 
+interface TrainingModuleSummary {
+  id: string;
+  is_mandatory_for_new_workers: boolean;
+  is_active?: boolean;
+}
+
 const TYPE_LABELS: Record<string, string> = {
   gs_rdp: 'GS RDP',
   partner_multilog: 'Partner Multilog',
@@ -44,6 +50,7 @@ export default function WorkerDashboard() {
   const [totalSessions, setTotalSessions] = useState(0);
   const [quality, setQuality] = useState<QualityScore | null>(null);
   const [me, setMe] = useState<Me | null>(null);
+  const [hasMandatoryTraining, setHasMandatoryTraining] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,12 +59,16 @@ export default function WorkerDashboard() {
       api.get<WorkSession[]>('/sessions?limit=200'),
       api.get<QualityScore | null>('/quality/me'),
       api.get<Me>('/workers/me'),
+      api.get<TrainingModuleSummary[]>('/training/my-modules'),
     ])
-      .then(([sessionList, qualityScore, worker]) => {
+      .then(([sessionList, qualityScore, worker, modules]) => {
         setTotalSessions(sessionList.length);
         setSessions(sessionList.slice(0, 4));
         setQuality(qualityScore);
         setMe(worker);
+        setHasMandatoryTraining(
+          modules.some((m) => m.is_mandatory_for_new_workers)
+        );
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
@@ -85,7 +96,7 @@ export default function WorkerDashboard() {
         description={`${totalSessions === 200 ? '200+' : totalSessions} sessions on record`}
       />
 
-      {me?.work_ready === false && (
+      {me?.work_ready === false && hasMandatoryTraining && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
           <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
           <p className="text-xs text-amber-400">

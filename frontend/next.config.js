@@ -43,7 +43,12 @@ const nextConfig = {
     ];
   },
   async rewrites() {
-    const backendUrl = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
+    // Prefer a dedicated local proxy target so NEXT_PUBLIC_API_URL can stay
+    // pointed at production without breaking local auth/OTP development.
+    const backendUrl =
+      process.env.API_PROXY_URL ||
+      process.env.NEXT_PUBLIC_API_URL ||
+      'http://127.0.0.1:8000';
     const guacamoleUrl = process.env.NEXT_PUBLIC_GUACAMOLE_URL || 'http://localhost:8080/guacamole';
     return [
       {

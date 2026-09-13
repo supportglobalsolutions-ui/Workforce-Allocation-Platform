@@ -25,11 +25,6 @@ export default function Error({
         <p className="mt-2 text-sm text-theme-muted">
           This page hit an unexpected error. Trying again usually clears it.
         </p>
-        {error.message && (
-          <p className="mt-4 text-xs text-theme-muted font-mono break-words rounded-xl border border-white/10 bg-white/[0.03] p-3 text-left">
-            {error.message}
-          </p>
-        )}
         {error.digest && (
           <p className="mt-2 text-[11px] text-theme-muted">Reference: {error.digest}</p>
         )}

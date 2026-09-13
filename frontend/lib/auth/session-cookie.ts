@@ -46,6 +46,13 @@ export function verifySessionCookie(token: string | undefined | null): { uid: st
   return { uid, role: role as Role };
 }
 
+export class LoginOtpRequiredError extends Error {
+  constructor() {
+    super('login_otp_required');
+    this.name = 'LoginOtpRequiredError';
+  }
+}
+
 export async function syncSessionCookie(idToken: string): Promise<Role | null> {
   // Go through the same-origin /api rewrite rather than hitting the backend
   // directly. A direct call to NEXT_PUBLIC_API_URL is cross-origin from the
@@ -59,7 +66,19 @@ export async function syncSessionCookie(idToken: string): Promise<Role | null> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id_token: idToken }),
   });
-  if (!res.ok) return null;
+  if (!res.ok) {
+    let detail = '';
+    try {
+      const body = (await res.json()) as { detail?: string };
+      detail = body.detail ?? '';
+    } catch {
+      /* ignore */
+    }
+    if (res.status === 403 && detail === 'login_otp_required') {
+      throw new LoginOtpRequiredError();
+    }
+    return null;
+  }
   const data = (await res.json()) as { token?: string; role?: Role };
   if (!data.token || !data.role) return null;
 

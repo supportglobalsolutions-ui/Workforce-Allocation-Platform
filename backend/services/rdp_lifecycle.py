@@ -83,7 +83,7 @@ def run_rdp_lifecycle_tick() -> dict[str, int]:
                 continue
 
             try:
-                result = _end_rdp_connection(
+                _end_rdp_connection(
                     db,
                     resource,
                     redis_client,
@@ -91,8 +91,6 @@ def run_rdp_lifecycle_tick() -> dict[str, int]:
                     require_owner=False,
                     release_reason=ReleaseReasonEnum.timed_out,
                 )
-                for sid in result.get("closed_session_ids", []):
-                    from uuid import UUID
                 auto_released += 1
                 logger.info("RDP %s auto-released after idle timeout", resource.nickname)
             except Exception as exc:

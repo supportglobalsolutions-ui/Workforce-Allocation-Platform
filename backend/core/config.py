@@ -36,6 +36,8 @@ class Settings(BaseSettings):
     SUPABASE_URL: str = ""
     SUPABASE_SECRET_KEY: str = ""
     SUPABASE_SERVICE_ROLE_KEY: str = ""
+    # Public publishable key used only to ask GoTrue to send a recovery email.
+    SUPABASE_PUBLISHABLE_KEY: str = ""
 
     # Token verification. JWKS (RS256) is preferred; the shared secret is the
     # legacy HS256 path and is used only as a fallback.

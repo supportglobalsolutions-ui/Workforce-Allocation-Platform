@@ -22,11 +22,27 @@ class RDPResourceBase(SQLModel):
     monitor_port:            Optional[int]    = 3389
 
 
-class RDPResourceCreate(RDPResourceBase):
+class GuacamoleCredentials(SQLModel):
+    """
+    Write-only RDP credentials. Forwarded to Guacamole when provisioning the
+    connection; never stored in the app DB and never returned by the API.
+    """
+
+    rdp_username: Optional[str] = None
+    rdp_password: Optional[str] = None
+    rdp_domain:   Optional[str] = None
+    # Set false to manage the Guacamole connection by hand.
+    auto_provision: bool = True
+
+
+CREDENTIAL_FIELDS = set(GuacamoleCredentials.model_fields)
+
+
+class RDPResourceCreate(RDPResourceBase, GuacamoleCredentials):
     pass
 
 
-class RDPResourceUpdate(SQLModel):
+class RDPResourceUpdate(GuacamoleCredentials):
     nickname:                Optional[str]           = None
     country:                 Optional[str]           = None
     client_group:            Optional[str]           = None
@@ -54,3 +70,17 @@ class RDPResourceResponse(RDPResourceBase):
 
 class RdpForceReleaseBody(SQLModel):
     reason: str
+
+
+class RdpProvisionBody(GuacamoleCredentials):
+    """Explicit (re)provision request for an existing machine."""
+
+    auto_provision: bool = True
+
+
+class RdpProvisionResult(SQLModel):
+    rdp_resource_id:         str
+    guacamole_connection_id: Optional[str] = None
+    created:                 bool = False
+    provisioned:             bool = False
+    error:                   Optional[str] = None

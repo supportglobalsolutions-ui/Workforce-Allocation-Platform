@@ -325,7 +325,7 @@ export default function TrainingPage() {
         title="Training"
       />
 
-      {me?.work_ready === false && (
+      {me?.work_ready === false && modules.some((m) => m.is_mandatory_for_new_workers) && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
           <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
           <div>

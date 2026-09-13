@@ -27,11 +27,19 @@ from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.worker import Worker
 from models.client import Client
+from models.training import TrainingModule
 from schemas.rdp import (
+    CREDENTIAL_FIELDS,
     RDPResourceCreate,
     RDPResourceResponse,
     RDPResourceUpdate,
     RdpForceReleaseBody,
+    RdpProvisionBody,
+    RdpProvisionResult,
+)
+from services.guacamole_provision import (
+    GuacamoleProvisionError,
+    sync_connection,
 )
 from services.rdp_state import (
     transition_rdp_status,
@@ -39,7 +47,7 @@ from services.rdp_state import (
 )
 from services.client_owners import client_owner_name
 from services.audit_service import record_audit
-from .deps import apply_update, get_admin_user, get_worker_for_user
+from .deps import get_admin_user, get_worker_for_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -523,6 +531,60 @@ def list_rdp_resources(
     return [_rdp_response(db, resource) for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()]
 
 
+@router.get("/guacamole/health")
+def guacamole_health(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+    redis_client: redis_lib.Redis = Depends(get_redis),
+):
+    """
+    End-to-end check of the Guacamole side of the RDP flow:
+    server reachable, API credentials valid, and every machine's stored
+    connection id still resolving to a real connection.
+    """
+    report: dict = {
+        "guacamole_url": settings.GUACAMOLE_URL,
+        "reachable": False,
+        "authenticated": False,
+        "error": None,
+        "connection_count": 0,
+        "machines": [],
+    }
+
+    connections: dict[str, dict] = {}
+    try:
+        guac = GuacamoleClient(redis_client)
+        guac.get_token()
+        report["reachable"] = True
+        report["authenticated"] = True
+        connections = guac.list_connections()
+        report["connection_count"] = len(connections)
+    except Exception as exc:
+        report["error"] = f"{type(exc).__name__}: {exc}"
+
+    for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all():
+        cid = resource.guacamole_connection_id
+        if not cid:
+            state = "missing"
+        elif not report["authenticated"]:
+            state = "unknown"
+        elif str(cid) in {str(k) for k in connections}:
+            state = "ok"
+        else:
+            state = "stale"
+        report["machines"].append(
+            {
+                "id": str(resource.id),
+                "nickname": resource.nickname,
+                "monitor_host": resource.monitor_host,
+                "guacamole_connection_id": cid,
+                "connection_state": state,
+                "ready": state == "ok",
+            }
+        )
+    return report
+
+
 @router.api_route("/tunnel", methods=["GET", "POST"])
 async def proxy_guacamole_tunnel(
     request: Request,
@@ -624,12 +686,49 @@ def get_rdp_resource(
     return _rdp_response(db, resource)
 
 
+def _provision_guacamole(
+    db: Session,
+    resource: RDPResource,
+    redis_client: redis_lib.Redis,
+    creds: RDPResourceCreate | RDPResourceUpdate | RdpProvisionBody,
+    *, strict: bool = False,
+) -> str | None:
+    """
+    Create/update the machine's Guacamole connection and persist the id.
+    Returns an error string instead of raising unless `strict` is set, so an
+    unreachable Guacamole never blocks saving the machine record.
+    """
+    try:
+        result = sync_connection(
+            redis_client,
+            resource,
+            username=creds.rdp_username,
+            password=creds.rdp_password,
+            domain=creds.rdp_domain,
+        )
+    except GuacamoleProvisionError as exc:
+        if strict:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
+            ) from exc
+        logger.warning("Guacamole provisioning for %s failed: %s", resource.nickname, exc)
+        return str(exc)
+
+    if resource.guacamole_connection_id != result.connection_id:
+        resource.guacamole_connection_id = result.connection_id
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+    return None
+
+
 @router.post("", response_model=RDPResourceResponse, status_code=status.HTTP_201_CREATED)
 def create_rdp_resource(
     body: RDPResourceCreate,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
+    redis_client: redis_lib.Redis = Depends(get_redis),
 ):
     existing = db.exec(
         select(RDPResource).where(RDPResource.nickname == body.nickname.strip())
@@ -639,11 +738,23 @@ def create_rdp_resource(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"An RDP machine with nickname '{body.nickname}' already exists",
         )
-    resource = RDPResource(**body.model_dump())
+    resource = RDPResource(**body.model_dump(exclude=CREDENTIAL_FIELDS))
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    return resource
+
+    # Auto-register the connection in Guacamole unless the admin pasted an id
+    # or opted out. Failures are reported via health_notes, not a 500.
+    if body.auto_provision and not body.guacamole_connection_id and resource.monitor_host:
+        error = _provision_guacamole(db, resource, redis_client, body)
+        if error:
+            resource.health_notes = (
+                f"{resource.health_notes}\n{error}" if resource.health_notes else error
+            )
+            db.add(resource)
+            db.commit()
+            db.refresh(resource)
+    return _rdp_response(db, resource)
 
 
 @router.patch("/{rdp_id}", response_model=RDPResourceResponse)
@@ -653,6 +764,7 @@ def update_rdp_resource(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
+    redis_client: redis_lib.Redis = Depends(get_redis),
 ):
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
@@ -670,11 +782,61 @@ def update_rdp_resource(
                     detail=f"An RDP machine with nickname '{nickname}' already exists",
                 )
 
-    apply_update(resource, body)
+    set_fields = set(body.model_dump(exclude_unset=True))
+    # Credentials are write-only pass-throughs to Guacamole — never columns.
+    for field, value in body.model_dump(
+        exclude_unset=True, exclude=CREDENTIAL_FIELDS
+    ).items():
+        setattr(resource, field, value)
     db.add(resource)
     db.commit()
     db.refresh(resource)
-    return resource
+
+    # Keep Guacamole in sync when connection-relevant fields or credentials change.
+    connection_fields = {"nickname", "monitor_host", "monitor_port"}
+    creds_supplied = bool(set_fields & {"rdp_username", "rdp_password", "rdp_domain"})
+    should_sync = body.auto_provision and resource.monitor_host and (
+        creds_supplied
+        or not resource.guacamole_connection_id
+        or bool(set_fields & connection_fields)
+    )
+    if should_sync:
+        error = _provision_guacamole(db, resource, redis_client, body, strict=creds_supplied)
+        if error:
+            logger.warning("RDP %s saved but Guacamole sync failed: %s", resource.nickname, error)
+    return _rdp_response(db, resource)
+
+
+@router.post("/{rdp_id}/provision", response_model=RdpProvisionResult)
+def provision_rdp_connection(
+    rdp_id: UUID,
+    body: RdpProvisionBody,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+    redis_client: redis_lib.Redis = Depends(get_redis),
+):
+    """
+    Create or repair this machine's Guacamole connection on demand.
+    Idempotent: adopts an existing connection with the same nickname, otherwise
+    creates one, then stores the identifier on the machine.
+    """
+    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    if not resource.monitor_host:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Set the machine's host/IP first",
+        )
+
+    before = resource.guacamole_connection_id
+    _provision_guacamole(db, resource, redis_client, body, strict=True)
+    return RdpProvisionResult(
+        rdp_resource_id=str(resource.id),
+        guacamole_connection_id=resource.guacamole_connection_id,
+        created=before != resource.guacamole_connection_id,
+        provisioned=True,
+    )
 
 
 @router.post("/{rdp_id}/claim", status_code=status.HTTP_201_CREATED)
@@ -693,7 +855,14 @@ def claim_rdp_resource(
     """
     check_rate_limit(request, scope="rdp-claim", limit=20, window_seconds=3600)
     worker = get_worker_for_user(db, current_user)
-    if not worker.work_ready:
+    # Only enforce work_ready when an active compulsory training module exists.
+    has_mandatory_training = db.exec(
+        select(TrainingModule.id).where(
+            TrainingModule.is_active.is_(True),
+            TrainingModule.is_mandatory_for_new_workers.is_(True),
+        ).limit(1)
+    ).first() is not None
+    if has_mandatory_training and not worker.work_ready:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Complete your onboarding training first — an admin must clear you to start work.",

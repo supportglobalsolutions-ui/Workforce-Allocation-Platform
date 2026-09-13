@@ -6,12 +6,15 @@ import Link from 'next/link';
 interface LogoProps {
   size?: 'sm' | 'md' | 'lg';
   showText?: boolean;
+  /** Hide gold OPERATIONS subtitle (landing / login only). */
+  showOperations?: boolean;
   className?: string;
 }
 
 export default function GlobalSolutionsLogo({
   size = 'md',
   showText = true,
+  showOperations = false,
   className = '',
 }: LogoProps) {
   const markDimensions = {
@@ -32,7 +35,7 @@ export default function GlobalSolutionsLogo({
         <div className="absolute -inset-1.5 rounded-full bg-emerald-400/20 blur-md opacity-70 group-hover:opacity-100 transition-opacity" />
         <Image
           src="/images/logo-mark.png"
-          alt="GlobalSolutions"
+          alt="Global Solutions"
           width={markDimensions.w}
           height={markDimensions.h}
           sizes={`${markDimensions.w}px`}
@@ -43,8 +46,14 @@ export default function GlobalSolutionsLogo({
 
       {showText && (
         <span className="flex flex-col leading-none">
-          <span className={`${wordmarkDimensions.text} font-display font-extrabold tracking-tight text-white`}>GlobalSolutions</span>
-          <span className={`mt-1 ${wordmarkDimensions.sub} font-bold tracking-[0.24em] text-[#d5b34a]`}>OPERATIONS</span>
+          <span className={`${wordmarkDimensions.text} font-display font-extrabold tracking-tight text-white`}>
+            Global Solutions
+          </span>
+          {showOperations && (
+            <span className={`mt-1 ${wordmarkDimensions.sub} font-bold tracking-[0.24em] text-[#d5b34a]`}>
+              OPERATIONS
+            </span>
+          )}
         </span>
       )}
     </Link>
