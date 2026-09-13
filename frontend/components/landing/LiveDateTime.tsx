@@ -34,8 +34,8 @@ export default function LiveDateTime({ className = '' }: { className?: string })
 
   return (
     <div className={`tabular-nums ${className}`} suppressHydrationWarning>
-      <span className="hidden sm:inline">{date}</span>
-      <span className="hidden sm:inline mx-1.5 opacity-40">•</span>
+      <span>{date}</span>
+      <span className="mx-1.5 opacity-40">•</span>
       <span>{time}</span>
     </div>
   );
