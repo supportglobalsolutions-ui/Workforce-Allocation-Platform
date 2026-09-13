@@ -47,8 +47,14 @@ export function verifySessionCookie(token: string | undefined | null): { uid: st
 }
 
 export async function syncSessionCookie(idToken: string): Promise<Role | null> {
-  const backend = process.env.NEXT_PUBLIC_API_URL || 'http://127.0.0.1:8000';
-  const res = await fetch(`${backend}/auth/session-token`, {
+  // Go through the same-origin /api rewrite rather than hitting the backend
+  // directly. A direct call to NEXT_PUBLIC_API_URL is cross-origin from the
+  // page, so the CSP connect-src ('self' + supabase) blocks it before the
+  // request is even sent — which surfaces as a bare "Failed to fetch".
+  // The rewrite in next.config.js forwards /api/* to the backend, and
+  // app/api/auth/session/route.ts still wins for its own path because
+  // filesystem routes take precedence over afterFiles rewrites.
+  const res = await fetch('/api/auth/session-token', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ id_token: idToken }),
