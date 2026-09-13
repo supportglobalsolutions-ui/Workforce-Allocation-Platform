@@ -2,98 +2,73 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { ArrowRight, Play, X, Shield, Globe, Users, ExternalLink } from 'lucide-react';
+import { ArrowRight, Play, X } from 'lucide-react';
 import LandingNavbar from './LandingNavbar';
-import HoloGlobe from './HoloGlobe';
 
 export default function LandingHero() {
   const [showVideoModal, setShowVideoModal] = useState(false);
 
   return (
     <div className="relative min-h-screen w-full flex flex-col justify-between bg-[#010c09] text-white overflow-x-hidden selection:bg-[#0df5c4]/30 selection:text-white">
-      {/* ── Background Cyber Atmosphere with High-Resolution Render ── */}
+      {/* Background only — single globe from art (no overlay cards) */}
       <div className="absolute inset-0 pointer-events-none overflow-hidden" aria-hidden>
-        {/* Cinematic 3D Backdrop containing city skyline, lighting streaks & reflective floor */}
         <div
-          className="absolute inset-0 bg-[url('/images/landing-art-bg.png')] bg-cover bg-center opacity-85"
+          className="absolute inset-0 bg-[url('/images/landing-art-bg.png')] bg-cover bg-center opacity-90"
           style={{ mixBlendMode: 'screen' }}
         />
-
-        {/* Diagonal volumetric cyan beam of light across the screen */}
         <div className="absolute -top-32 -left-40 w-[700px] h-[350px] rotate-[-25deg] bg-gradient-to-r from-transparent via-[#0df5c4]/15 to-transparent blur-3xl" />
         <div className="absolute top-1/2 -right-40 w-[800px] h-[400px] rotate-[-30deg] bg-gradient-to-r from-transparent via-[#0df5c4]/12 to-transparent blur-3xl" />
-
-        {/* Ambient radial depth aura */}
         <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[1100px] h-[600px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.1)_0%,rgba(3,40,32,0.05)_50%,transparent_75%)] blur-3xl" />
-
-        {/* Perspective floor grid reflections */}
         <div className="absolute bottom-0 inset-x-0 h-48 bg-gradient-to-t from-[#010c09] via-transparent to-transparent pointer-events-none" />
       </div>
 
-      {/* ── Top Navigation Bar ── */}
       <LandingNavbar onOpenVideo={() => setShowVideoModal(true)} />
 
-      {/* ── Main Hero Content Matching Screenshot Exactly ── */}
       <main className="relative z-10 flex-1 flex items-center w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 py-8 sm:py-12">
-        <div className="w-full grid grid-cols-1 lg:grid-cols-12 gap-10 lg:gap-8 items-center">
-          
-          {/* ── Left Column: Typography, Subhead & Action Buttons ── */}
-          <div className="lg:col-span-6 flex flex-col items-start text-left z-20">
-            {/* Tagline */}
-            <div className="text-[11px] sm:text-xs font-mono font-bold uppercase tracking-[0.28em] text-[#0df5c4] mb-3 sm:mb-4 drop-shadow-[0_0_12px_rgba(13,245,196,0.5)]">
-              REMOTE • SMART • GLOBAL
-            </div>
-
-            {/* Main Headline */}
-            <h1 className="text-5xl sm:text-7xl lg:text-[76px] font-display font-extrabold tracking-tight leading-[1.04] mb-5 sm:mb-6">
-              <span className="text-white block drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]">
-                Global
-              </span>
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0df5c4] via-[#4df8cf] to-[#14e9b6] drop-shadow-[0_0_35px_rgba(13,245,196,0.6)]">
-                Solutions
-              </span>
-            </h1>
-
-            {/* Subhead */}
-            <p className="text-lg sm:text-2xl font-display font-semibold text-[#ddf5ee] tracking-tight leading-snug mb-2 sm:mb-3 max-w-lg">
-              Build remote teams. Unlock global talent.
-            </p>
-            <p className="text-lg sm:text-2xl font-display font-semibold text-[#ddf5ee] tracking-tight leading-snug mb-8 sm:mb-9 max-w-lg">
-              Scale your business.
-            </p>
-
-            {/* Buttons Row */}
-            <div className="flex flex-wrap items-center gap-4 sm:gap-5">
-              {/* Primary Call to Action: Get Started -> /login */}
-              <Link
-                href="/login"
-                className="group relative inline-flex items-center gap-2.5 px-8 sm:px-9 py-3.5 sm:py-4 rounded-full font-bold text-sm sm:text-base text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-95 transition-all shadow-[0_0_30px_rgba(13,245,196,0.45)] hover:shadow-[0_0_45px_rgba(13,245,196,0.7)]"
-              >
-                <span>Get Started</span>
-                <ArrowRight
-                  size={18}
-                  strokeWidth={2.5}
-                  className="group-hover:translate-x-1 transition-transform"
-                />
-              </Link>
-
-              {/* Secondary Call to Action: Watch Video */}
-              <button
-                type="button"
-                onClick={() => setShowVideoModal(true)}
-                className="group inline-flex items-center gap-2.5 px-7 sm:px-8 py-3.5 sm:py-4 rounded-full font-semibold text-sm sm:text-base text-white bg-[#03201a]/70 hover:bg-[#032820] border border-[#0df5c4]/30 hover:border-[#0df5c4]/60 transition-all shadow-[0_0_20px_rgba(13,245,196,0.15)] active:scale-95"
-              >
-                <div className="w-5 h-5 rounded-full bg-[#0df5c4]/20 flex items-center justify-center text-[#0df5c4] group-hover:scale-110 transition-transform">
-                  <Play size={11} fill="#0df5c4" />
-                </div>
-                <span>Watch Video</span>
-              </button>
-            </div>
+        <div className="w-full max-w-xl lg:max-w-2xl flex flex-col items-start text-left z-20">
+          <div className="text-[11px] sm:text-xs font-mono font-bold uppercase tracking-[0.28em] text-[#0df5c4] mb-3 sm:mb-4 drop-shadow-[0_0_12px_rgba(13,245,196,0.5)]">
+            REMOTE • SMART • GLOBAL
           </div>
 
-          {/* ── Right Column: Holographic Globe & 4 Badges ── */}
-          <div className="lg:col-span-6 flex items-center justify-center z-10 w-full mt-6 lg:mt-0">
-            <HoloGlobe />
+          <h1 className="text-5xl sm:text-7xl lg:text-[76px] font-display font-extrabold tracking-tight leading-[1.04] mb-5 sm:mb-6">
+            <span className="text-white block drop-shadow-[0_2px_12px_rgba(0,0,0,0.8)]">
+              Global
+            </span>
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-[#0df5c4] via-[#4df8cf] to-[#14e9b6] drop-shadow-[0_0_35px_rgba(13,245,196,0.6)]">
+              Solutions
+            </span>
+          </h1>
+
+          <p className="text-lg sm:text-2xl font-display font-semibold text-[#ddf5ee] tracking-tight leading-snug mb-2 sm:mb-3 max-w-lg">
+            Build remote teams. Unlock global talent.
+          </p>
+          <p className="text-lg sm:text-2xl font-display font-semibold text-[#ddf5ee] tracking-tight leading-snug mb-8 sm:mb-9 max-w-lg">
+            Scale your business.
+          </p>
+
+          <div className="flex flex-wrap items-center gap-4 sm:gap-5">
+            <Link
+              href="/login"
+              className="group relative inline-flex items-center gap-2.5 px-8 sm:px-9 py-3.5 sm:py-4 rounded-full font-bold text-sm sm:text-base text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-95 transition-all shadow-[0_0_30px_rgba(13,245,196,0.45)] hover:shadow-[0_0_45px_rgba(13,245,196,0.7)]"
+            >
+              <span>Get Started</span>
+              <ArrowRight
+                size={18}
+                strokeWidth={2.5}
+                className="group-hover:translate-x-1 transition-transform"
+              />
+            </Link>
+
+            <button
+              type="button"
+              onClick={() => setShowVideoModal(true)}
+              className="group inline-flex items-center gap-2.5 px-7 sm:px-8 py-3.5 sm:py-4 rounded-full font-semibold text-sm sm:text-base text-white bg-[#03201a]/70 hover:bg-[#032820] border border-[#0df5c4]/30 hover:border-[#0df5c4]/60 transition-all shadow-[0_0_20px_rgba(13,245,196,0.15)] active:scale-95"
+            >
+              <div className="w-5 h-5 rounded-full bg-[#0df5c4]/20 flex items-center justify-center text-[#0df5c4] group-hover:scale-110 transition-transform">
+                <Play size={11} fill="#0df5c4" />
+              </div>
+              <span>Watch Video</span>
+            </button>
           </div>
         </div>
       </main>
