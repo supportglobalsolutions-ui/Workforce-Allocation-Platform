@@ -150,6 +150,19 @@ def _disconnect_guacamole(redis_client: redis_lib.Redis, resource: RDPResource) 
         return False
 
 
+def _bg_disconnect_guacamole(connection_id: str) -> None:
+    """Best-effort Guacamole kill off the request path so end-connection stays fast."""
+    if not connection_id:
+        return
+    try:
+        from core.redis import get_redis
+
+        guac = GuacamoleClient(get_redis())
+        guac.kill_active_connections(connection_id)
+    except Exception as exc:
+        logger.warning("Background Guacamole disconnect failed for %s: %s", connection_id, exc)
+
+
 def _close_open_sessions_for_rdp(db: Session, rdp_id: UUID) -> list[UUID]:
     """Close open WorkSessions tied to this RDP. Returns closed session ids."""
     closed_ids: list[UUID] = []
@@ -314,10 +327,8 @@ def _resume_existing_claim(
         db.refresh(work_session)
 
     guacamole_url, guacamole_viewer_path, _, guacamole_error = (None, None, None, None)
-    if resource.guacamole_connection_id:
-        guacamole_url, guacamole_viewer_path, _, guacamole_error = _guacamole_viewer_paths(
-            redis_client, resource.guacamole_connection_id
-        )
+    if not resource.guacamole_connection_id:
+        guacamole_error = "Machine has no guacamole_connection_id configured."
 
     return _build_claim_payload(
         allocation=allocation,
@@ -429,7 +440,8 @@ def _end_rdp_connection(
                 detail="You do not have an open claim on this machine",
             )
 
-    guacamole_disconnected = _disconnect_guacamole(redis_client, resource)
+    guacamole_disconnected = False
+    guac_connection_id = resource.guacamole_connection_id
 
     now = _utc_now()
     for alloc in open_allocs:
@@ -467,6 +479,7 @@ def _end_rdp_connection(
         "status": resource.status.value,
         "released": True,
         "guacamole_disconnected": guacamole_disconnected,
+        "guacamole_connection_id": str(guac_connection_id) if guac_connection_id else None,
         "closed_session_ids": [str(sid) for sid in closed_session_ids],
     }
 
@@ -923,16 +936,10 @@ def claim_rdp_resource(
         guacamole_token: str | None = None
         guacamole_error: str | None = None
 
+        # Skip eager Guacamole URL/token fetches on claim — the in-app RdpViewer
+        # opens the tunnel on the session page. That keeps claim fast.
         if not resource.guacamole_connection_id:
             guacamole_error = "Machine has no guacamole_connection_id configured."
-        else:
-            guacamole_url, guacamole_viewer_path, guacamole_token, guacamole_error = (
-                _guacamole_viewer_paths(redis_client, resource.guacamole_connection_id)
-            )
-            if guacamole_error:
-                logger.warning(
-                    "Guacamole URL fetch failed for rdp %s: %s", rdp_id, guacamole_error
-                )
 
         now = _utc_now()
         allocation = Allocation(
@@ -1017,7 +1024,9 @@ def end_rdp_connection(
             initiated_by="admin" if is_admin else "worker",
             admin_id=admin_id,
         )
-
+        guac_id = result.pop("guacamole_connection_id", None) or resource.guacamole_connection_id
+        if guac_id:
+            background_tasks.add_task(_bg_disconnect_guacamole, str(guac_id))
 
         return result
     except HTTPException:
@@ -1129,6 +1138,9 @@ def force_release_rdp_resource(
         initiated_by="admin",
         admin_id=admin.id,
     )
+    guac_id = result.pop("guacamole_connection_id", None) or resource.guacamole_connection_id
+    if guac_id:
+        background_tasks.add_task(_bg_disconnect_guacamole, str(guac_id))
     db.refresh(resource)
     note = f"Force release: {body.reason.strip()}"
     resource.health_notes = f"{resource.health_notes}\n{note}" if resource.health_notes else note

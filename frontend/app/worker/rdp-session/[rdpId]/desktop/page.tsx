@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
-import { Power } from 'lucide-react';
+import { Maximize2, Minimize2, Power } from 'lucide-react';
 
 import RdpViewer from '@/components/rdp/RdpViewer';
 import { api } from '@/lib/api';
@@ -22,6 +22,7 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   const [showMenu, setShowMenu] = useState(false);
   const [confirming, setConfirming] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
 
   useEffect(() => {
     document.title = 'Remote desktop';
@@ -31,9 +32,42 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
       .finally(() => setLoading(false));
   }, [rdpId]);
 
+  // Browsers only grant fullscreen from a user gesture, so an automatic request
+  // on mount is usually rejected. Try anyway, then track the real state and let
+  // the worker toggle it from the control bar.
   useEffect(() => {
     document.documentElement.requestFullscreen?.().catch(() => {});
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener('fullscreenchange', onChange);
+    onChange();
+    return () => document.removeEventListener('fullscreenchange', onChange);
   }, []);
+
+  const toggleFullscreen = useCallback(async () => {
+    try {
+      if (document.fullscreenElement) {
+        await document.exitFullscreen();
+      } else {
+        await document.documentElement.requestFullscreen();
+      }
+    } catch {
+      /* user denied or unsupported */
+    }
+  }, []);
+
+  // If the session is ended from the control page, this tab must not linger.
+  useEffect(() => {
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel('rdp-events');
+      ch.onmessage = (e) => {
+        if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
+          window.close();
+        }
+      };
+    } catch { /* ignore */ }
+    return () => { try { ch?.close(); } catch { /* ignore */ } };
+  }, [rdpId]);
 
   /** Close tab — called by both the red button and Guacamole's disconnect event. */
   const closeTab = useCallback(() => {
@@ -46,12 +80,14 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
     window.close();
   }, [rdpId]);
 
-  const handleDisconnect = useCallback(async () => {
+  const handleDisconnect = useCallback(() => {
     if (disconnecting) return;
     setDisconnecting(true);
     setShowMenu(false);
-    try { await endRdpConnection(rdpId); } catch { /* close anyway */ }
+    setConfirming(false);
+    // Close immediately — API + Guacamole cleanup continue in the background.
     closeTab();
+    void endRdpConnection(rdpId).catch(() => { /* already closing */ });
   }, [disconnecting, rdpId, closeTab]);
 
   if (loading) {
@@ -71,16 +107,29 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         />
       )}
 
-      {/* ── Red pill ── */}
+      {/* ── Control bar ── */}
       <div className="absolute top-0 left-1/2 -translate-x-1/2 z-30">
-        <button
-          type="button"
-          onClick={() => { setShowMenu((v) => !v); setConfirming(false); }}
-          className="flex items-center gap-1.5 rounded-b-lg px-4 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-500 shadow-lg shadow-red-950/60 transition-colors"
-        >
-          <Power size={12} />
-          {machine?.nickname ?? 'Session'}
-        </button>
+        {/* overflow-hidden lives here so it rounds the buttons without
+            clipping the menu that drops out of the wrapper below */}
+        <div className="flex items-stretch rounded-b-lg overflow-hidden shadow-lg shadow-black/60">
+          <button
+            type="button"
+            onClick={toggleFullscreen}
+            title={isFullscreen ? 'Minimise (exit full screen)' : 'Maximise (full screen)'}
+            aria-label={isFullscreen ? 'Exit full screen' : 'Enter full screen'}
+            className="flex items-center px-3 py-1.5 text-white/80 hover:text-white bg-neutral-800/95 hover:bg-neutral-700 border-r border-white/10 transition-colors"
+          >
+            {isFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
+          </button>
+          <button
+            type="button"
+            onClick={() => { setShowMenu((v) => !v); setConfirming(false); }}
+            className="flex items-center gap-1.5 px-4 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-500 transition-colors"
+          >
+            <Power size={12} />
+            {machine?.nickname ?? 'Session'}
+          </button>
+        </div>
 
         {showMenu && (
           <div className="absolute top-full left-1/2 -translate-x-1/2 mt-2 z-30">

@@ -153,8 +153,33 @@ export const getGuacamoleHealth = () => api.get<GuacamoleHealth>('/rdp/guacamole
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
 
+export const rdpDesktopUrl = (rdpId: string) => `/worker/rdp-session/${rdpId}/desktop`;
+
 /** Open the dedicated remote-desktop tab (full viewport). Returns the Window so callers can close it later. */
 export function openRdpDesktopTab(rdpId: string): Window | null {
-  const url = `/worker/rdp-session/${rdpId}/desktop`;
-  return window.open(url, `rdp-desktop-${rdpId}`);
+  return window.open(rdpDesktopUrl(rdpId), `rdp-desktop-${rdpId}`);
+}
+
+/**
+ * Reserve a tab during the click handler, before any await.
+ *
+ * Browsers only allow window.open while a user gesture is being handled; opening
+ * it after `await claimRdp(...)` gets silently blocked. So we grab a blank tab
+ * synchronously on click and point it at the desktop once the claim returns.
+ */
+export function reserveDesktopTab(rdpId: string): Window | null {
+  return window.open('', `rdp-desktop-${rdpId}`);
+}
+
+export function sendTabToDesktop(win: Window | null, rdpId: string): void {
+  if (!win || win.closed) return;
+  win.location.replace(rdpDesktopUrl(rdpId));
+}
+
+export function closeReservedTab(win: Window | null): void {
+  try {
+    if (win && !win.closed) win.close();
+  } catch {
+    /* ignore */
+  }
 }

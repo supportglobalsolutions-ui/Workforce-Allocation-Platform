@@ -51,14 +51,32 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           import('guacamole-common-js').then((m) => m.default),
           supabase.auth.getSession(),
         ]);
-        const idToken = sessionData.data.session?.access_token;
+
+        // A tab opened via window.open can mount before Supabase has rehydrated
+        // its session from localStorage. Wait briefly for the session to appear
+        // instead of declaring the worker signed out.
+        let idToken = sessionData.data.session?.access_token;
+        if (!idToken) {
+          idToken = await new Promise<string | undefined>((resolve) => {
+            const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
+              if (s?.access_token) {
+                sub.subscription.unsubscribe();
+                clearTimeout(timer);
+                resolve(s.access_token);
+              }
+            });
+            const timer = setTimeout(async () => {
+              sub.subscription.unsubscribe();
+              const { data } = await supabase.auth.getSession();
+              resolve(data.session?.access_token);
+            }, 4000);
+          });
+        }
         if (!idToken) throw new Error('Not signed in.');
 
-        // Build WS URL: backend proxies to Guacamole, keeping the Guacamole
-        // auth token server-side. Only the Supabase access token crosses the wire.
-        const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
-        const wsBase = apiUrl.replace(/^http/, 'ws');
-        const wsTunnelUrl = `${wsBase}/rdp/${rdpId}/ws-tunnel`;
+        // Same-origin WS through Next /api rewrite — keeps cookies + local/prod proxy.
+        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
+        const wsTunnelUrl = `${proto}://${window.location.host}/api/rdp/${rdpId}/ws-tunnel`;
 
         const tunnel = new Guacamole.WebSocketTunnel(wsTunnelUrl);
         client = new Guacamole.Client(tunnel);

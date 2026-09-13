@@ -74,17 +74,13 @@ export default function ActiveSessionPage() {
 
   const heartbeat = session?.type_specific_fields?.last_heartbeat_at ? 'Active' : '—';
 
-  const handleEndSession = async () => {
+  const handleEndSession = () => {
     if (!session?.rdp_resource_id || ending) return;
     setEnding(true);
     setError(null);
-    try {
-      await endRdpConnection(session.rdp_resource_id);
-      router.push('/worker/rdp-claim-board');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to end session');
-      setEnding(false);
-    }
+    const rdpId = session.rdp_resource_id;
+    router.push('/worker/rdp-claim-board');
+    void endRdpConnection(rdpId).catch(() => { /* already navigated */ });
   };
 
   if (loading) return <p className="text-theme-muted text-sm mt-4">Loading session...</p>;

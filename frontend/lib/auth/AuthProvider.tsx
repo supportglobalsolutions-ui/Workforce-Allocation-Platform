@@ -11,7 +11,7 @@ import {
   requestLoginOtp,
   verifyLoginOtp,
   completeLoginSession,
-  registerLoginAttempt,
+  registerLoginFailure,
   type LoginOtpChallenge,
 } from './supabase-auth';
 import { clearAuthRoleCookie } from './cookies';
@@ -78,7 +78,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     async (email: string, password: string): Promise<LoginResult> => {
       try {
         otpPendingRef.current = true;
-        await registerLoginAttempt(email);
         const { session: provisional, accessToken } = await signInWithPassword(email, password);
         pendingAccessTokenRef.current = accessToken;
 
@@ -93,6 +92,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       } catch (err: unknown) {
         otpPendingRef.current = false;
         pendingAccessTokenRef.current = null;
+        try {
+          await registerLoginFailure(email);
+        } catch (rateErr: unknown) {
+          return { ok: false, error: getAuthErrorMessage(rateErr) };
+        }
         try {
           await signOut();
         } catch {

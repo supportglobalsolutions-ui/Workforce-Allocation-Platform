@@ -18,6 +18,10 @@ class GuacamoleClient:
     def __init__(self, redis_client: redis_lib.Redis):
         self._redis = redis_client
         self._base = settings.GUACAMOLE_URL.rstrip("/")
+        # Per-instance memo. A single request often needs the token 3-6 times
+        # (url + client id + tunnel info); without this each one re-validates
+        # against Guacamole, adding a round-trip apiece to every claim.
+        self._token_memo: tuple[str, str] | None = None
 
     def _fetch_fresh_token(self) -> tuple[str, str]:
         with httpx.Client(timeout=10.0) as client:
@@ -33,9 +37,13 @@ class GuacamoleClient:
         token: str = data["authToken"]
         data_source: str = data.get("dataSource", "postgresql")
         self._redis.setex(_CACHE_KEY, _CACHE_TTL, f"{token}:{data_source}")
+        self._token_memo = (token, data_source)
         return token, data_source
 
     def _get_token(self) -> tuple[str, str]:
+        if self._token_memo is not None:
+            return self._token_memo
+
         cached = self._redis.get(_CACHE_KEY)
         if cached:
             token, data_source = cached.decode().split(":", 1)
@@ -46,6 +54,7 @@ class GuacamoleClient:
                     params={"token": token},
                 )
             if check.status_code == 200:
+                self._token_memo = (token, data_source)
                 return token, data_source
             # Token rejected (e.g. Guacamole restarted) — clear cache and re-fetch.
             self._redis.delete(_CACHE_KEY)

@@ -8,7 +8,14 @@ import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { api } from '@/lib/api';
-import { claimRdp, getMyActiveRdp, type MyActiveRdp } from '@/lib/rdp';
+import {
+  claimRdp,
+  closeReservedTab,
+  getMyActiveRdp,
+  reserveDesktopTab,
+  sendTabToDesktop,
+  type MyActiveRdp,
+} from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -80,6 +87,11 @@ export default function RdpClaimBoard() {
     setError(null);
     setInfo(null);
     let navigated = false;
+    // Must happen inside the click handler — see reserveDesktopTab().
+    const desktopTab = reserveDesktopTab(machineId);
+    if (!desktopTab) {
+      setInfo('Allow pop-ups for this site so the remote desktop can open in its own tab.');
+    }
     try {
       const result = await claimRdp(machineId);
       if (result.resumed) {
@@ -87,9 +99,11 @@ export default function RdpClaimBoard() {
       } else if (result.guacamole_error && !result.guacamole_viewer_path) {
         setInfo(`Claimed, but remote desktop may not open: ${result.guacamole_error}`);
       }
+      sendTabToDesktop(desktopTab, machineId);
       navigated = true;
       router.push(`/worker/rdp-session/${machineId}`);
     } catch (e) {
+      closeReservedTab(desktopTab);
       const msg = e instanceof Error ? e.message : 'Failed to claim machine';
       if (msg.includes('already have an open session')) {
         const active = await getMyActiveRdp().catch(() => null);

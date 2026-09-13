@@ -91,12 +91,11 @@ export async function requestLoginOtp(): Promise<LoginOtpChallenge> {
   return api.post<LoginOtpChallenge>('/auth/login-otp/challenge', {});
 }
 
-/** Rate-limit gate before password auth (IP + email). */
-export async function registerLoginAttempt(email: string): Promise<void> {
+/** Record a *failed* password attempt toward rate limits (do not call on success). */
+export async function registerLoginFailure(email: string): Promise<void> {
   try {
     await api.post('/auth/login-attempt', { email });
   } catch (err) {
-    // Don't block sign-in if the rate-limit endpoint is temporarily unavailable.
     const msg = err instanceof Error ? err.message : '';
     if (/too many requests/i.test(msg)) throw err;
   }
@@ -171,6 +170,8 @@ export function subscribeAuthState(
     }
   });
 
+  // Prefer keeping a live Supabase user even if cookie sync fails briefly
+  // (e.g. OTP gate) — avoids bouncing workers to /login mid-session.
   const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
     if (options?.skipIf?.()) {
       return;
@@ -185,10 +186,14 @@ export function subscribeAuthState(
       callback(await sessionFromUser(session.user, session.access_token));
     } catch (err) {
       if (err instanceof LoginOtpRequiredError) {
-        // Password ok but OTP pending — do not treat as fully signed in.
         return;
       }
-      callback(null);
+      // Cookie sync failed but Supabase session is still valid — keep user signed in.
+      try {
+        callback(await sessionFromUser(session.user, session.access_token));
+      } catch {
+        callback(null);
+      }
     }
   });
 

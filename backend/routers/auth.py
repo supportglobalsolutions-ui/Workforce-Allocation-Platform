@@ -2,7 +2,7 @@ from datetime import date
 from typing import Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field
 from sqlmodel import Session, select
 
@@ -539,15 +539,16 @@ def create_session_token(
 @router.post("/login-attempt")
 def login_attempt(body: LoginAttemptRequest, request: Request):
     """
-    Rate-limit password login attempts before calling Supabase.
-    Frontend should call this before signInWithPassword.
+    Count a *failed* password login toward rate limits.
+    Frontend must call this only after signInWithPassword fails.
     """
     email = body.email.strip().lower()
-    check_rate_limit(request, scope="login-attempt-ip", limit=20, window_seconds=900)
+    # Failed password attempts only (frontend must call after a failed sign-in).
+    check_rate_limit(request, scope="login-attempt-ip", limit=5, window_seconds=900)
     check_rate_limit(
         request,
         scope="login-attempt-email",
-        limit=8,
+        limit=5,
         window_seconds=900,
         key_suffix=email,
     )
@@ -555,8 +556,12 @@ def login_attempt(body: LoginAttemptRequest, request: Request):
 
 
 @router.post("/password-recovery")
-def password_recovery(body: PasswordRecoveryRequest, request: Request):
-    """Send a recovery link, at most three times per email/IP in six hours."""
+def password_recovery(
+    body: PasswordRecoveryRequest,
+    request: Request,
+    background_tasks: BackgroundTasks,
+):
+    """Queue a recovery email (returns immediately). Max 3 per email/IP in 6 hours."""
     email = body.email.strip().lower()
     check_rate_limit(request, scope="password-recovery-ip", limit=3, window_seconds=6 * 3600)
     check_rate_limit(
@@ -566,12 +571,16 @@ def password_recovery(body: PasswordRecoveryRequest, request: Request):
         window_seconds=6 * 3600,
         key_suffix=email,
     )
-    try:
-        redirect_to = f"{settings.APP_BASE_URL.rstrip('/')}/reset-password"
-        send_password_recovery_email(email, redirect_to)
-    except Exception:
-        # Keep the response generic to prevent account enumeration.
-        pass
+    redirect_to = f"{settings.APP_BASE_URL.rstrip('/')}/reset-password"
+
+    def _send() -> None:
+        try:
+            send_password_recovery_email(email, redirect_to)
+        except Exception:
+            # Keep failures silent — response must not reveal account existence.
+            pass
+
+    background_tasks.add_task(_send)
     return {"message": "If this email has an account, a recovery link is on its way."}
 
 
@@ -608,12 +617,12 @@ def login_otp_challenge(
 ):
     """After password auth: send login OTP when first-time or privileged role."""
     email = (current_user.get("email") or "").lower()
-    check_rate_limit(request, scope="login-otp-challenge", limit=10, window_seconds=3600)
+    check_rate_limit(request, scope="login-otp-challenge", limit=6, window_seconds=3600)
     if email:
         check_rate_limit(
             request,
             scope="login-otp-challenge-email",
-            limit=5,
+            limit=3,
             window_seconds=3600,
             key_suffix=email,
         )
@@ -630,7 +639,7 @@ def login_otp_verify(
     current_user: dict = Depends(get_current_user),
 ):
     """Consume login OTP and unlock session-token / cookie issuance."""
-    check_rate_limit(request, scope="login-otp-verify", limit=20, window_seconds=900)
+    check_rate_limit(request, scope="login-otp-verify", limit=10, window_seconds=900)
     admin = get_admin_user(db, current_user)
     return verify_login_otp(
         db,

@@ -1,9 +1,9 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ExternalLink, Power } from 'lucide-react';
+import { Maximize2, Power } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
@@ -31,9 +31,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
   const [startedAt] = useState(() => Date.now());
-  const [desktopOpened, setDesktopOpened] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
-  const desktopTabRef = useRef<Window | null>(null);
 
   useEffect(() => {
     api.get<RDPResource>(`/rdp/${rdpId}`)
@@ -42,7 +40,6 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       .finally(() => setLoading(false));
   }, [rdpId]);
 
-  // Fetch session ID once on load so image uploads have a target.
   useEffect(() => {
     if (loading || !machine) return;
     getMyActiveRdp()
@@ -57,7 +54,6 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     return () => clearInterval(t);
   }, [startedAt]);
 
-  // Keep session heartbeat alive for idle / auto-release lifecycle (every 5 min).
   useEffect(() => {
     if (loading || !machine) return;
     const ping = async () => {
@@ -65,7 +61,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         const sid = sessionId ?? (await getMyActiveRdp())?.session_id ?? null;
         if (sid) await api.post(`/sessions/${sid}/heartbeat`, {});
       } catch {
-        /* ignore transient heartbeat errors */
+        /* ignore */
       }
     };
     ping();
@@ -73,27 +69,12 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     return () => clearInterval(hb);
   }, [loading, machine, sessionId]);
 
-  // Open the remote desktop in a separate tab once.
-  useEffect(() => {
-    if (loading || !machine) return;
-    const key = `rdp-desktop-auto-${rdpId}`;
-    if (sessionStorage.getItem(key)) return;
-    const tab = openRdpDesktopTab(rdpId);
-    if (tab) {
-      desktopTabRef.current = tab;
-      sessionStorage.setItem(key, '1');
-      setDesktopOpened(true);
-    }
-  }, [loading, machine, rdpId]);
-
-  // Listen for disconnect broadcast from the desktop tab.
   useEffect(() => {
     let ch: BroadcastChannel | null = null;
     try {
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
-          sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
           router.push('/worker/rdp-claim-board');
         }
       };
@@ -101,34 +82,19 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, [rdpId, router]);
 
-  const handleOpenDesktop = useCallback(() => {
-    const tab = openRdpDesktopTab(rdpId);
-    if (tab) {
-      desktopTabRef.current = tab;
-      setDesktopOpened(true);
-    } else {
-      setError('Pop-up blocked — allow pop-ups for this site, then click Open desktop again.');
-    }
-  }, [rdpId]);
-
-  const handleEndConnection = useCallback(async () => {
+  const handleEndConnection = useCallback(() => {
     if (ending) return;
     setEnding(true);
     setError(null);
+    setEndStep('idle');
     try {
-      await endRdpConnection(rdpId);
-      try {
-        const ch = new BroadcastChannel('rdp-events');
-        ch.postMessage({ type: 'session-ended', rdpId });
-        ch.close();
-      } catch { /* ignore */ }
-      sessionStorage.removeItem(`rdp-desktop-auto-${rdpId}`);
-      try { desktopTabRef.current?.close(); } catch { /* ignore */ }
-      router.push('/worker/rdp-claim-board');
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to end connection');
-      setEnding(false);
-    }
+      const ch = new BroadcastChannel('rdp-events');
+      ch.postMessage({ type: 'session-ended', rdpId });
+      ch.close();
+    } catch { /* ignore */ }
+    // Navigate immediately; release runs in the background.
+    router.push('/worker/rdp-claim-board');
+    void endRdpConnection(rdpId).catch(() => { /* already left session page */ });
   }, [ending, rdpId, router]);
 
   const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
@@ -141,7 +107,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
 
   if (error && !machine) {
     return (
-      <div className="max-w-3xl">
+      <div className="max-w-6xl">
         <p className="text-danger text-sm">{error}</p>
         <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm mt-4 inline-block">
           Back to claim board
@@ -151,7 +117,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="max-w-6xl space-y-4">
       <PageHeader
         title={machine?.nickname ?? 'Remote session'}
         description={`${machine?.country ?? ''} · ${machine?.client_group ?? ''}`.trim()}
@@ -159,34 +125,44 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
           <div className="flex items-center gap-3">
             <StatusBadge status="active" label="Live" />
             <span className="font-mono text-emerald-accent text-sm">{h}:{m}:{s}</span>
+            {/* Always reachable without scrolling — this is the control workers
+                need most and it used to sit below the fold. */}
+            <button
+              type="button"
+              onClick={() => setEndStep('confirm')}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-300 bg-red-500/12 hover:bg-red-500/20 border border-red-500/30 transition-colors"
+            >
+              <Power size={13} />
+              End session
+            </button>
           </div>
         }
       />
 
-      {error && <p className="text-danger text-sm mb-4">{error}</p>}
+      {error && <p className="text-danger text-sm">{error}</p>}
 
-      {/* ── Desktop tab panel ── */}
-      <div className="glass-panel p-6 mb-6 space-y-4">
-        <p className="text-sm text-white">
-          Your remote desktop opens in a <strong>separate tab</strong> so you get the full screen.
-          Keep this page open to end the session when you are finished.
+      {/* The desktop runs in its own tab so it gets the whole screen. */}
+      <div className="glass-panel p-5 space-y-3">
+        <p className="text-sm text-theme-muted">
+          Your remote desktop runs in a <strong className="text-white">separate tab</strong> at full
+          screen. Keep this page open — it tracks your session time and is where you end the session.
         </p>
         <button
           type="button"
-          onClick={handleOpenDesktop}
-          className="btn-primary text-sm inline-flex items-center gap-2"
+          onClick={() => openRdpDesktopTab(rdpId)}
+          className="btn-primary inline-flex items-center gap-2 text-sm py-2 px-4"
         >
-          <ExternalLink size={16} />
-          {desktopOpened ? 'Re-open desktop tab' : 'Open desktop tab'}
+          <Maximize2 size={15} />
+          Open desktop tab
         </button>
         <p className="text-xs text-theme-muted">
-          The desktop tab opens in full screen. Use the red button at the top to disconnect when done.
+          Already open? This focuses the existing tab instead of starting a second session. If
+          nothing happens, allow pop-ups for this site.
         </p>
       </div>
 
-      {/* ── Start image upload ── */}
       {sessionId && (
-        <div className="glass-panel p-5 mb-6">
+        <div className="glass-panel p-5">
           <p className="text-xs text-theme-muted uppercase tracking-wide mb-3">Session start</p>
           <SessionImageUpload
             sessionId={sessionId}
@@ -196,9 +172,15 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         </div>
       )}
 
-      {/* ── End connection flow ── */}
       {endStep === 'upload-end-image' && (
-        <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-white/10 mb-4">
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setEndStep('idle')}
+        >
+        <div
+          className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-white/10"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="h-[3px] bg-gradient-to-r from-blue-800 via-blue-500 to-blue-800" />
           <div className="bg-[#080d14] px-6 pt-5 pb-6 space-y-4">
             <p className="text-[15px] font-bold text-white">Upload end session image</p>
@@ -237,10 +219,18 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
             </div>
           </div>
         </div>
+        </div>
       )}
 
-      {endStep === 'confirm' ? (
-        <div className="rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-red-900/40">
+      {endStep === 'confirm' && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
+          onClick={() => setEndStep('idle')}
+        >
+        <div
+          className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-red-900/40"
+          onClick={(e) => e.stopPropagation()}
+        >
           <div className="h-[3px] bg-gradient-to-r from-red-800 via-red-500 to-red-800" />
           <div className="bg-[#0f0808] px-6 pt-5 pb-6 space-y-5">
             <div className="flex items-start gap-4">
@@ -274,20 +264,14 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
             </div>
           </div>
         </div>
-      ) : endStep === 'idle' ? (
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
-            Claim board
-          </Link>
-          <button
-            type="button"
-            onClick={() => setEndStep('upload-end-image')}
-            className="btn-primary text-sm border-danger/40 bg-danger/20 hover:bg-danger/30"
-          >
-            End Connection
-          </button>
         </div>
-      ) : null}
+      )}
+
+      <div>
+        <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">
+          Claim board
+        </Link>
+      </div>
     </div>
   );
 }
