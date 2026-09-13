@@ -8,11 +8,10 @@ export const metadata: Metadata = {
   description: "Workforce Session Allocation Platform",
   icons: {
     icon: [
-      { url: "/favicon.svg", type: "image/svg+xml" },
-      { url: "/favicon.png", type: "image/png", sizes: "512x512" },
+      { url: "/images/logo-mark.png", type: "image/png", sizes: "256x256" },
     ],
-    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180" }],
-    shortcut: ["/favicon.png"],
+    apple: [{ url: "/images/logo-mark.png", sizes: "256x256" }],
+    shortcut: ["/images/logo-mark.png"],
   },
 };
 
@@ -37,9 +36,8 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <head>
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
-        <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
-        <link rel="icon" href="/favicon.png" type="image/png" sizes="512x512" />
-        <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+        <link rel="icon" href="/images/logo-mark.png" type="image/png" sizes="256x256" />
+        <link rel="apple-touch-icon" href="/images/logo-mark.png" sizes="256x256" />
         <style
           dangerouslySetInnerHTML={{
             __html: 'html,body{background-color:var(--background,#021D17);margin:0;min-height:100%}',

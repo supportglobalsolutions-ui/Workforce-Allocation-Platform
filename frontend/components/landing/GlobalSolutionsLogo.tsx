@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import { useTheme } from '@/lib/theme/ThemeProvider';
 
 interface LogoProps {
   size?: 'sm' | 'md' | 'lg';
@@ -13,6 +14,8 @@ export default function GlobalSolutionsLogo({
   showText = true,
   className = '',
 }: LogoProps) {
+  const { isDark } = useTheme();
+
   const iconDimensions = {
     sm: { w: 26, h: 26, stroke: 3.5 },
     md: { w: 34, h: 34, stroke: 4.5 },
@@ -31,7 +34,6 @@ export default function GlobalSolutionsLogo({
       className={`inline-flex items-center gap-2.5 group transition-transform hover:scale-[1.02] ${className}`}
     >
       <div className="relative flex items-center justify-center shrink-0">
-        {/* Ambient glow behind mark */}
         <div className="absolute -inset-1.5 rounded-full bg-emerald-400/20 blur-md opacity-70 group-hover:opacity-100 transition-opacity" />
         <svg
           width={iconDimensions.w}
@@ -41,14 +43,12 @@ export default function GlobalSolutionsLogo({
           xmlns="http://www.w3.org/2000/svg"
           className="relative drop-shadow-[0_0_12px_rgba(13,245,196,0.6)]"
         >
-          {/* First diagonal ribbon */}
           <path
             d="M9 25L21 11"
             stroke="url(#gs_logo_cyan)"
             strokeWidth={iconDimensions.stroke}
             strokeLinecap="round"
           />
-          {/* Second parallel diagonal ribbon */}
           <path
             d="M15 29L27 15"
             stroke="url(#gs_logo_emerald)"
@@ -70,7 +70,11 @@ export default function GlobalSolutionsLogo({
 
       {showText && (
         <span
-          className={`font-display text-white tracking-tight ${textSize} group-hover:text-emerald-300 transition-colors drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)]`}
+          className={`font-display tracking-tight ${textSize} transition-colors ${
+            isDark
+              ? 'text-white group-hover:text-emerald-300 drop-shadow-[0_2px_8px_rgba(0,0,0,0.5)]'
+              : 'text-emerald-950 group-hover:text-emerald-700'
+          }`}
         >
           Global Solutions
         </span>

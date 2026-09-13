@@ -9,25 +9,16 @@ import { useTheme } from '@/lib/theme/ThemeProvider';
 
 const CINEMATIC_PATHS = ['/', '/login', '/signup', '/reset-password'];
 
+/** Public marketing/auth pages — theme toggle lives in LandingNavbar. */
 function CinematicShell({ children }: { children: React.ReactNode }) {
-  // Marketing/auth screens are designed for the dark cyber look only.
+  const { theme } = useTheme();
+
   useEffect(() => {
-    applyThemeToDocument('dark');
-    return () => {
-      // Restore the user's saved preference when leaving these pages.
-      try {
-        const stored = localStorage.getItem('gs-theme');
-        if (stored === 'light' || stored === 'dark') {
-          applyThemeToDocument(stored);
-        }
-      } catch {
-        /* ignore */
-      }
-    };
-  }, []);
+    applyThemeToDocument(theme);
+  }, [theme]);
 
   return (
-    <div className="min-h-screen flex flex-col bg-[#010e0b] text-[#cbe9df] relative overflow-x-clip selection:bg-emerald-500/30 selection:text-white">
+    <div className="min-h-screen flex flex-col bg-brand-background text-theme-body relative overflow-x-clip">
       <main className="flex-1 flex flex-col w-full">{children}</main>
     </div>
   );
@@ -51,7 +42,6 @@ function AppPublicShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-/** Minimal shell — theme toggle only on non-cinematic public pages */
 export default function BareShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const isCinematic = CINEMATIC_PATHS.includes(pathname ?? '/');
