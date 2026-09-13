@@ -19,7 +19,7 @@ interface LoginCardProps {
 const DEFAULT_SUPER_ADMIN_EMAIL =
   process.env.NEXT_PUBLIC_SUPER_ADMIN_EMAIL || 'peterkelvinkibiru1532@gmail.com';
 const DEFAULT_SUPER_ADMIN_PASSWORD =
-  process.env.NEXT_PUBLIC_SUPER_ADMIN_PASSWORD || 'P@vouh7+';
+  '';
 
 export default function LoginCard({ onSuccess, className = '', isModal = false }: LoginCardProps) {
   const { login, session, isLoading } = useAuth();
