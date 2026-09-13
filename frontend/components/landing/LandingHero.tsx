@@ -18,21 +18,21 @@ export default function LandingHero() {
 
       <LandingNavbar variant="landing" />
 
-      <main className="relative z-10 flex-1 flex items-center w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 py-8 sm:py-12">
+      <main className="relative z-10 flex-1 flex items-start w-full max-w-7xl mx-auto px-5 sm:px-8 lg:px-12 pt-6 sm:pt-10 lg:pt-14 pb-8">
         <div className="w-full max-w-xl lg:max-w-2xl flex flex-col items-start text-left z-20">
-          <div className="flex items-center gap-3 text-[11px] sm:text-xs font-mono font-bold uppercase tracking-[0.28em] mb-3 sm:mb-4 text-[#d4af37] drop-shadow-[0_0_12px_rgba(212,175,55,0.35)]">
+          <div className="flex items-center gap-3 text-[11px] sm:text-xs font-mono font-bold uppercase tracking-[0.28em] mb-8 sm:mb-10 text-[#d4af37] drop-shadow-[0_0_12px_rgba(212,175,55,0.35)]">
             <span className="h-px w-8 bg-[#d4af37]" />
             REMOTE • SMART • GLOBAL
           </div>
 
-          <h1 className="text-6xl sm:text-8xl lg:text-[104px] font-display font-extrabold tracking-tight leading-[0.98] mb-8 sm:mb-10">
+          <h1 className="text-6xl sm:text-8xl lg:text-[104px] font-display font-extrabold tracking-tight leading-[1.02] mb-10 sm:mb-14">
             <span className="block text-white drop-shadow-[0_2px_18px_rgba(0,0,0,0.85)] [text-shadow:0_0_40px_rgba(1,12,9,0.9)]">
               Global
             </span>
-            <span className="text-[#0df5c4] drop-shadow-[0_0_28px_rgba(13,245,196,0.45)]">
+            <span className="mt-3 sm:mt-4 block text-[#0df5c4] drop-shadow-[0_0_28px_rgba(13,245,196,0.45)]">
               Solutions
             </span>
-            <span className="mt-5 block h-1 w-20 rounded-full bg-[#0df5c4] shadow-[0_0_16px_rgba(13,245,196,0.55)]" />
+            <span className="mt-7 block h-1 w-20 rounded-full bg-[#0df5c4] shadow-[0_0_16px_rgba(13,245,196,0.55)]" />
           </h1>
 
           <div className="flex items-center">

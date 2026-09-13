@@ -34,7 +34,9 @@ DEFAULT_PARAMETERS: dict[str, str] = {
     "resize-method": "display-update",
     "enable-drive": "false",
     "disable-audio": "true",
-    "color-depth": "24",
+    # The RDP Graphics Pipeline requires 32 bpp; guacd logged a warning and
+    # overrode anything lower anyway.
+    "color-depth": "32",
 }
 
 
@@ -57,7 +59,10 @@ def _base_parameters(
     domain: str | None,
     existing: dict[str, str] | None = None,
 ) -> dict[str, str]:
-    params: dict[str, str] = {**DEFAULT_PARAMETERS, **(existing or {})}
+    # Existing values first so credentials and any hand-added parameters
+    # survive, then our managed defaults on top — otherwise a stale stored
+    # value (e.g. an old colour depth) could never be corrected by a re-sync.
+    params: dict[str, str] = {**(existing or {}), **DEFAULT_PARAMETERS}
     params["hostname"] = (resource.monitor_host or "").strip()
     params["port"] = str(resource.monitor_port or 3389)
     # Only overwrite credentials when new ones are supplied; otherwise keep

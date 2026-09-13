@@ -227,10 +227,12 @@ def _open_allocation(db: Session, rdp_id: UUID) -> Allocation | None:
     ).first()
 
 
-def _repair_rdp_state(db: Session, resource: RDPResource) -> bool:
+def _repair_rdp_state(db: Session, resource: RDPResource) -> Allocation | None:
     """
     Fix inconsistent RDP rows after a partial claim/release failure.
-    Returns True if the resource row was updated.
+
+    Returns the machine's open allocation (or None). Callers need that anyway,
+    and re-querying it costs a full network round-trip against a remote DB.
     """
     open_alloc = _open_allocation(db, resource.id)
     busy_statuses = {
@@ -259,7 +261,7 @@ def _repair_rdp_state(db: Session, resource: RDPResource) -> bool:
     if repaired:
         db.commit()
         db.refresh(resource)
-    return repaired
+    return open_alloc
 
 
 def _guacamole_viewer_paths(
@@ -930,9 +932,8 @@ def claim_rdp_resource(
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
-    _repair_rdp_state(db, resource)
-
-    open_on_this = _open_allocation(db, resource.id)
+    # Reuses the allocation the repair pass already loaded.
+    open_on_this = _repair_rdp_state(db, resource)
     if open_on_this:
         if open_on_this.worker_id == worker.id:
             return _resume_existing_claim(
@@ -1339,12 +1340,32 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
     await websocket.accept(subprotocol="guacamole")
 
     # --- 7. Open upstream connection to Guacamole and relay ---
+    # Both directions must keep flowing: guacd drops the session with
+    # "User is not responding" if the client's sync acknowledgements stop
+    # reaching it, which shows up in the browser as a black screen.
     async def relay_client_to_guac(guac_ws: ws_lib.ClientConnection) -> None:
         try:
-            async for data in websocket.iter_text():
+            while True:
+                message = await websocket.receive()
+                msg_type = message.get("type")
+                if msg_type == "websocket.disconnect":
+                    return
+                # guacamole-common-js sends text, but binary frames appear for
+                # clipboard and file transfers. iter_text() silently yielded
+                # None for those and killed the tunnel.
+                data = message.get("text")
+                if data is None:
+                    data = message.get("bytes")
+                if data is None:
+                    continue
                 await guac_ws.send(data)
-        except (WebSocketDisconnect, Exception):
-            pass
+        except WebSocketDisconnect:
+            return
+        except Exception as exc:
+            logger.warning(
+                "WS tunnel client->guac relay stopped for rdp %s: %s: %s",
+                rdp_id, type(exc).__name__, exc,
+            )
 
     async def relay_guac_to_client(guac_ws: ws_lib.ClientConnection) -> None:
         try:
@@ -1353,8 +1374,11 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
                     await websocket.send_text(msg)
                 else:
                     await websocket.send_bytes(msg)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning(
+                "WS tunnel guac->client relay stopped for rdp %s: %s: %s",
+                rdp_id, type(exc).__name__, exc,
+            )
 
     try:
         async with ws_lib.connect(guac_ws_url, subprotocols=["guacamole"]) as guac_ws:

@@ -11,13 +11,13 @@ import { useAuth } from '@/lib/auth/AuthProvider';
 import { apiRegisterUser, requestSignupOtp, verifySignupOtp } from '@/lib/auth/supabase-auth';
 import { getAuthErrorMessage } from '@/lib/auth/errors';
 import { ROLE_LANDING } from '@/lib/navigation/config';
-import { useTheme } from '@/lib/theme/ThemeProvider';
 
 type Step = 'email' | 'code' | 'password' | 'done';
 
 export default function SignupPage() {
   const { session, isLoading } = useAuth();
-  const { isDark } = useTheme();
+  // Signup always uses the dark auth shell, independent of dashboard theme.
+  const isDark = true;
   const router = useRouter();
   const [step, setStep] = useState<Step>('email');
   const [email, setEmail] = useState('');
@@ -41,7 +41,7 @@ export default function SignupPage() {
     : 'w-full bg-emerald-50/80 text-emerald-950 placeholder-emerald-800/35 text-sm rounded-xl pl-10 pr-4 py-3 border border-emerald-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400 outline-none transition-all';
 
   const labelClass = isDark
-    ? 'text-[10px] font-bold uppercase tracking-wider text-[#98b7af] mb-1.5 block'
+    ? 'text-[10px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5 block'
     : 'text-[10px] font-bold uppercase tracking-wider text-emerald-800/55 mb-1.5 block';
 
   const sendCode = async (resend: boolean) => {
@@ -187,7 +187,7 @@ export default function SignupPage() {
                 {sendingCode ? 'Sending verification code…' : 'Check your email'}
               </span>
             </div>
-            <p className={`text-xs text-center ${isDark ? 'text-[#98b7af]' : 'text-emerald-800/60'}`}>
+            <p className={`text-xs text-center ${isDark ? 'text-[#c7d9d3]' : 'text-emerald-800/60'}`}>
               {sendingCode ? 'Sending a 6-digit code to ' : 'Enter the 6-digit code sent to '}
               <span className="font-semibold text-white">{sentTo || email}</span>.
             </p>
@@ -227,7 +227,7 @@ export default function SignupPage() {
               <button
                 type="button"
                 onClick={() => { setStep('email'); setError(''); setCode(''); }}
-                className="text-[#98b7af] hover:text-[#0df5c4]"
+                className="text-[#c7d9d3] hover:text-[#0df5c4]"
               >
                 ← Change email
               </button>

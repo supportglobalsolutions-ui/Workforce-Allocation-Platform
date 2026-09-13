@@ -77,6 +77,16 @@ app.add_middleware(
 
 
 @app.middleware("http")
+async def avoid_proxy_slash_redirect(request: Request, call_next):
+    """Serve /settings on the same path so the Next proxy does not follow a
+    redirect to the raw backend URL (the browser then fails CORS)."""
+    if request.method == "GET" and request.url.path == "/settings":
+        request.scope["path"] = "/settings/"
+        request.scope["raw_path"] = b"/settings/"
+    return await call_next(request)
+
+
+@app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
     if request.url.path != "/health":
         try:

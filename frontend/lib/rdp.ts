@@ -168,7 +168,32 @@ export function openRdpDesktopTab(rdpId: string): Window | null {
  * synchronously on click and point it at the desktop once the claim returns.
  */
 export function reserveDesktopTab(rdpId: string): Window | null {
-  return window.open('', `rdp-desktop-${rdpId}`);
+  const win = window.open('', `rdp-desktop-${rdpId}`);
+  if (!win) return null;
+  // The tab exists before the claim resolves, so paint something into it —
+  // otherwise the worker stares at a blank page for the whole request.
+  try {
+    win.document.write(`<!doctype html><html><head><title>Connecting…</title>
+<style>
+  html,body{height:100%;margin:0}
+  body{background:#0b1220;color:#e6edf7;display:flex;align-items:center;
+       justify-content:center;font-family:system-ui,-apple-system,Segoe UI,sans-serif}
+  .box{text-align:center}
+  .ring{width:34px;height:34px;margin:0 auto 14px;border-radius:50%;
+        border:3px solid rgba(255,255,255,.15);border-top-color:#34d399;
+        animation:spin .9s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  p{margin:0;font-size:14px}
+  small{display:block;margin-top:6px;color:rgba(230,237,247,.5);font-size:12px}
+</style></head><body><div class="box"><div class="ring"></div>
+<p>Preparing your remote desktop…</p>
+<small>Claiming the machine. This tab opens automatically.</small>
+</div></body></html>`);
+    win.document.close();
+  } catch {
+    /* cross-origin or blocked — the navigation below still works */
+  }
+  return win;
 }
 
 export function sendTabToDesktop(win: Window | null, rdpId: string): void {

@@ -39,6 +39,7 @@ def _settings_payload(row) -> dict:
     }
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 def get_settings(
     db: Session = Depends(get_db),

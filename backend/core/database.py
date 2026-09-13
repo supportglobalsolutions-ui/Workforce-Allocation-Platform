@@ -5,7 +5,9 @@ from .config import settings
 from .db_url import normalize_db_url
 
 engine_options = {
-    "echo": not settings.is_production,
+    # Echoing every statement is expensive and drowns the logs. Opt in with
+    # LOG_LEVEL=DEBUG when you actually want to see the SQL.
+    "echo": settings.LOG_LEVEL.upper() == "DEBUG",
     "pool_pre_ping": True,
 }
 
@@ -28,10 +30,19 @@ elif settings.is_production:
         pool_recycle=1800,
     )
 else:
-    # Fast Refresh can fire many concurrent requests during local development.
-    # Do not retain a shared pool: close each request's connection immediately
-    # so abandoned reload requests cannot exhaust the backend.
-    engine_options["poolclass"] = NullPool
+    # Keep a small pool in development too.
+    #
+    # NullPool opens a fresh connection per request, which costs ~5s against a
+    # remote Supabase instance — every click paid that before touching a row.
+    # A bounded pool also caps concurrency better than NullPool did: Fast
+    # Refresh bursts now queue on pool_timeout instead of opening unlimited
+    # backends.
+    engine_options.update(
+        pool_size=5,
+        max_overflow=5,
+        pool_timeout=15,
+        pool_recycle=1800,
+    )
 
 
 engine = create_engine(DATABASE_URL, **engine_options)
