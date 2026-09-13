@@ -38,7 +38,7 @@ export default function LandingHero() {
           <div className="flex items-center">
             <Link
               href="/login"
-              className="group relative inline-flex items-center gap-2.5 px-8 sm:px-9 py-3.5 sm:py-4 rounded-full font-bold text-sm sm:text-base text-[#1a1408] bg-[#d4af37] hover:bg-[#e0c04a] active:scale-95 transition-all shadow-[0_0_30px_rgba(212,175,55,0.4)]"
+              className="group relative inline-flex items-center gap-2.5 px-8 sm:px-9 py-3.5 sm:py-4 rounded-full font-bold text-sm sm:text-base text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-95 transition-all shadow-[0_0_30px_rgba(13,245,196,0.4)]"
             >
               <span>Log in to your workspace</span>
               <ArrowRight
