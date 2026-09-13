@@ -23,7 +23,11 @@ export default function ThemeToggle({
         onClick={toggleTheme}
         aria-label={isDark ? 'Switch to light theme' : 'Switch to dark theme'}
         title={isDark ? 'Light theme' : 'Dark theme'}
-        className={`p-2 rounded-xl border border-theme hover:bg-white/5 transition-all ${className}`}
+        className={`p-2 rounded-xl border transition-all ${
+          isDark
+            ? 'border-white/15 bg-white/5 hover:bg-white/10 text-emerald-accent'
+            : 'border-black/10 bg-black/[0.03] hover:bg-black/[0.06] text-emerald-accent shadow-sm'
+        } ${className}`}
       >
         {isDark ? (
           <Moon size={18} className="text-emerald-accent" />
