@@ -93,7 +93,10 @@ async def avoid_proxy_slash_redirect(request: Request, call_next):
 
 @app.middleware("http")
 async def rate_limit_middleware(request: Request, call_next):
-    if request.url.path != "/health":
+    # Session-cookie issuance has its own verified-user limiter in auth.py.
+    # Excluding it here prevents Vercel edge traffic from sharing one global
+    # IP bucket and blocking valid signed-in users.
+    if request.url.path not in {"/health", "/auth/session-token"}:
         try:
             enforce_global_rate_limit(request)
         except HTTPException as exc:

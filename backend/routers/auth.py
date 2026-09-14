@@ -946,7 +946,6 @@ def create_session_token(
     db: Session = Depends(get_db),
 ):
     """Verify Supabase ID token and return a signed cookie value for Next.js middleware."""
-    check_rate_limit(request, scope="auth-session-token", limit=30, window_seconds=60)
     try:
         decoded = verify_supabase_token(body.id_token)
     except ValueError as exc:
@@ -960,6 +959,16 @@ def create_session_token(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     uid = decoded["uid"]
+    # This route is invoked by normal Supabase refresh events. Limit it by the
+    # verified account rather than a shared Vercel/Nginx address so one busy
+    # edge IP cannot prevent valid users from opening their workspace.
+    check_rate_limit(
+        request,
+        scope="auth-session-token",
+        limit=60,
+        window_seconds=60,
+        key_suffix=uid,
+    )
     admin = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
     # JIT-provision so first login can still evaluate OTP rules.
     if not admin:

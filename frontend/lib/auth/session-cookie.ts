@@ -3,6 +3,14 @@ import { createHmac, timingSafeEqual } from 'crypto';
 type Role = 'user' | 'partner' | 'admin' | 'executive' | 'super_admin';
 const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'executive', 'super_admin']);
 
+// Supabase can emit INITIAL_SESSION and TOKEN_REFRESHED close together. Keep
+// those duplicate events from issuing several identical cookie requests.
+let cookieSyncInFlight: Promise<Role | null> | null = null;
+let lastSyncedToken: string | null = null;
+let lastSyncedRole: Role | null = null;
+let lastSyncedAt = 0;
+const COOKIE_SYNC_REUSE_MS = 30_000;
+
 function cookieSecret(): string {
   return (
     process.env.SESSION_COOKIE_SECRET
@@ -54,6 +62,12 @@ export class LoginOtpRequiredError extends Error {
 }
 
 export async function syncSessionCookie(idToken: string): Promise<Role | null> {
+  const now = Date.now();
+  if (idToken === lastSyncedToken && now - lastSyncedAt < COOKIE_SYNC_REUSE_MS) {
+    return lastSyncedRole;
+  }
+  if (cookieSyncInFlight) return cookieSyncInFlight;
+
   // Go through the same-origin /api rewrite rather than hitting the backend
   // directly. A direct call to NEXT_PUBLIC_API_URL is cross-origin from the
   // page, so the CSP connect-src ('self' + supabase) blocks it before the
@@ -61,34 +75,45 @@ export async function syncSessionCookie(idToken: string): Promise<Role | null> {
   // The rewrite in next.config.js forwards /api/* to the backend, and
   // app/api/auth/session/route.ts still wins for its own path because
   // filesystem routes take precedence over afterFiles rewrites.
-  const res = await fetch('/api/auth/session-token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ id_token: idToken }),
-  });
-  if (!res.ok) {
-    let detail = '';
-    try {
-      const body = (await res.json()) as { detail?: string };
-      detail = body.detail ?? '';
-    } catch {
-      /* ignore */
+  cookieSyncInFlight = (async () => {
+    const res = await fetch('/api/auth/session-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id_token: idToken }),
+    });
+    if (!res.ok) {
+      let detail = '';
+      try {
+        const body = (await res.json()) as { detail?: string };
+        detail = body.detail ?? '';
+      } catch {
+        /* ignore */
+      }
+      if (res.status === 403 && detail === 'login_otp_required') {
+        throw new LoginOtpRequiredError();
+      }
+      return null;
     }
-    if (res.status === 403 && detail === 'login_otp_required') {
-      throw new LoginOtpRequiredError();
-    }
-    return null;
+    const data = (await res.json()) as { token?: string; role?: Role };
+    if (!data.token || !data.role) return null;
+
+    await fetch('/api/auth/session', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ token: data.token }),
+    });
+
+    lastSyncedToken = idToken;
+    lastSyncedRole = data.role;
+    lastSyncedAt = Date.now();
+    return data.role;
+  })();
+
+  try {
+    return await cookieSyncInFlight;
+  } finally {
+    cookieSyncInFlight = null;
   }
-  const data = (await res.json()) as { token?: string; role?: Role };
-  if (!data.token || !data.role) return null;
-
-  await fetch('/api/auth/session', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ token: data.token }),
-  });
-
-  return data.role;
 }
 
 export async function clearSessionCookie(): Promise<void> {
