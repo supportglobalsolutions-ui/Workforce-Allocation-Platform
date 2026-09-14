@@ -46,7 +46,6 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   }, [rdpId]);
 
   useEffect(() => {
-    document.documentElement.requestFullscreen?.().catch(() => {});
     const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
     document.addEventListener('fullscreenchange', onChange);
     onChange();
