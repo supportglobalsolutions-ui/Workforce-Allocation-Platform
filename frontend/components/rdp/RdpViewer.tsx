@@ -76,9 +76,13 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         }
         if (!idToken) throw new Error('Not signed in.');
 
-        // Same-origin WS through Next /api rewrite — keeps cookies + local/prod proxy.
-        const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
-        const wsTunnelUrl = `${proto}://${window.location.host}/api/rdp/${rdpId}/ws-tunnel`;
+        // Vercel rewrites normal HTTP requests, but it does not proxy long-lived
+        // WebSocket connections. Connect to the API origin directly in
+        // production; local development still falls back to the current origin.
+        const apiOrigin = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
+        const apiUrl = new URL(apiOrigin);
+        const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsTunnelUrl = `${wsProtocol}//${apiUrl.host}/rdp/${rdpId}/ws-tunnel`;
 
         const tunnel = new Guacamole.WebSocketTunnel(wsTunnelUrl);
         client = new Guacamole.Client(tunnel);
