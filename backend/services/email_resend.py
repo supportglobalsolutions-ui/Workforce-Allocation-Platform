@@ -5,6 +5,7 @@ Uses the Resend HTTP API directly via httpx — no SDK dependency. The sending
 domain (gsdeck.com) is configured in the Resend dashboard; the from-address is
 env-configured so the domain can change without code changes.
 """
+import html
 import logging
 import re
 import time
@@ -627,6 +628,66 @@ def render_login_otp_html(*, title: str, intro: str) -> str:
         body=body,
         footer="GlobalSolutions Workforce Platform — never share this code with anyone.",
     )
+
+
+def render_account_approved_html(*, name: str, login_url: str) -> str:
+    safe_name = html.escape((name or "there").replace("\n", " ").strip()[:80] or "there")
+    safe_url = html.escape(login_url, quote=True)
+    body = f"""
+        <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:{_HEADING};">Your account was approved</h2>
+        <p style="margin:0 0 18px; font-size:14px; line-height:1.6; color:{_TEXT};">
+          Hello {safe_name}, your account was approved.
+          Click here to sign in.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+          <tr>
+            <td bgcolor="{_EMERALD}" style="background-color:{_EMERALD}; border-radius:10px;">
+              <a href="{safe_url}" style="display:inline-block; padding:14px 28px; font-size:14px;
+                 font-weight:700; color:#01241c; text-decoration:none;">Click here to sign in</a>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0; font-size:13px; color:{_MUTED};">
+          Or open this link: <a href="{safe_url}" style="color:{_EMERALD};">{safe_url}</a>
+        </p>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Account",
+        heading="Account approved",
+        body=body,
+        footer="If you did not create this account, contact your administrator.",
+    )
+
+
+def render_account_approved_text(*, name: str, login_url: str) -> str:
+    return (
+        f"Hello {name or 'there'},\n\n"
+        "Your account was approved. Click here to sign in:\n"
+        f"{login_url}\n\n"
+        "— GlobalSolutions Workforce Platform"
+    )
+
+
+def send_account_approved_email(to_email: str, display_name: str) -> None:
+    """Notify a newly approved account and link them to the login screen."""
+    from core.database import engine
+    from sqlmodel import Session
+
+    login_url = f"{settings.APP_BASE_URL.rstrip('/')}/login"
+    html = render_account_approved_html(name=display_name, login_url=login_url)
+    text = render_account_approved_text(name=display_name, login_url=login_url)
+    try:
+        with Session(engine) as session:
+            send_email(
+                session,
+                to_email=to_email,
+                subject="GlobalSolutions · Your account was approved",
+                html=html,
+                text=text,
+                template="account_approved",
+            )
+    except Exception:
+        logger.exception("Approval email failed for %s", to_email)
 
 
 def render_login_otp_text(*, title: str, intro: str) -> str:

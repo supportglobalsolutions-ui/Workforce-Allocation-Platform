@@ -1,9 +1,10 @@
+import re
 from datetime import date
 from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlmodel import Session, select
 
 from core.auth_errors import http_error_from_auth
@@ -52,6 +53,7 @@ from services.login_otp import (
     login_otp_required,
     verify_login_otp,
 )
+from services.email_resend import send_account_approved_email
 from services.signup_otp import (
     OTP_RESEND_LIMIT as SIGNUP_OTP_RESEND_LIMIT,
     assert_signup_proof,
@@ -79,16 +81,76 @@ class UpdateRoleRequest(BaseModel):
     partnerEntityId: Optional[UUID] = None
 
 
+_NAME_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ '\-]){1,39}$", re.UNICODE)
+_COUNTRY_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .,'()\-]){1,55}$", re.UNICODE)
+_RESIDENCE_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[0-9 .,'\-]){1,79}$", re.UNICODE)
+_USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,31}$")
+_PHONE_RE = re.compile(r"^\+?[0-9]{8,15}$")
+
+
 class RegisterRequest(BaseModel):
-    email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
-    firstName: str = Field(min_length=1, max_length=80)
-    lastName: str = Field(min_length=1, max_length=80)
-    phone: str = Field(min_length=7, max_length=32)
-    country: str = Field(min_length=2, max_length=80)
-    residence: str = Field(min_length=2, max_length=120)
+    email: EmailStr = Field(max_length=254)
+    password: str = Field(min_length=8, max_length=8)
+    firstName: str = Field(min_length=2, max_length=40)
+    lastName: str = Field(min_length=2, max_length=40)
+    phone: str = Field(min_length=8, max_length=16)
+    country: str = Field(min_length=2, max_length=56)
+    residence: str = Field(min_length=2, max_length=80)
     username: Optional[str] = Field(default=None, max_length=32)
     verificationToken: str = Field(min_length=20, max_length=256)
+
+    @field_validator("firstName", "lastName", mode="before")
+    @classmethod
+    def clean_name(cls, value: object) -> str:
+        text = " ".join(str(value or "").split())
+        if not _NAME_RE.match(text):
+            raise ValueError("Use 2–40 letters. Spaces, hyphens, and apostrophes are allowed.")
+        return text
+
+    @field_validator("phone", mode="before")
+    @classmethod
+    def clean_phone(cls, value: object) -> str:
+        compact = re.sub(r"[\s\-().]", "", str(value or "").strip())
+        if not _PHONE_RE.match(compact):
+            raise ValueError("Use 8–15 digits. A leading + is allowed. Letters are not allowed.")
+        return compact
+
+    @field_validator("country", mode="before")
+    @classmethod
+    def clean_country(cls, value: object) -> str:
+        text = " ".join(str(value or "").split())
+        if not _COUNTRY_RE.match(text):
+            raise ValueError("Select a country from the list.")
+        return text
+
+    @field_validator("residence", mode="before")
+    @classmethod
+    def clean_residence(cls, value: object) -> str:
+        text = " ".join(str(value or "").split())
+        if not _RESIDENCE_RE.match(text):
+            raise ValueError("Use 2–80 letters or numbers for city or town.")
+        return text
+
+    @field_validator("username", mode="before")
+    @classmethod
+    def clean_username(cls, value: object) -> Optional[str]:
+        if value is None:
+            return None
+        text = str(value).strip()
+        if not text:
+            return None
+        if not _USERNAME_RE.match(text):
+            raise ValueError(
+                "Username must be 3–32 characters, start with a letter, and use only letters, numbers, and underscores."
+            )
+        return text.lower()
+
+    @field_validator("password")
+    @classmethod
+    def clean_password(cls, value: str) -> str:
+        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
+            raise ValueError("Password must be exactly 8 characters and include a letter and a number.")
+        return value
 
 
 class SessionTokenRequest(BaseModel):
@@ -112,12 +174,12 @@ class LoginOtpChallengeRequest(BaseModel):
 
 
 class SignupOtpChallengeRequest(BaseModel):
-    email: EmailStr
+    email: EmailStr = Field(max_length=254)
     resend: bool = False
 
 
 class SignupOtpVerifyRequest(BaseModel):
-    email: EmailStr
+    email: EmailStr = Field(max_length=254)
     code: str = Field(min_length=6, max_length=8, pattern=r"^\d+$")
 
 
@@ -251,15 +313,13 @@ def register_user(body: RegisterRequest, request: Request):
     first = body.firstName.strip()
     last = body.lastName.strip()
     username = (body.username or "").strip().lower()
-    if username and not username.replace("_", "").isalnum():
-        raise HTTPException(status_code=400, detail="Username can only use letters, numbers, and underscores.")
     check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=email)
     check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
     assert_signup_proof(email, body.verificationToken)
-    if len(body.password) < 8:
+    if len(body.password) != 8:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be at least 8 characters.",
+            detail="Password must be exactly 8 characters.",
         )
     try:
         user = register_pending_user(
@@ -469,6 +529,7 @@ def create_user(
 @router.patch("/users/{uid}/approve")
 def approve_user(
     uid: str,
+    background_tasks: BackgroundTasks,
     body: ApproveUserRequest | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
@@ -556,6 +617,12 @@ def approve_user(
                 worker.username = username
         db.add(worker)
         db.commit()
+
+    email = (profile.get("email") or "").strip().lower()
+    if "@" in email and not email.endswith("@unknown.local"):
+        first = (profile.get("firstName") or "").strip()
+        greeting = first or (display_name.strip().split(" ")[0] if display_name.strip() else "there")
+        background_tasks.add_task(send_account_approved_email, email, greeting)
 
     return user_to_dict(user)
 

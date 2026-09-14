@@ -357,7 +357,7 @@ function AccountDetailModal({
   return (
     <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-full max-w-md bg-white rounded-2xl overflow-hidden shadow-2xl">
+      <div className="w-full max-w-3xl max-h-[calc(100vh-2rem)] bg-white rounded-2xl overflow-hidden shadow-2xl flex flex-col">
         <div className="h-1 bg-gradient-to-r from-emerald-400 via-emerald-500 to-teal-400" />
         <div className="flex items-start justify-between px-6 pt-5 pb-4 border-b border-gray-100">
           <div className="min-w-0 flex-1 pr-4">
@@ -371,10 +371,10 @@ function AccountDetailModal({
           </button>
         </div>
 
-        <div className="px-6 py-5 space-y-5">
+        <div className="px-6 sm:px-8 py-5 space-y-5 overflow-y-auto">
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Account Info</p>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
               {user.status === 'pending' && (
                 <>
                   <div>
@@ -432,7 +432,7 @@ function AccountDetailModal({
                 </p>
               </div>
               {user.role === 'partner' && (
-                <div className="col-span-2">
+                <div className="sm:col-span-2 lg:col-span-3">
                   <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Company link</p>
                   <p className="text-sm text-gray-800 font-medium">
                     {user.partnerEntityId ? 'Linked to a partner company' : 'No company (person only)'}
@@ -491,7 +491,7 @@ function AccountDetailModal({
               {isActing ? (
                 <div className="flex justify-center py-3"><SpinningDots size="sm" className="text-emerald-500" /></div>
               ) : (
-                <div className="space-y-3">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
                   {isPendingWorker && (
                     <>
                       <div>
@@ -512,7 +512,7 @@ function AccountDetailModal({
                         </div>
                       </div>
                       {workerType === 'partner_worker' && (
-                        <div>
+                        <div className="sm:col-span-2">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Partner Company *</p>
                           <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)}
                             className="w-full px-3 py-2 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 focus:outline-none focus:border-emerald-400">
@@ -531,7 +531,7 @@ function AccountDetailModal({
                       </div>
                     </>
                   )}
-                  <div className="flex gap-3">
+                  <div className="flex gap-3 sm:col-span-2">
                     <button type="button" onClick={handleApproveClick} disabled={isPendingWorker && approveDisabled}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                       <CheckCircle size={13} /> Approve

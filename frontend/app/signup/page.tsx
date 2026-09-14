@@ -11,6 +11,27 @@ import { useAuth } from '@/lib/auth/AuthProvider';
 import { apiRegisterUser, apiListSignupCountries, requestSignupOtp, verifySignupOtp } from '@/lib/auth/supabase-auth';
 import { getAuthErrorMessage } from '@/lib/auth/errors';
 import { ROLE_LANDING } from '@/lib/navigation/config';
+import {
+  EMAIL_MAX,
+  NAME_MAX,
+  PASSWORD_LENGTH,
+  RESIDENCE_MAX,
+  USERNAME_MAX,
+  filterName,
+  filterPhone,
+  filterResidence,
+  filterUsername,
+  normalizePhone,
+  validateConfirmPassword,
+  validateCountry,
+  validateEmail,
+  validateName,
+  validatePassword,
+  validatePhone,
+  validateResidence,
+  validateUsername,
+  type SignupField,
+} from '@/lib/auth/signup-fields';
 
 type Step = 'email' | 'code' | 'password' | 'done';
 
@@ -56,6 +77,16 @@ export default function SignupPage() {
   const [residence, setResidence] = useState('');
   const [username, setUsername] = useState('');
   const [countries, setCountries] = useState<string[]>([]);
+  const [fieldErrors, setFieldErrors] = useState<Partial<Record<SignupField, string>>>({});
+
+  const clearField = (field: SignupField) => {
+    setFieldErrors((current) => {
+      if (!current[field]) return current;
+      const next = { ...current };
+      delete next[field];
+      return next;
+    });
+  };
 
   useEffect(() => {
     if (!session) return;
@@ -81,6 +112,9 @@ export default function SignupPage() {
     ? 'text-[10px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5 block'
     : 'text-[10px] font-bold uppercase tracking-wider text-emerald-800/55 mb-1.5 block';
 
+  const fieldInput = (field: SignupField, extra = 'pl-4') =>
+    `${inputClass} ${extra} ${fieldErrors[field] ? 'border-red-400 focus:border-red-400 focus:ring-red-400' : ''}`;
+
   const sendCode = async (resend: boolean) => {
     setError('');
     setSendingCode(true);
@@ -102,6 +136,13 @@ export default function SignupPage() {
   const handleEmail = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading || sendingCode) return;
+    const emailError = validateEmail(email);
+    if (emailError) {
+      setFieldErrors({ email: emailError });
+      setError(emailError);
+      return;
+    }
+    setFieldErrors({});
     setLoading(true);
     await sendCode(false);
   };
@@ -125,21 +166,33 @@ export default function SignupPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
-    setError('');
-    if (password !== confirmPassword) {
-      setError('Passwords do not match.');
+    const nextErrors: Partial<Record<SignupField, string>> = {
+      firstName: validateName(firstName, 'First name'),
+      lastName: validateName(lastName, 'Last name'),
+      phone: validatePhone(phone),
+      country: validateCountry(country, countries),
+      residence: validateResidence(residence),
+      username: validateUsername(username),
+      password: validatePassword(password),
+      confirmPassword: validateConfirmPassword(password, confirmPassword),
+    };
+    const messages = Object.values(nextErrors).filter(Boolean);
+    setFieldErrors(nextErrors);
+    if (messages.length) {
+      setError(messages[0] || 'Check the highlighted fields.');
       return;
     }
+    setError('');
     setLoading(true);
     try {
       await apiRegisterUser({
-        email,
+        email: email.trim().toLowerCase(),
         password,
-        firstName: firstName.trim(),
-        lastName: lastName.trim(),
-        phone: phone.trim(),
-        country,
-        residence: residence.trim(),
+        firstName: firstName.trim().replace(/\s+/g, ' '),
+        lastName: lastName.trim().replace(/\s+/g, ' '),
+        phone: normalizePhone(phone),
+        country: country.trim(),
+        residence: residence.trim().replace(/\s+/g, ' '),
         username: username.trim() || undefined,
         verificationToken,
       });
@@ -203,12 +256,18 @@ export default function SignupPage() {
                 <input
                   type="email"
                   required
+                  maxLength={EMAIL_MAX}
                   value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  onChange={(e) => {
+                    setEmail(e.target.value.slice(0, EMAIL_MAX));
+                    clearField('email');
+                  }}
                   placeholder="you@globalsolutions.com"
-                  className={inputClass}
+                  autoComplete="email"
+                  className={fieldInput('email', 'pl-10')}
                 />
               </div>
+              {fieldErrors.email && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.email}</p>}
               <p className={`mt-2 text-[11px] ${isDark ? 'text-[#98b7af]' : 'text-emerald-800/55'}`}>
                 We’ll send a verification code before the account is created.
               </p>
@@ -301,30 +360,81 @@ export default function SignupPage() {
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label className={labelClass}>First name</label>
-                <input required value={firstName} onChange={(e) => setFirstName(e.target.value)} placeholder="First name" className={`${inputClass} pl-4`} />
+                <input
+                  required
+                  maxLength={NAME_MAX}
+                  value={firstName}
+                  onChange={(e) => { setFirstName(filterName(e.target.value)); clearField('firstName'); }}
+                  placeholder="First name"
+                  autoComplete="given-name"
+                  className={fieldInput('firstName')}
+                />
+                {fieldErrors.firstName && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.firstName}</p>}
               </div>
               <div>
                 <label className={labelClass}>Last name</label>
-                <input required value={lastName} onChange={(e) => setLastName(e.target.value)} placeholder="Last name" className={`${inputClass} pl-4`} />
+                <input
+                  required
+                  maxLength={NAME_MAX}
+                  value={lastName}
+                  onChange={(e) => { setLastName(filterName(e.target.value)); clearField('lastName'); }}
+                  placeholder="Last name"
+                  autoComplete="family-name"
+                  className={fieldInput('lastName')}
+                />
+                {fieldErrors.lastName && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.lastName}</p>}
               </div>
               <div>
                 <label className={labelClass}>Phone number</label>
-                <input required minLength={7} value={phone} onChange={(e) => setPhone(e.target.value)} placeholder="+254 700 000 000" className={`${inputClass} pl-4`} />
+                <input
+                  required
+                  inputMode="tel"
+                  autoComplete="tel"
+                  maxLength={16}
+                  value={phone}
+                  onChange={(e) => { setPhone(filterPhone(e.target.value)); clearField('phone'); }}
+                  placeholder="+254700000000"
+                  className={fieldInput('phone')}
+                />
+                {fieldErrors.phone && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.phone}</p>}
               </div>
               <div>
                 <label className={labelClass}>Country</label>
-                <select required value={country} onChange={(e) => setCountry(e.target.value)} className={`${inputClass} pl-4`}>
+                <select
+                  required
+                  value={country}
+                  onChange={(e) => { setCountry(e.target.value); clearField('country'); }}
+                  className={fieldInput('country')}
+                >
                   <option value="">Select country</option>
                   {countries.map((name) => <option key={name} value={name}>{name}</option>)}
                 </select>
+                {fieldErrors.country && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.country}</p>}
               </div>
               <div>
                 <label className={labelClass}>Place of residence</label>
-                <input required minLength={2} value={residence} onChange={(e) => setResidence(e.target.value)} placeholder="City or town" className={`${inputClass} pl-4`} />
+                <input
+                  required
+                  maxLength={RESIDENCE_MAX}
+                  value={residence}
+                  onChange={(e) => { setResidence(filterResidence(e.target.value)); clearField('residence'); }}
+                  placeholder="City or town"
+                  autoComplete="address-level2"
+                  className={fieldInput('residence')}
+                />
+                {fieldErrors.residence && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.residence}</p>}
               </div>
               <div>
                 <label className={labelClass}>Username</label>
-                <input value={username} onChange={(e) => setUsername(e.target.value.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32))} placeholder="Optional" className={`${inputClass} pl-4`} />
+                <input
+                  maxLength={USERNAME_MAX}
+                  value={username}
+                  onChange={(e) => { setUsername(filterUsername(e.target.value)); clearField('username'); }}
+                  placeholder="Optional, 3–32 characters"
+                  autoComplete="username"
+                  className={fieldInput('username')}
+                />
+                {fieldErrors.username && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.username}</p>}
               </div>
               <div>
                 <label className={labelClass}>Password</label>
@@ -333,11 +443,16 @@ export default function SignupPage() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    minLength={8}
+                    minLength={PASSWORD_LENGTH}
+                    maxLength={PASSWORD_LENGTH}
                     value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    placeholder="Min 8 characters"
-                    className={`${inputClass} pr-10`}
+                    onChange={(e) => {
+                      setPassword(e.target.value.slice(0, PASSWORD_LENGTH));
+                      clearField('password');
+                      clearField('confirmPassword');
+                    }}
+                    placeholder="Exactly 8 characters"
+                    className={fieldInput('password', 'pr-10')}
                     autoComplete="new-password"
                   />
                   <button
@@ -349,6 +464,7 @@ export default function SignupPage() {
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
+                {fieldErrors.password && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.password}</p>}
               </div>
               <div>
                 <label className={labelClass}>Confirm password</label>
@@ -357,11 +473,15 @@ export default function SignupPage() {
                   <input
                     type={showConfirmPassword ? 'text' : 'password'}
                     required
-                    minLength={8}
+                    minLength={PASSWORD_LENGTH}
+                    maxLength={PASSWORD_LENGTH}
                     value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
+                    onChange={(e) => {
+                      setConfirmPassword(e.target.value.slice(0, PASSWORD_LENGTH));
+                      clearField('confirmPassword');
+                    }}
                     placeholder="Re-enter password"
-                    className={`${inputClass} pr-10`}
+                    className={fieldInput('confirmPassword', 'pr-10')}
                     autoComplete="new-password"
                   />
                   <button
@@ -373,6 +493,7 @@ export default function SignupPage() {
                     {showConfirmPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
+                {fieldErrors.confirmPassword && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.confirmPassword}</p>}
               </div>
             </div>
             {error && (
