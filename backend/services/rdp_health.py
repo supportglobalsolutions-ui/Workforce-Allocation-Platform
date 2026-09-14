@@ -29,26 +29,53 @@ ACTIVE_ASSIGNMENT_STATUSES = frozenset({
 })
 
 
-def probe_rdp_host(host: str | None, port: int | None, *, timeout: float = 3.0) -> dict[str, Any]:
-    """TCP check of the Windows host Guacamole will dial. Fail fast before a claim."""
+def probe_rdp_host(
+    host: str | None,
+    port: int | None,
+    *,
+    timeout: float = 5.0,
+    attempts: int = 3,
+) -> dict[str, Any]:
+    """
+    TCP check of the Windows host Guacamole will dial. Fail fast before a claim.
+
+    Retries before declaring the machine down. These hosts are reached over a
+    long-haul link where a single handshake is often lost even though the
+    machine is healthy — one attempt produced false "machine is offline"
+    errors that blocked claims on a working desktop. One success is enough.
+    """
     target = (host or "").strip()
     dest_port = int(port or 3389)
     if not target:
         return {"ok": False, "error": "This machine has no host/IP configured."}
-    try:
-        with socket.create_connection((target, dest_port), timeout=timeout):
-            return {"ok": True, "host": target, "port": dest_port, "error": None}
-    except OSError as exc:
-        logger.warning("RDP TCP probe failed for %s:%s: %s", target, dest_port, exc)
-        return {
-            "ok": False,
-            "host": target,
-            "port": dest_port,
-            "error": (
-                f"The remote desktop at {target}:{dest_port} did not accept a connection. "
-                "The machine is offline or port 3389 is closed."
-            ),
-        }
+
+    last_exc: OSError | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            with socket.create_connection((target, dest_port), timeout=timeout):
+                if attempt > 1:
+                    logger.info(
+                        "RDP TCP probe for %s:%s succeeded on attempt %s",
+                        target, dest_port, attempt,
+                    )
+                return {"ok": True, "host": target, "port": dest_port, "error": None}
+        except OSError as exc:
+            last_exc = exc
+            logger.warning(
+                "RDP TCP probe attempt %s/%s failed for %s:%s: %s",
+                attempt, attempts, target, dest_port, exc,
+            )
+
+    return {
+        "ok": False,
+        "host": target,
+        "port": dest_port,
+        "error": (
+            f"The remote desktop at {target}:{dest_port} did not accept a connection "
+            f"after {attempts} attempts ({last_exc.__class__.__name__ if last_exc else 'unknown'}). "
+            "The machine is offline, port 3389 is closed, or the network is unreachable."
+        ),
+    }
 
 
 def _utc_now() -> datetime:
