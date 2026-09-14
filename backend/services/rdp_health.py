@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import socket
 from datetime import datetime, timezone
 from typing import Any
 
@@ -26,6 +27,28 @@ ACTIVE_ASSIGNMENT_STATUSES = frozenset({
     RdpStatusEnum.active,
     RdpStatusEnum.idle,
 })
+
+
+def probe_rdp_host(host: str | None, port: int | None, *, timeout: float = 3.0) -> dict[str, Any]:
+    """TCP check of the Windows host Guacamole will dial. Fail fast before a claim."""
+    target = (host or "").strip()
+    dest_port = int(port or 3389)
+    if not target:
+        return {"ok": False, "error": "This machine has no host/IP configured."}
+    try:
+        with socket.create_connection((target, dest_port), timeout=timeout):
+            return {"ok": True, "host": target, "port": dest_port, "error": None}
+    except OSError as exc:
+        logger.warning("RDP TCP probe failed for %s:%s: %s", target, dest_port, exc)
+        return {
+            "ok": False,
+            "host": target,
+            "port": dest_port,
+            "error": (
+                f"The remote desktop at {target}:{dest_port} did not accept a connection. "
+                "The machine is offline or port 3389 is closed."
+            ),
+        }
 
 
 def _utc_now() -> datetime:

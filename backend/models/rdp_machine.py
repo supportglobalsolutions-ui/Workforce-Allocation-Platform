@@ -39,6 +39,19 @@ class RDPResource(SQLModel, table=True):
     guacamole_connection_id: Optional[str] = Field(
         default=None, sa_column=Column(String(128), nullable=True)
     )
+    # RDP sign-in for this machine. The password is Fernet-encrypted at rest
+    # (see core.crypto) and exists here so the Guacamole connection can be
+    # rebuilt automatically on any host — a fresh VPS has an empty Guacamole
+    # database, and without these an admin would have to retype every password.
+    rdp_username: Optional[str] = Field(
+        default=None, sa_column=Column(String(128), nullable=True)
+    )
+    rdp_password_enc: Optional[str] = Field(
+        default=None, sa_column=Column(Text, nullable=True)
+    )
+    rdp_domain: Optional[str] = Field(
+        default=None, sa_column=Column(String(128), nullable=True)
+    )
     health_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     risk_flags: list[Any] = Field(
         default_factory=list,

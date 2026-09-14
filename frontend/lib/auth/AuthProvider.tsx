@@ -68,13 +68,20 @@ function messageForAccountStatus(status: string | null): string | null {
 }
 
 function isBlockedSignIn(err: unknown): boolean {
-  if (!(err instanceof Error)) return false;
-  const message = err.message.toLowerCase();
+  if (!err) return false;
+  const message = (
+    err instanceof Error
+      ? `${err.message} ${(err as Error & { code?: string }).code || ''}`
+      : String(err)
+  ).toLowerCase();
   return (
-    message.includes('user-disabled') ||
-    message.includes('disabled') ||
-    message.includes('banned') ||
-    message.includes('awaiting')
+    message.includes('user-disabled')
+    || message.includes('user_disabled')
+    || message.includes('user_banned')
+    || message.includes('user is banned')
+    || message.includes('user is disabled')
+    || message.includes('awaiting admin approval')
+    || message.includes('pending admin approval')
   );
 }
 
@@ -130,6 +137,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
+      let passwordAccepted = false;
       try {
         const identifier = email.trim();
         let lookupEmail = identifier.includes('@') ? identifier.toLowerCase() : null;
@@ -150,16 +158,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           signInWithPassword(email, password),
           8000,
         );
+        passwordAccepted = true;
         pendingAccessTokenRef.current = accessToken;
 
-        if (isPrivilegedLoginRole(provisional.authRole)) {
-          setPendingLoginOtp({
-            sending: true,
-            sentTo: email,
-            challenge: null,
-            resendsRemaining: 5,
-          });
+        if (!isPrivilegedLoginRole(provisional.authRole)) {
+          return finishLogin(accessToken);
         }
+
+        setPendingLoginOtp({
+          sending: true,
+          sentTo: email,
+          challenge: null,
+          resendsRemaining: 5,
+        });
 
         const challenge = await requestLoginOtp(false);
         if (!challenge.required) {
@@ -183,19 +194,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           void signOut();
           return {
             ok: false,
-            error: 'Sign-in is taking too long. If this account is still pending approval, you can sign in after an administrator approves it.',
+            error:
+              'Sign-in is taking too long. If this account is still pending approval, you can sign in after an administrator approves it.',
           };
         }
         if (isBlockedSignIn(err)) {
           void signOut();
-          return { ok: false, error: PENDING_APPROVAL };
+          const lookupEmail = email.trim().includes('@') ? email.trim().toLowerCase() : null;
+          const status = lookupEmail ? await lookupAccountStatus(lookupEmail) : null;
+          return { ok: false, error: messageForAccountStatus(status) ?? PENDING_APPROVAL };
         }
 
-        try {
-          await registerLoginFailure(email);
-        } catch (rateErr: unknown) {
-          return { ok: false, error: getAuthErrorMessage(rateErr) };
+        if (!passwordAccepted) {
+          try {
+            await registerLoginFailure(email);
+          } catch (rateErr: unknown) {
+            return { ok: false, error: getAuthErrorMessage(rateErr) };
+          }
         }
+
         void signOut();
         return { ok: false, error: getAuthErrorMessage(err) };
       }

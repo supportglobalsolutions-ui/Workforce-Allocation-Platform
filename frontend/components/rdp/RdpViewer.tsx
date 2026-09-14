@@ -106,7 +106,14 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
             setStatus('connected');
             setError(null);
           } else if (state === 5) {
-            setStatus('disconnected');
+            if (connectionTimer) clearTimeout(connectionTimer);
+            setStatus((current) => {
+              if (current === 'connecting') {
+                setError('The remote desktop closed before it finished connecting. The machine may be offline.');
+                return 'error';
+              }
+              return 'disconnected';
+            });
             onDisconnect?.();
           }
         };

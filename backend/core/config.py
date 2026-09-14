@@ -14,6 +14,11 @@ class Settings(BaseSettings):
     # ── Session cookie (signed HttpOnly cookie for Next.js middleware) ──
     SESSION_COOKIE_SECRET: str = ""
 
+    # Fernet key encrypting secrets at rest (RDP credentials). Generate with:
+    #   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+    # Falls back to a key derived from OTP_PEPPER when unset.
+    SECRET_ENCRYPTION_KEY: str = ""
+
     # ── Database (Supabase-hosted PostgreSQL) ─────────────────
     # Supabase exposes three connection strings; pick per workload:
     #   • Direct        db.<ref>.supabase.co:5432        — IPv6 only unless you

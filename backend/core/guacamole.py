@@ -12,6 +12,28 @@ _CACHE_KEY = "guac:auth"
 _CACHE_TTL = 2700  # 45 min (tokens expire after 60 min)
 
 
+def raw_connection_id(connection_id: str | None) -> str:
+    """Return the Guacamole identifier used by REST + /websocket-tunnel.
+
+    The browser client URL uses base64 of ``{id}\\0c\\0{datasource}``. That
+    encoded form stored on a machine must not be sent as GUAC_ID — Guacamole
+    answers with 516 RESOURCE_NOT_FOUND and the viewer sits on Connecting.
+    """
+    raw = (connection_id or "").strip()
+    if not raw:
+        return raw
+    try:
+        pad = "=" * ((4 - len(raw) % 4) % 4)
+        decoded = base64.b64decode(raw + pad, validate=False)
+        if b"\x00c\x00" in decoded or b"\x00C\x00" in decoded:
+            ident = decoded.split(b"\x00", 1)[0].decode("utf-8", errors="replace").strip()
+            if ident:
+                return ident
+    except Exception:
+        pass
+    return raw
+
+
 class GuacamoleClient:
     """Thin wrapper around the Guacamole REST API."""
 
@@ -62,8 +84,9 @@ class GuacamoleClient:
 
     def _client_id(self, connection_id: str) -> str:
         _, data_source = self._get_token()
+        ident = raw_connection_id(connection_id)
         return base64.b64encode(
-            f"{connection_id}\0c\0{data_source}".encode()
+            f"{ident}\0c\0{data_source}".encode()
         ).decode()
 
     def get_connection_url(self, connection_id: str) -> str:
@@ -81,17 +104,14 @@ class GuacamoleClient:
     def get_tunnel_connect_info(self, connection_id: str) -> dict[str, str]:
         """Auth token + identifiers for guacamole-common-js tunnel connect data."""
         token, data_source = self._get_token()
-        # Guacamole's WebSocket endpoint expects the same encoded client
-        # identifier used in its normal browser URL, not the raw database
-        # connection ID. Passing the raw value results in a 516
-        # RESOURCE_NOT_FOUND / "Requested tunnel destination does not exist".
+        ident = raw_connection_id(connection_id)
         client_id = base64.b64encode(
-            f"{connection_id}\0c\0{data_source}".encode()
+            f"{ident}\0c\0{data_source}".encode()
         ).decode()
         return {
             "token": token,
             "data_source": data_source,
-            "connection_id": str(connection_id),
+            "connection_id": ident,
             "client_id": client_id,
         }
 
@@ -122,9 +142,10 @@ class GuacamoleClient:
 
     def get_connection(self, connection_id: str) -> dict | None:
         token, data_source = self._get_token()
+        ident = raw_connection_id(connection_id)
         with httpx.Client(timeout=10.0) as client:
             resp = client.get(
-                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                f"{self._base}/api/session/data/{data_source}/connections/{ident}",
                 params={"token": token},
             )
         if resp.status_code == 404:
@@ -135,9 +156,10 @@ class GuacamoleClient:
     def get_connection_parameters(self, connection_id: str) -> dict[str, str]:
         """Stored protocol parameters (hostname/port/username/password/...)."""
         token, data_source = self._get_token()
+        ident = raw_connection_id(connection_id)
         with httpx.Client(timeout=10.0) as client:
             resp = client.get(
-                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}/parameters",
+                f"{self._base}/api/session/data/{data_source}/connections/{ident}/parameters",
                 params={"token": token},
             )
         if resp.status_code == 404:
@@ -188,8 +210,9 @@ class GuacamoleClient:
         parent_identifier: str = "ROOT",
     ) -> None:
         token, data_source = self._get_token()
+        ident = raw_connection_id(connection_id)
         payload = {
-            "identifier": str(connection_id),
+            "identifier": ident,
             "parentIdentifier": parent_identifier,
             "name": name,
             "protocol": protocol,
@@ -198,7 +221,7 @@ class GuacamoleClient:
         }
         with httpx.Client(timeout=15.0) as client:
             resp = client.put(
-                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                f"{self._base}/api/session/data/{data_source}/connections/{ident}",
                 params={"token": token},
                 json=payload,
             )
@@ -206,9 +229,10 @@ class GuacamoleClient:
 
     def delete_connection(self, connection_id: str) -> bool:
         token, data_source = self._get_token()
+        ident = raw_connection_id(connection_id)
         with httpx.Client(timeout=10.0) as client:
             resp = client.delete(
-                f"{self._base}/api/session/data/{data_source}/connections/{connection_id}",
+                f"{self._base}/api/session/data/{data_source}/connections/{ident}",
                 params={"token": token},
             )
         if resp.status_code == 404:
@@ -239,7 +263,7 @@ class GuacamoleClient:
                 if not isinstance(meta, dict):
                     continue
                 cid = meta.get("connectionIdentifier") or meta.get("connectionID")
-                if cid is not None and str(cid) == str(connection_id):
+                if cid is not None and raw_connection_id(str(cid)) == raw_connection_id(connection_id):
                     to_kill.append(str(active_id))
             if not to_kill:
                 return 0

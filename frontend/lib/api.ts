@@ -33,8 +33,14 @@ async function parseErrorMessage(res: Response): Promise<string> {
       // Backend messages are not shown verbatim unless they are deliberate,
       // user-actionable messages. This keeps internal implementation details
       // out of the interface.
-      if (typeof json.detail === 'string' && /^(Too many requests|Select |Password |Invalid worker type|Your recovery session)/i.test(json.detail)) {
-        return json.detail;
+      if (typeof json.detail === 'string') {
+        const detail = json.detail.trim();
+        if (
+          /^(Too many|Select |Password |Invalid |Your |An account|No account|Use |Username |Email |login_otp)/i.test(detail)
+          || detail.length <= 160
+        ) {
+          return detail;
+        }
       }
       if (Array.isArray(json.detail)) {
         return 'Please check the information you entered and try again.';

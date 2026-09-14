@@ -523,6 +523,32 @@ server {
 
     client_max_body_size 50M;
 
+    # ── RDP remote-desktop tunnel ──────────────────────────────
+    # Must come before "location /" so it wins for this path.
+    #
+    # The browser's remote desktop is a long-lived WebSocket to FastAPI
+    # (/rdp/{id}/ws-tunnel). The 120s read timeout used for normal API calls
+    # would tear the desktop down after two quiet minutes, and Nginx's
+    # response buffering adds visible lag to the canvas — so this path gets
+    # its own block.
+    location ~ ^/rdp/[^/]+/ws-tunnel$ {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_http_version 1.1;
+
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+
+        proxy_buffering off;
+        proxy_connect_timeout 60s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+
     location / {
         proxy_pass http://127.0.0.1:8000;
         proxy_http_version 1.1;
@@ -704,6 +730,34 @@ docker compose logs -f redis
   ```
 - If this times out, the Windows Firewall or cloud network security group is blocking port 3389 from the Hetzner server's public IP.
 - Confirm Nginx includes the WebSocket upgrade headers (`Upgrade $http_upgrade;` and `Connection $connection_upgrade;`).
+- Read what guacd actually said — this is the fastest way to tell a machine
+  problem from a platform problem:
+  ```bash
+  docker compose logs --tail 40 guacd
+  ```
+  - `Error connecting to RDP server` / auth failure → wrong host or credentials.
+    Fix them on **Admin → RDP Resource Management**, then press **Sync Guacamole**.
+  - `User is not responding` → guacd is drawing frames but the browser's
+    acknowledgements are not getting back. That is the WebSocket path, not the
+    machine: check the `ws-tunnel` Nginx block below and the backend logs.
+  - No RDP errors at all but a black canvas → the tunnel never delivered frames.
+
+### 5. Remote Desktop Drops After ~2 Minutes
+The RDP canvas is a long-lived WebSocket to FastAPI at `/rdp/{id}/ws-tunnel`.
+If it is served by the generic `location /` block with `proxy_read_timeout 120s`,
+Nginx closes the connection after two quiet minutes and the desktop goes black.
+
+Confirm the dedicated `location ~ ^/rdp/[^/]+/ws-tunnel$` block is present in the
+`api.yourdomain.com` server (it sets `proxy_read_timeout 3600s` and
+`proxy_buffering off`), then `sudo nginx -t && sudo systemctl reload nginx`.
+
+### 6. Remote Desktop Works Locally But Not on Vercel
+Vercel rewrites HTTP but **does not proxy WebSocket upgrades**. The viewer
+therefore connects straight to `NEXT_PUBLIC_API_URL` in production instead of
+going through `/api/*`. Check that:
+- `NEXT_PUBLIC_API_URL` is set in Vercel to `https://api.yourdomain.com`.
+- That host has a valid TLS certificate — browsers refuse `wss://` to an
+  untrusted certificate, with no useful error in the console.
 
 ---
 

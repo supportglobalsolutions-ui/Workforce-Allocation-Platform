@@ -20,6 +20,7 @@ from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
 from services.email_events import run_email_events_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
+from services.rdp_reconcile import run_rdp_reconcile_loop
 
 _log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
 if settings.is_production:
@@ -46,7 +47,12 @@ async def lifespan(app: FastAPI):
             "request will be rejected until then."
         )
 
-    background_tasks = [asyncio.create_task(run_rdp_lifecycle_loop())]
+    background_tasks = [
+        asyncio.create_task(run_rdp_lifecycle_loop()),
+        # Rebuilds Guacamole connections that do not exist on this host, so a
+        # fresh deployment provisions itself instead of showing black screens.
+        asyncio.create_task(run_rdp_reconcile_loop()),
+    ]
     if settings.EMAIL_DISPATCH_ENABLED:
         background_tasks.append(asyncio.create_task(run_email_dispatch_loop()))
     if settings.RESEND_API_KEY:

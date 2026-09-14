@@ -160,18 +160,7 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def clean_password(cls, value: str) -> str:
-        broken: list[str] = []
-        if not 8 <= len(value) <= 10:
-            broken.append("use 8 to 10 characters")
-        if not re.search(r"[A-Z]", value):
-            broken.append("include 1 capital letter")
-        if not re.search(r"\d", value):
-            broken.append("include 1 number")
-        if not re.search(r"[^A-Za-z0-9]", value):
-            broken.append("include 1 special character")
-        if broken:
-            raise ValueError("Password must " + ", ".join(broken) + ".")
-        return value
+        return _require_password_policy(value)
 
 
 class SessionTokenRequest(BaseModel):
@@ -214,8 +203,28 @@ class PasswordRecoveryRequest(BaseModel):
     email: Optional[EmailStr] = None
 
 
+def _require_password_policy(value: str) -> str:
+    broken: list[str] = []
+    if not 8 <= len(value) <= 10:
+        broken.append("use 8 to 10 characters")
+    if not re.search(r"[A-Z]", value):
+        broken.append("include 1 capital letter")
+    if not re.search(r"\d", value):
+        broken.append("include 1 number")
+    if not re.search(r"[^A-Za-z0-9]", value):
+        broken.append("include 1 special character")
+    if broken:
+        raise ValueError("Password must " + ", ".join(broken) + ".")
+    return value
+
+
 class PasswordResetRequest(BaseModel):
-    password: str = Field(min_length=12, max_length=128)
+    password: str = Field(min_length=8, max_length=10)
+
+    @field_validator("password")
+    @classmethod
+    def clean_password(cls, value: str) -> str:
+        return _require_password_policy(value)
 
 
 def _validate_optional_partner_entity(db: Session, role: str, entity_id: Optional[UUID]) -> Optional[str]:

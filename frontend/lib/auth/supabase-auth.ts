@@ -82,7 +82,7 @@ export type SignupOtpChallenge = {
 };
 
 export function isPrivilegedLoginRole(role: string | null | undefined): boolean {
-  return role === 'admin' || role === 'super_admin';
+  return role === 'admin' || role === 'super_admin' || role === 'executive';
 }
 
 /**

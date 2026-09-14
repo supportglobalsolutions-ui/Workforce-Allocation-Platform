@@ -11,7 +11,7 @@ import { useAuth } from '@/lib/auth/AuthProvider';
 import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
 import type { LoginOtpChallenge } from '@/lib/auth/supabase-auth';
-import ErrorToast from '@/components/shared/ErrorToast';
+import { getAuthErrorMessage } from '@/lib/auth/errors';
 
 interface LoginCardProps {
   onSuccess?: () => void;
@@ -62,7 +62,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
         onSuccess();
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Login failed');
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -84,7 +84,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
         if (onSuccess) onSuccess();
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : 'Verification failed');
+      setError(getAuthErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -165,7 +165,12 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
             />
           </div>
 
-          <ErrorToast message={error} onDismiss={() => setError('')} />
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+              <AlertCircle size={15} className="shrink-0" />
+              <span>{error}</span>
+            </div>
+          )}
 
           <button
             type="submit"
@@ -273,7 +278,12 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           </Link>
         </div>
 
-        <ErrorToast message={error} onDismiss={() => setError('')} />
+        {error && (
+          <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
+            <AlertCircle size={15} className="shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
 
         <button
           type="submit"

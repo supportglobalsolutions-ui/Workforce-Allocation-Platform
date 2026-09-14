@@ -1,8 +1,12 @@
+# Workforce Allocation Platform — local infra (RDP Guacamole, Redis, monitoring)
+name: workforce
+
 services:
 
   # ── Redis (RDP claim locking) ──────────────────────────────────────────────
   redis:
     image: redis:7-alpine
+    container_name: workforce-redis
     restart: unless-stopped
     ports:
       - "6379:6379"
@@ -12,6 +16,7 @@ services:
   # ── Guacamole daemon (does the actual RDP/VNC protocol work) ──────────────
   guacd:
     image: guacamole/guacd:latest
+    container_name: workforce-guacd
     restart: unless-stopped
     networks:
       - guac_net
@@ -19,6 +24,7 @@ services:
   # ── Dedicated PostgreSQL for Guacamole (separate from app DB) ─────────────
   guac_db:
     image: postgres:15-alpine
+    container_name: workforce-guac-db
     restart: unless-stopped
     environment:
       POSTGRES_DB: guacamole_db
@@ -33,6 +39,7 @@ services:
   # ── Guacamole web app (port 8080 on your machine) ─────────────────────────
   guacamole:
     image: guacamole/guacamole:latest
+    container_name: workforce-guacamole
     restart: unless-stopped
     depends_on:
       - guacd
@@ -51,6 +58,7 @@ services:
   # ── Uptime Kuma — TCP heartbeat checks for RDP machines (port 3389) ─────────
   uptime-kuma:
     image: louislam/uptime-kuma:1
+    container_name: workforce-uptime-kuma
     restart: unless-stopped
     volumes:
       - uptime_kuma_data:/app/data
@@ -64,5 +72,10 @@ networks:
     driver: bridge
 
 volumes:
+  # Keep the old project volume names so existing Guacamole / Uptime data is reused.
   guac_db_data:
+    external: true
+    name: infrastructure_guac_db_data
   uptime_kuma_data:
+    external: true
+    name: infrastructure_uptime_kuma_data

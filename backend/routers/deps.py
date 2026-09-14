@@ -47,21 +47,44 @@ def get_admin_user(db: Session, current_user: dict) -> AdminUser:
     on first access (just-in-time provisioning) so a valid Supabase login never
     has to be seeded into Postgres by hand.
     """
+    uid = current_user["uid"]
     admin = db.exec(
-        select(AdminUser).where(AdminUser.auth_user_id == current_user["uid"])
+        select(AdminUser).where(AdminUser.auth_user_id == uid)
     ).first()
     if admin:
         return admin
 
+    email = (current_user.get("email") or f"{uid}@unknown.local").strip().lower()
+    by_email = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
+    if by_email:
+        # Same person, new auth id (re-created Supabase user) — reattach.
+        by_email.auth_user_id = uid
+        if by_email.status != AccountStatusEnum.active:
+            by_email.status = AccountStatusEnum.active
+        db.add(by_email)
+        db.commit()
+        db.refresh(by_email)
+        return by_email
+
     admin = AdminUser(
-        auth_user_id=current_user["uid"],
-        email=current_user.get("email") or f"{current_user['uid']}@unknown.local",
+        auth_user_id=uid,
+        email=email,
         role=_AUTH_TO_ORG_ROLE.get(current_user.get("role", "user"), AdminRoleEnum.technical_admin),
         display_name=_display_name_from(current_user),
         status=AccountStatusEnum.active,
     )
     db.add(admin)
-    db.commit()
+    try:
+        db.commit()
+    except Exception:
+        db.rollback()
+        # Race or leftover unique conflict — return whatever row now matches.
+        admin = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+        if not admin:
+            admin = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
+        if not admin:
+            raise
+        return admin
     db.refresh(admin)
     return admin
 

@@ -16,15 +16,18 @@ from dataclasses import dataclass
 
 import redis as redis_lib
 
+from core.crypto import decrypt_secret, encrypt_secret, encryption_available
 from core.guacamole import GuacamoleClient
 from models.rdp_machine import RDPResource
 
 logger = logging.getLogger(__name__)
 
-# One worker per machine at a time — mirrors the platform's claim model.
+# Cap the Windows session at one viewer. Do not also cap per Guacamole user:
+# every worker tunnel authenticates as the platform account, so a per-user
+# limit of 1 blocks retries with "already in use by this user".
 DEFAULT_ATTRIBUTES: dict[str, str] = {
     "max-connections": "1",
-    "max-connections-per-user": "1",
+    "max-connections-per-user": "",
 }
 
 # Sane defaults for Windows RDP over guacd.
@@ -101,6 +104,16 @@ def sync_connection(
             "Set the machine's host/IP before provisioning a Guacamole connection."
         )
 
+    # Fall back to the credentials stored on the machine. This is what makes
+    # rebuilding on a fresh Guacamole automatic: its database starts empty, so
+    # without these the connection would be created with no login.
+    if username is None:
+        username = resource.rdp_username
+    if password is None:
+        password = decrypt_secret(resource.rdp_password_enc)
+    if domain is None:
+        domain = resource.rdp_domain
+
     name = resource.nickname.strip()
     guac = GuacamoleClient(redis_client)
 
@@ -149,6 +162,44 @@ def sync_connection(
         raise GuacamoleProvisionError(
             f"Guacamole provisioning failed ({type(exc).__name__}): {detail[:300]}"
         ) from exc
+
+
+def store_credentials(
+    resource: RDPResource,
+    *,
+    username: str | None,
+    password: str | None,
+    domain: str | None,
+) -> bool:
+    """
+    Persist supplied credentials on the machine (password encrypted).
+
+    Only overwrites what was actually provided, so editing a machine without
+    retyping the password keeps the stored one. Returns True if anything
+    changed, so the caller knows whether to commit.
+    """
+    changed = False
+    if username is not None and username.strip():
+        resource.rdp_username = username.strip()
+        changed = True
+    if domain is not None:
+        resource.rdp_domain = domain.strip() or None
+        changed = True
+    if password:
+        if not encryption_available():
+            logger.error(
+                "Cannot store the RDP password for %s: no encryption key configured. "
+                "Set SECRET_ENCRYPTION_KEY or OTP_PEPPER.",
+                resource.nickname,
+            )
+        else:
+            resource.rdp_password_enc = encrypt_secret(password)
+            changed = True
+    return changed
+
+
+def has_stored_credentials(resource: RDPResource) -> bool:
+    return bool(resource.rdp_username and resource.rdp_password_enc)
 
 
 def remove_connection(redis_client: redis_lib.Redis, connection_id: str) -> bool:

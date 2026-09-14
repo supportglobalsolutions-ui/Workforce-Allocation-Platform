@@ -16,7 +16,7 @@ from starlette.background import BackgroundTask
 from core.config import settings
 from core.database import engine, get_db
 from core.supabase_auth import verify_supabase_token
-from core.guacamole import GuacamoleClient
+from core.guacamole import GuacamoleClient, raw_connection_id
 from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.rate_limit import check_rate_limit
 from core.redis import get_redis
@@ -39,8 +39,10 @@ from schemas.rdp import (
 )
 from services.guacamole_provision import (
     GuacamoleProvisionError,
+    store_credentials,
     sync_connection,
 )
+from services.rdp_health import probe_rdp_host
 from services.rdp_state import (
     transition_rdp_status,
     validate_worker_may_claim,
@@ -51,6 +53,35 @@ from .deps import get_admin_user, get_worker_for_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+
+
+def _preflight_rdp(resource: RDPResource) -> dict:
+    """Check Guacamole id + TCP reachability before a worker claims."""
+    raw_id = raw_connection_id(resource.guacamole_connection_id)
+    if not raw_id:
+        return {
+            "ok": False,
+            "error": "This machine is not linked to a remote-desktop connection yet. Ask an admin to provision it.",
+            "guacamole_connection_id": None,
+            "host": resource.monitor_host,
+            "port": resource.monitor_port or 3389,
+        }
+    tcp = probe_rdp_host(resource.monitor_host, resource.monitor_port)
+    if not tcp["ok"]:
+        return {
+            "ok": False,
+            "error": tcp["error"],
+            "guacamole_connection_id": raw_id,
+            "host": tcp.get("host"),
+            "port": tcp.get("port"),
+        }
+    return {
+        "ok": True,
+        "error": None,
+        "guacamole_connection_id": raw_id,
+        "host": tcp.get("host"),
+        "port": tcp.get("port"),
+    }
 
 
 def _utc_now() -> datetime:
@@ -614,12 +645,12 @@ def guacamole_health(
         report["error"] = f"{type(exc).__name__}: {exc}"
 
     for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all():
-        cid = resource.guacamole_connection_id
+        cid = raw_connection_id(resource.guacamole_connection_id)
         if not cid:
             state = "missing"
         elif not report["authenticated"]:
             state = "unknown"
-        elif str(cid) in {str(k) for k in connections}:
+        elif cid in {str(k) for k in connections}:
             state = "ok"
         else:
             state = "stale"
@@ -754,6 +785,19 @@ def _provision_guacamole(
     Returns an error string instead of raising unless `strict` is set, so an
     unreachable Guacamole never blocks saving the machine record.
     """
+    # Keep the credentials on the machine (password encrypted) so the
+    # connection can be rebuilt on any Guacamole instance without an admin
+    # retyping it — a fresh VPS starts with an empty Guacamole database.
+    if store_credentials(
+        resource,
+        username=creds.rdp_username,
+        password=creds.rdp_password,
+        domain=creds.rdp_domain,
+    ):
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+
     try:
         result = sync_connection(
             redis_client,
@@ -963,6 +1007,18 @@ def claim_rdp_resource(
     )
     if approved_shift:
         shift_id = approved_shift.id
+
+    preflight = _preflight_rdp(resource)
+    if not preflight["ok"]:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=preflight["error"],
+        )
+    if resource.guacamole_connection_id != preflight["guacamole_connection_id"]:
+        resource.guacamole_connection_id = preflight["guacamole_connection_id"]
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
 
     lock_key = f"lock:rdp:{rdp_id}"
     acquired = redis_client.set(lock_key, "1", ex=30, nx=True)
@@ -1193,6 +1249,19 @@ def force_release_rdp_resource(
     return {**result, "reason": body.reason.strip()}
 
 
+@router.get("/{rdp_id}/preflight")
+def preflight_rdp_resource(
+    rdp_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_user),
+):
+    """TCP + Guacamole-id check so the claim board can fail before opening a desktop."""
+    resource = db.get(RDPResource, rdp_id)
+    if not resource:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
+    return _preflight_rdp(resource)
+
+
 @router.get("/{rdp_id}/tunnel-info")
 def get_rdp_tunnel_info(
     rdp_id: UUID,
@@ -1305,20 +1374,26 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
                 await websocket.close(code=4003, reason="No open claim on this machine")
                 return
 
-        connection_id = resource.guacamole_connection_id
+        connection_id = raw_connection_id(resource.guacamole_connection_id)
+        if resource.guacamole_connection_id != connection_id:
+            resource.guacamole_connection_id = connection_id
+            db.add(resource)
+            db.commit()
 
     # --- 4. Fetch Guacamole token server-side ---
     redis_client = get_redis()
+    guac = GuacamoleClient(redis_client)
     try:
-        guac = GuacamoleClient(redis_client)
         info = guac.get_tunnel_connect_info(connection_id)
         guac_token = info["token"]
         data_source = info["data_source"]
-        client_id = info["client_id"]
     except Exception as exc:
         logger.warning("Failed to get Guacamole token for rdp %s: %s", rdp_id, exc)
         await websocket.close(code=1011, reason="Cannot reach Guacamole server")
         return
+    # Drop a tunnel left behind by a timed-out tab. All workers share the
+    # platform Guacamole user, so a stale session is rejected as in-use.
+    guac.kill_active_connections(connection_id)
 
     # --- 5. Build Guacamole WebSocket URL ---
     guac_base = settings.GUACAMOLE_URL.rstrip("/")
@@ -1327,7 +1402,12 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
         [
             ("token", guac_token),
             ("GUAC_DATA_SOURCE", data_source),
-            ("GUAC_ID", client_id),
+            # /websocket-tunnel takes the RAW connection identifier. The
+            # base64 "<id>\0c\0<datasource>" form belongs to the browser URL
+            # (#/client/...) and the HTTP tunnel; sending it here is rejected
+            # with 516 RESOURCE_NOT_FOUND, which surfaces as a black screen.
+            # Verified against this Guacamole: raw -> frames, encoded -> 516.
+            ("GUAC_ID", connection_id),
             ("GUAC_TYPE", "c"),
             ("GUAC_WIDTH", width),
             ("GUAC_HEIGHT", height),
@@ -1391,6 +1471,11 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
     except Exception as exc:
         logger.warning("WS tunnel error for rdp %s: %s", rdp_id, exc)
         try:
-            await websocket.close(code=1011)
+            await websocket.close(code=1011, reason="Cannot open remote desktop")
         except Exception:
             pass
+        return
+    try:
+        await websocket.close(code=1000)
+    except Exception:
+        pass

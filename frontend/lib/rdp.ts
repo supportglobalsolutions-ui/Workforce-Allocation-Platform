@@ -36,6 +36,17 @@ export interface EndConnectionResult {
   closed_session_ids: string[];
 }
 
+export interface RdpPreflight {
+  ok: boolean;
+  error: string | null;
+  guacamole_connection_id: string | null;
+  host?: string | null;
+  port?: number | null;
+}
+
+export const probeRdp = (rdpId: string) =>
+  api.get<RdpPreflight>(`/rdp/${rdpId}/preflight`);
+
 export const getMyActiveRdp = () => api.get<MyActiveRdp | null>('/rdp/my-active');
 
 export const claimRdp = (rdpId: string) =>

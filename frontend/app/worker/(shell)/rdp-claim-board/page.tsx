@@ -12,6 +12,7 @@ import {
   claimRdp,
   closeReservedTab,
   getMyActiveRdp,
+  probeRdp,
   reserveDesktopTab,
   sendTabToDesktop,
   type MyActiveRdp,
@@ -93,6 +94,19 @@ export default function RdpClaimBoard() {
       setInfo('Allow pop-ups for this site so the remote desktop can open in its own tab.');
     }
     try {
+      try {
+        const ready = await probeRdp(machineId);
+        if (!ready.ok) {
+          closeReservedTab(desktopTab);
+          setError(ready.error || 'This machine is not reachable right now.');
+          return;
+        }
+      } catch (probeErr) {
+        closeReservedTab(desktopTab);
+        const msg = probeErr instanceof Error ? probeErr.message : 'Could not test this machine.';
+        setError(msg);
+        return;
+      }
       const result = await claimRdp(machineId);
       if (result.resumed) {
         setInfo(`Resuming your existing session on this machine.`);
@@ -208,7 +222,7 @@ export default function RdpClaimBoard() {
                     disabled={claiming === m.id}
                     className="btn-primary w-full text-sm disabled:opacity-50"
                   >
-                    {claiming === m.id ? 'Claiming…' : m.status === 'assigned' ? 'Claim shift machine' : 'Claim'}
+                    {claiming === m.id ? 'Testing connection…' : m.status === 'assigned' ? 'Claim shift machine' : 'Claim'}
                   </button>
                 ) : m.status === 'assigned' || m.status === 'active' || m.status === 'idle' ? (
                   <p className="text-xs text-center text-theme-muted">In use or reserved</p>
