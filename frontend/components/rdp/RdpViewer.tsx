@@ -45,6 +45,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
     let resizeObserver: ResizeObserver | null = null;
     let resizeFrame: number | null = null;
     let resizeRemote: (() => void) | null = null;
+    let connectionTimer: ReturnType<typeof setTimeout> | null = null;
 
     (async () => {
       try {
@@ -77,12 +78,15 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         if (!idToken) throw new Error('Not signed in.');
 
         // Vercel rewrites normal HTTP requests, but it does not proxy long-lived
-        // WebSocket connections. Connect to the API origin directly in
-        // production; local development still falls back to the current origin.
-        const apiOrigin = process.env.NEXT_PUBLIC_API_URL || window.location.origin;
-        const apiUrl = new URL(apiOrigin);
-        const wsProtocol = apiUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-        const wsTunnelUrl = `${wsProtocol}//${apiUrl.host}/rdp/${rdpId}/ws-tunnel`;
+        // WebSocket connections. Development keeps its existing same-origin
+        // Next proxy; production connects directly to the API origin.
+        const isLocal = ['localhost', '127.0.0.1'].includes(window.location.hostname);
+        const wsTunnelUrl = isLocal
+          ? `${window.location.protocol === 'https:' ? 'wss' : 'ws'}://${window.location.host}/api/rdp/${rdpId}/ws-tunnel`
+          : (() => {
+              const apiUrl = new URL(process.env.NEXT_PUBLIC_API_URL || window.location.origin);
+              return `${apiUrl.protocol === 'https:' ? 'wss:' : 'ws:'}//${apiUrl.host}/rdp/${rdpId}/ws-tunnel`;
+            })();
 
         const tunnel = new Guacamole.WebSocketTunnel(wsTunnelUrl);
         client = new Guacamole.Client(tunnel);
@@ -98,6 +102,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           if (!mounted) return;
           // 3 = CONNECTED, 4 = DISCONNECTING, 5 = DISCONNECTED
           if (state === 3) {
+            if (connectionTimer) clearTimeout(connectionTimer);
             setStatus('connected');
             setError(null);
           } else if (state === 5) {
@@ -108,6 +113,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
 
         client.onerror = (err: { message?: string } | undefined) => {
           if (!mounted) return;
+          if (connectionTimer) clearTimeout(connectionTimer);
           setError(err?.message || 'Remote desktop connection failed.');
           setStatus('error');
         };
@@ -188,6 +194,12 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         connectData.append('GUAC_IMAGE', 'image/jpeg');
 
         client.connect(connectData.toString());
+        connectionTimer = setTimeout(() => {
+          if (!mounted) return;
+          setError('The remote desktop is taking too long to connect. Please close this tab and try again.');
+          setStatus('error');
+          try { client.disconnect(); } catch { /* ignore */ }
+        }, 20_000);
         // Fullscreen sizing may settle a frame or two after connect.
         requestAnimationFrame(resizeRemote);
         window.setTimeout(resizeRemote, 180);
@@ -201,6 +213,7 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
     return () => {
       mounted = false;
       resizeObserver?.disconnect();
+      if (connectionTimer) clearTimeout(connectionTimer);
       if (resizeFrame !== null) cancelAnimationFrame(resizeFrame);
       if (resizeRemote) {
         window.removeEventListener('resize', resizeRemote);
