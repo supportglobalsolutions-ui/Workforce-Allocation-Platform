@@ -85,11 +85,34 @@ export function isPrivilegedLoginRole(role: string | null | undefined): boolean 
   return role === 'admin' || role === 'super_admin';
 }
 
-/** Password sign-in only — does not set the app session cookie. */
+/**
+ * Turn a username OR an email into the address Supabase authenticates with.
+ * Anything containing '@' is treated as an email and passed straight through,
+ * so a lookup is only needed for usernames.
+ */
+export async function resolveLoginEmail(identifier: string): Promise<string> {
+  const value = identifier.trim();
+  if (value.includes('@')) return value.toLowerCase();
+  const { email } = await api.post<{ email: string }>('/auth/resolve-identifier', {
+    identifier: value,
+  });
+  return email;
+}
+
+export const apiCheckUsername = (username: string) =>
+  api.get<{ available: boolean; reason: string | null; username: string }>(
+    `/auth/username-available?username=${encodeURIComponent(username)}`,
+  );
+
+/**
+ * Password sign-in only — does not set the app session cookie.
+ * Accepts a username or an email as the identifier.
+ */
 export async function signInWithPassword(
-  email: string,
+  identifier: string,
   password: string,
 ): Promise<{ session: AuthSession; accessToken: string }> {
+  const email = await resolveLoginEmail(identifier);
   const { data, error } = await supabase.auth.signInWithPassword({ email, password });
   if (error || !data.user || !data.session) {
     throw error || new Error('Login failed');
@@ -249,19 +272,31 @@ export interface ManagedUser {
 export const apiListUsers = () =>
   api.get<ManagedUser[]>('/auth/users');
 
+/**
+ * Create an account. Pass an empty password with sendInvite to email the
+ * person a one-time link so they choose their own credential.
+ */
 export const apiCreateUser = (
   email: string,
   password: string,
   displayName: string,
   role: AuthRole,
   partnerEntityId?: string | null,
+  sendInvite = false,
+  username = '',
 ) => api.post<ManagedUser>('/auth/users', {
   email,
-  password,
   displayName,
+  username,
   role,
+  sendInvite,
+  ...(sendInvite ? {} : { password }),
   ...(partnerEntityId ? { partnerEntityId } : {}),
 });
+
+/** Re-send the set-your-password link; invite links are single-use. */
+export const apiResendInvite = (uid: string) =>
+  api.post<{ sent_to: string; sending: boolean }>(`/auth/users/${uid}/resend-invite`, {});
 
 export const apiUpdateUserRole = (
   uid: string,
@@ -308,6 +343,23 @@ export const apiBanUser = (uid: string) =>
 
 export const apiUnbanUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/unban`, {});
+
+export async function lookupAccountStatus(email: string): Promise<string | null> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 2000);
+  try {
+    const res = await fetch(`/api/auth/account-status?email=${encodeURIComponent(email)}`, {
+      signal: controller.signal,
+    });
+    if (!res.ok) return null;
+    const data = (await res.json()) as { status?: string };
+    return typeof data.status === 'string' ? data.status : null;
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 export const apiGetAccountStatus = (email: string) =>
   api.get<{ status: AccountStatus | 'unknown' }>(`/auth/account-status?email=${encodeURIComponent(email)}`);

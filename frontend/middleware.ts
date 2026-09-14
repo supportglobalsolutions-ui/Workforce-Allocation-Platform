@@ -1,17 +1,21 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-type Role = 'user' | 'partner' | 'admin' | 'super_admin';
+type Role = 'user' | 'partner' | 'admin' | 'executive' | 'super_admin';
 
+// Must mirror ROLE_ALLOWED_PORTALS in lib/auth/config.ts. This is the guard
+// that actually blocks a URL typed into the address bar.
 const PORTAL_ROLES: Record<string, Role[]> = {
-  '/worker': ['user', 'partner', 'admin', 'super_admin'],
+  '/worker': ['user', 'partner', 'super_admin'],
   '/admin': ['admin', 'super_admin'],
-  '/leadership': ['super_admin'],
+  // Executives live here and nowhere else.
+  '/leadership': ['executive', 'super_admin'],
 };
 
 const ROLE_LANDING: Record<Role, string> = {
   user: '/worker/dashboard',
   partner: '/worker/dashboard',
   admin: '/admin/dashboard',
+  executive: '/leadership/ceo-command',
   super_admin: '/leadership/ceo-command',
 };
 
@@ -21,7 +25,7 @@ const PORTAL_LANDING: Record<string, string> = {
   '/leadership': '/leadership/ceo-command',
 };
 
-const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'super_admin']);
+const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'executive', 'super_admin']);
 
 function cookieSecret(): string {
   return (

@@ -6,7 +6,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import STAFF_ROLES, require_admin, require_user
 from models.enums import ShiftStatusEnum
 from models.shift import Shift
 from schemas.shift import ShiftCreate, ShiftResponse, ShiftUpdate
@@ -18,7 +18,7 @@ router = APIRouter()
 
 def _scoped_stmt(current_user: dict, db: Session):
     stmt = select(Shift)
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         worker = get_worker_for_user(db, current_user)
         stmt = stmt.where(Shift.worker_id == worker.id)
     return stmt
@@ -59,7 +59,7 @@ def create_shift(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         worker = get_worker_for_user(db, current_user)
         if body.worker_id != worker.id:
             raise HTTPException(
@@ -82,7 +82,7 @@ def update_shift(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         shift = db.exec(select(Shift).where(Shift.id == shift_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
@@ -95,7 +95,7 @@ def update_shift(
 
     previous_status: ShiftStatusEnum = shift.status
 
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         restricted = {"status", "approved_by", "approved_at", "rejection_reason"}
         if restricted & body.model_dump(exclude_unset=True).keys():
             raise HTTPException(

@@ -4,6 +4,14 @@ export function getAuthErrorMessage(err: unknown): string {
 
   const lower = raw.toLowerCase();
   if (
+    lower.includes('cannot reach') ||
+    lower.includes('api server') ||
+    lower.includes('network') ||
+    lower.includes('failed to fetch')
+  ) {
+    return 'We’re having trouble connecting right now. Please wait a moment and try again.';
+  }
+  if (
     lower.includes('invalid login credentials') ||
     lower.includes('invalid credentials') ||
     lower.includes('wrong-password') ||
@@ -22,7 +30,7 @@ export function getAuthErrorMessage(err: unknown): string {
     return raw;
   }
   if (lower.includes('too many requests') || lower.includes('rate limit')) {
-    return 'Too many failed sign-in attempts (10). Try again in about 15 minutes.';
+    return 'Too many attempts. Please wait a little while before trying again.';
   }
   if (
     lower.includes('already registered') ||
@@ -36,5 +44,5 @@ export function getAuthErrorMessage(err: unknown): string {
     return 'Please confirm your email address.';
   }
 
-  return raw || 'Something went wrong. Please try again.';
+  return 'Something went wrong. Please try again.';
 }

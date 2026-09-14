@@ -30,6 +30,12 @@ class AdminUser(SQLModel, table=True):
     )
     auth_user_id: str = Field(sa_column=Column(String(128), unique=True, nullable=False))
     email: str = Field(sa_column=Column(String(255), unique=True, nullable=False))
+    # Account-level sign-in name. Every login profile has an admin_users row,
+    # so this covers workers, partners and staff alike. Nullable for accounts
+    # created before usernames existed; required by the API for new ones.
+    username: Optional[str] = Field(
+        default=None, sa_column=Column(String(64), unique=True, nullable=True, index=True)
+    )
     role: AdminRoleEnum = Field(sa_column=Column(AdminRoleType, nullable=False))
     display_name: str = Field(sa_column=Column(String(255), nullable=False))
     country_scope: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))

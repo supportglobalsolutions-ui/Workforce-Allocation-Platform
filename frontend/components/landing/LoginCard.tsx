@@ -212,18 +212,21 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
 
       <form onSubmit={handleSubmit} className="space-y-4">
         <div>
-          <label className={labelClass}>Email</label>
+          <label className={labelClass}>Username or email</label>
           <div className="relative">
             <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0df5c4]/70" />
+            {/* Either identifier works, so this cannot be type="email" — the
+                browser would reject a username before submit. */}
             <input
-              type="email"
+              type="text"
               required
               maxLength={254}
+              autoComplete="username"
               value={email}
               onChange={(e) => {
                 setEmail(e.target.value);
               }}
-              placeholder="you@globalsolutions.com"
+              placeholder="yourname or you@globalsolutions.com"
               className={inputClass}
             />
           </div>

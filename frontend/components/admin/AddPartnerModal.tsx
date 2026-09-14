@@ -15,6 +15,7 @@ type PartnerModalTab = 'create' | 'promote';
 
 const ROLE_BADGE: Record<AuthRole, string> = {
   super_admin: 'bg-gold-accent/20 text-gold-accent border border-gold-accent/30',
+  executive: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
   admin: 'bg-emerald-accent/20 text-emerald-accent border border-emerald-accent/30',
   partner: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
   user: 'bg-white/10 text-theme-muted border border-white/10',

@@ -10,7 +10,7 @@ from sqlalchemy import or_
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.redis import get_redis
 from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
@@ -80,7 +80,7 @@ def _session_response(session: WorkSession) -> SessionResponse:
 
 def _scoped_stmt(current_user: dict, db: Session):
     stmt = select(WorkSession)
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         worker = get_worker_for_user(db, current_user)
         stmt = stmt.where(WorkSession.worker_id == worker.id)
     return stmt
@@ -101,7 +101,7 @@ def list_sessions(
     stmt = _scoped_stmt(current_user, db)
     if session_type:
         stmt = stmt.where(WorkSession.session_type == session_type)
-    if worker_id and current_user.get("role") in {"admin", "super_admin"}:
+    if worker_id and current_user.get("role") in STAFF_ROLES:
         stmt = stmt.where(WorkSession.worker_id == worker_id)
     if started_before:
         stmt = stmt.where(WorkSession.start_time < started_before)
@@ -258,7 +258,7 @@ def create_session(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         worker = get_worker_for_user(db, current_user)
         if body.worker_id != worker.id:
             raise HTTPException(
@@ -285,7 +285,7 @@ def submit_session_evidence(
     current_user: dict = Depends(require_user),
 ):
     """Worker submits on-image start/end times; duration is computed from those times."""
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         session = db.exec(select(WorkSession).where(WorkSession.id == session_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
@@ -335,7 +335,7 @@ def update_session(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         session = db.exec(select(WorkSession).where(WorkSession.id == session_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)
@@ -349,7 +349,7 @@ def update_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         restricted = {"payroll_approval_state", "payroll_period_id", "admin_notes"}
         if restricted & body.model_dump(exclude_unset=True).keys():
             raise HTTPException(

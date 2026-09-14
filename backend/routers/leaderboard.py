@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlmodel import Session, col, select
 
 from core.database import get_db
-from core.permissions import require_user
+from core.permissions import STAFF_ROLES, require_user
 from models.payroll import PayrollPeriod
 from models.quality import QualityCompositeScore
 from models.worker import Worker
@@ -33,7 +33,7 @@ def get_leaderboard(
     named and every other row anonymised, so they can still see where they
     rank without learning colleagues' identities.
     """
-    is_admin = current_user.get("role") in {"admin", "super_admin"}
+    is_admin = current_user.get("role") in STAFF_ROLES
     viewer_worker_id: UUID | None = None
     if not is_admin:
         try:

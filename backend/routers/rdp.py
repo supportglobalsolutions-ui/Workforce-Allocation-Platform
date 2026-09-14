@@ -17,7 +17,7 @@ from core.config import settings
 from core.database import engine, get_db
 from core.supabase_auth import verify_supabase_token
 from core.guacamole import GuacamoleClient
-from core.permissions import require_admin, require_user
+from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.rate_limit import check_rate_limit
 from core.redis import get_redis
 from models.admin_users import AdminUser
@@ -139,7 +139,7 @@ def _rdp_response(
     `viewer` to apply that masking — omitting it returns the full record.
     """
     resp = RDPResourceResponse.model_validate(resource)
-    is_admin = viewer is None or viewer.get("role") in {"admin", "super_admin"}
+    is_admin = viewer is None or viewer.get("role") in STAFF_ROLES
 
     if resource.assigned_worker_id:
         if is_admin or (
@@ -562,7 +562,7 @@ def get_my_active_rdp(
 
 def _viewer_worker_id(db: Session, current_user: dict) -> UUID | None:
     """The caller's own worker id, when they have one. None for pure admins."""
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         return None
     try:
         return get_worker_for_user(db, current_user).id
@@ -647,7 +647,7 @@ async def proxy_guacamole_tunnel(
     Streams responses so remote-desktop frames arrive in real time.
     Auth: Supabase Bearer token (sent by the viewer as an extra tunnel header).
     """
-    is_admin = current_user.get("role") in {"admin", "super_admin"}
+    is_admin = current_user.get("role") in STAFF_ROLES
     if not is_admin:
         worker = get_worker_for_user(db, current_user)
         open_alloc = db.exec(
@@ -1052,7 +1052,7 @@ def end_rdp_connection(
         if not resource:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
-        is_admin = current_user.get("role") in {"admin", "super_admin"}
+        is_admin = current_user.get("role") in STAFF_ROLES
         admin_id = None
         if is_admin:
             admin_id = get_admin_user(db, current_user).id
@@ -1213,7 +1213,7 @@ def get_rdp_tunnel_info(
             Allocation.released_at.is_(None),
         )
     ).first()
-    is_admin = current_user.get("role") in {"admin", "super_admin"}
+    is_admin = current_user.get("role") in STAFF_ROLES
     if not open_alloc and not is_admin:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1280,7 +1280,7 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
             await websocket.close(code=4002, reason="Machine has no Guacamole connection configured")
             return
 
-        is_admin = role in {"admin", "super_admin"}
+        is_admin = role in STAFF_ROLES
 
         if not is_admin:
             admin_user = db.exec(

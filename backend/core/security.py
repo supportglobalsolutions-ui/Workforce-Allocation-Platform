@@ -8,7 +8,7 @@ from .supabase_auth import verify_supabase_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
 
-ROLES = {"user", "partner", "admin", "super_admin"}
+ROLES = {"user", "partner", "admin", "executive", "super_admin"}
 
 
 def get_current_user(

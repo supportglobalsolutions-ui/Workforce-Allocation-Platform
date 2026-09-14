@@ -8,7 +8,7 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.supabase_auth import ban_auth_user, unban_auth_user, get_auth_user
 from core.auth_errors import http_error_from_auth
-from core.permissions import require_admin, require_user
+from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.security import get_current_user
 from models.admin_users import AdminUser
 from models.enums import RdpStatusEnum, WorkerTypeEnum
@@ -242,7 +242,7 @@ def get_worker(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
     else:
         worker = get_worker_for_user(db, current_user)

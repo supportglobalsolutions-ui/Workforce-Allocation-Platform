@@ -32,7 +32,7 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-VALID_ROLES = {"user", "admin", "super_admin", "partner"}
+VALID_ROLES = {"user", "admin", "executive", "super_admin", "partner"}
 VALID_STATUSES = {"pending", "approved", "rejected", "banned"}
 SUPER_ADMIN_EMAIL = "peterkelvinkibiru1532@gmail.com"
 
@@ -347,6 +347,35 @@ def delete_auth_user(uid: str) -> None:
 def send_password_recovery_email(email: str, redirect_to: str) -> None:
     """Request a recovery email through GoTrue's public endpoint."""
     _public_auth_request("/recover", {"email": email, "redirect_to": redirect_to})
+
+
+def generate_action_link(
+    email: str,
+    *,
+    link_type: str = "recovery",
+    redirect_to: str,
+) -> str:
+    """
+    Mint a one-time Supabase action link without sending Supabase's own email.
+
+    Lets an invite go out through our Resend template instead: branded, logged
+    in email_log, and covered by the delivery-event poll, so a bounced invite
+    is visible rather than silently lost.
+
+    link_type: "invite" for a brand-new user, "recovery" for one that exists.
+    """
+    data = _admin_request(
+        "POST",
+        "/generate_link",
+        json={"type": link_type, "email": email, "redirect_to": redirect_to},
+    ) or {}
+    link = (
+        data.get("action_link")
+        or (data.get("properties") or {}).get("action_link")
+    )
+    if not link:
+        raise ValueError("Supabase did not return an action link")
+    return str(link)
 
 
 def update_auth_user_password(uid: str, password: str) -> None:

@@ -2,7 +2,8 @@ export const NAME_MAX = 40;
 export const PHONE_MAX_DIGITS = 15;
 export const RESIDENCE_MAX = 80;
 export const USERNAME_MAX = 32;
-export const PASSWORD_LENGTH = 8;
+export const PASSWORD_MIN = 8;
+export const PASSWORD_MAX = 10;
 export const EMAIL_MAX = 254;
 
 const NAME_RE = /^[^\W\d_](?:[^\W\d_]|[ '\-]){1,39}$/u;
@@ -93,14 +94,19 @@ export function validateUsername(value: string): string {
   return '';
 }
 
+export function passwordRuleErrors(value: string): string[] {
+  const broken: string[] = [];
+  if (value.length < PASSWORD_MIN || value.length > PASSWORD_MAX) {
+    broken.push('Use 8 to 10 characters.');
+  }
+  if (!/[A-Z]/.test(value)) broken.push('Include 1 capital letter.');
+  if (!/\d/.test(value)) broken.push('Include 1 number.');
+  if (!/[^A-Za-z0-9]/.test(value)) broken.push('Include 1 special character.');
+  return broken;
+}
+
 export function validatePassword(value: string): string {
-  if (value.length !== PASSWORD_LENGTH) {
-    return 'Password must be exactly 8 characters.';
-  }
-  if (!/[A-Za-z]/.test(value) || !/\d/.test(value)) {
-    return 'Password must include a letter and a number.';
-  }
-  return '';
+  return passwordRuleErrors(value).join(' ');
 }
 
 export function validateConfirmPassword(password: string, confirm: string): string {

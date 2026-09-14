@@ -659,6 +659,52 @@ def render_account_approved_html(*, name: str, login_url: str) -> str:
     )
 
 
+def render_account_invite_html(*, name: str, setup_url: str, role_label: str) -> str:
+    """Invite an admin-created account to choose their own password."""
+    safe_name = html.escape((name or "there").replace("\n", " ").strip()[:80] or "there")
+    safe_url = html.escape(setup_url, quote=True)
+    safe_role = html.escape((role_label or "team member").strip()[:60])
+    body = f"""
+        <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:{_HEADING};">Finish setting up your account</h2>
+        <p style="margin:0 0 18px; font-size:14px; line-height:1.6; color:{_TEXT};">
+          Hello {safe_name}, an administrator created a GlobalSolutions account for you
+          as <strong>{safe_role}</strong>. Choose your own password to activate it —
+          nobody else knows or sets it for you.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+          <tr>
+            <td bgcolor="{_EMERALD}" style="background-color:{_EMERALD}; border-radius:10px;">
+              <a href="{safe_url}" style="display:inline-block; padding:14px 28px; font-size:14px;
+                 font-weight:700; color:#01241c; text-decoration:none;">Set my password</a>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0 0 10px; font-size:13px; color:{_MUTED};">
+          Or open this link: <a href="{safe_url}" style="color:{_EMERALD};">{safe_url}</a>
+        </p>
+        <p style="margin:0; font-size:13px; color:{_MUTED};">
+          This link can only be used once. If it expires, ask an administrator to resend it.
+        </p>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Account",
+        heading="You have been invited",
+        body=body,
+        footer="If you were not expecting this invitation, you can ignore this email.",
+    )
+
+
+def render_account_invite_text(*, name: str, setup_url: str, role_label: str) -> str:
+    return (
+        f"Hello {name or 'there'},\n\n"
+        f"An administrator created a GlobalSolutions account for you as {role_label}.\n"
+        "Set your own password to activate it:\n"
+        f"{setup_url}\n\n"
+        "This link can only be used once.\n\n"
+        "— GlobalSolutions Workforce Platform"
+    )
+
+
 def render_account_approved_text(*, name: str, login_url: str) -> str:
     return (
         f"Hello {name or 'there'},\n\n"

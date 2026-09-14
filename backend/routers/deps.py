@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, SQLModel, select
 
 from core.database import get_db
+from core.permissions import STAFF_ROLES
 from core.security import get_current_user
 from models.admin_users import AdminUser
 from models.enums import (
@@ -98,7 +99,7 @@ def require_worker_or_admin(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ) -> Worker:
-    if current_user.get("role") in {"admin", "super_admin"}:
+    if current_user.get("role") in STAFF_ROLES:
         worker = db.exec(select(Worker).where(Worker.id == worker_id)).first()
         if not worker:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")

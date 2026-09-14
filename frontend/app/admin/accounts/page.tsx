@@ -21,7 +21,7 @@ import {
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 
-type AccountsTab = 'ops_lead' | 'executive' | 'partner' | 'pending';
+type AccountsTab = 'ops_lead' | 'executive' | 'super_admin' | 'partner' | 'pending';
 
 interface PartnerOption { id: string; name: string; }
 interface CountryOption { id: string; name: string; currency_code: string; is_active: boolean; }
@@ -34,6 +34,7 @@ interface ApproveBody {
 
 const ROLE_BADGE: Record<AuthRole, string> = {
   super_admin: 'bg-gold-accent/20 text-gold-accent border border-gold-accent/30',
+  executive: 'bg-purple-500/20 text-purple-300 border border-purple-500/30',
   admin: 'bg-emerald-accent/20 text-emerald-accent border border-emerald-accent/30',
   partner: 'bg-sky-500/20 text-sky-300 border border-sky-500/30',
   user: 'bg-white/10 text-theme-muted border border-white/10',
@@ -42,12 +43,17 @@ const ROLE_BADGE: Record<AuthRole, string> = {
 const ROLE_HINT: Record<AuthRole, string> = {
   user: 'Worker portal access — sessions, shifts, wallet.',
   partner: 'External partner person — same worker portal; listed under Partners on Accounts.',
-  admin: 'Admin portal — ops, payroll, machines, accounts.',
-  super_admin: 'Full executive access across leadership and admin.',
+  admin: 'Admin portal only — ops, payroll, machines, accounts.',
+  executive: 'Leadership portal only — dashboards and reporting. No admin or worker pages.',
+  super_admin: 'Every portal — leadership, admin and worker, switchable from the workspace menu.',
 };
 
 function RoleBadge({ role }: { role: AuthRole }) {
-  const Icon = role === 'partner' ? Briefcase : (role === 'super_admin' || role === 'admin') ? ShieldCheck : User;
+  const Icon = role === 'partner'
+    ? Briefcase
+    : (role === 'super_admin' || role === 'admin' || role === 'executive')
+      ? ShieldCheck
+      : User;
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider ${ROLE_BADGE[role]}`}>
       <Icon size={10} />
@@ -75,7 +81,9 @@ function PromoteAccountModal({
   onPromote: (uid: string, role: AuthRole) => void;
 }) {
   const roles = assignableRoles(actorRole);
-  const elevateRoles = roles.filter((r) => r === 'admin' || r === 'super_admin');
+  const elevateRoles = roles.filter(
+    (r) => r === 'admin' || r === 'executive' || r === 'super_admin',
+  );
   const canDemote = roles.includes('user');
   const [tab, setTab] = useState<PromoteModalTab>('promote');
   const [query, setQuery] = useState('');
@@ -94,9 +102,10 @@ function PromoteAccountModal({
   const promoted = useMemo(() => {
     return accounts.filter((u) => {
       if (u.status !== 'approved') return false;
-      if (u.role !== 'admin' && u.role !== 'super_admin') return false;
+      if (u.role !== 'admin' && u.role !== 'executive' && u.role !== 'super_admin') return false;
       if (actorUid && u.uid === actorUid) return false;
-      if (actorRole === 'admin' && u.role === 'super_admin') return false;
+      // An admin may not manage leadership accounts.
+      if (actorRole === 'admin' && (u.role === 'super_admin' || u.role === 'executive')) return false;
       return true;
     });
   }, [accounts, actorRole, actorUid]);
@@ -597,8 +606,12 @@ export default function AccountsPage() {
     email: '',
     password: '',
     displayName: '',
+    username: '',
     role: (createRoleOptions.includes('admin') ? 'admin' : createRoleOptions[0] ?? 'admin') as AuthRole,
     partnerEntityId: '',
+    // Default: the person sets their own password via an emailed link, so no
+    // admin ever knows someone else's credential.
+    sendInvite: true,
   });
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
@@ -626,7 +639,7 @@ export default function AccountsPage() {
   const executives = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allUsers
-      .filter((u) => u.role === 'super_admin' && u.status !== 'pending')
+      .filter((u) => u.role === 'executive' && u.status !== 'pending')
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
@@ -644,21 +657,31 @@ export default function AccountsPage() {
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
+  const superAdmins = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allUsers
+      .filter((u) => u.role === 'super_admin' && u.status !== 'pending')
+      .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
+  }, [allUsers, search]);
+
   const tabUsers =
     activeTab === 'ops_lead' ? opsLeads
       : activeTab === 'executive' ? executives
-        : activeTab === 'partner' ? partners
-          : pendingUsers;
+        : activeTab === 'super_admin' ? superAdmins
+          : activeTab === 'partner' ? partners
+            : pendingUsers;
 
   const TABS: { key: AccountsTab; label: string; count: number }[] = [
     { key: 'ops_lead', label: 'Operations Lead', count: opsLeads.length },
     { key: 'executive', label: 'Executive', count: executives.length },
+    { key: 'super_admin', label: 'Super Admin', count: superAdmins.length },
     { key: 'partner', label: 'Partners', count: partners.length },
     { key: 'pending', label: 'Pending Approval', count: pendingUsers.length },
   ];
 
   function defaultRoleForTab(tab: AccountsTab): AuthRole {
-    if (tab === 'executive' && createRoleOptions.includes('super_admin')) return 'super_admin';
+    if (tab === 'super_admin' && createRoleOptions.includes('super_admin')) return 'super_admin';
+    if (tab === 'executive' && createRoleOptions.includes('executive')) return 'executive';
     if (createRoleOptions.includes('admin')) return 'admin';
     return createRoleOptions[0] ?? 'admin';
   }
@@ -689,18 +712,28 @@ export default function AccountsPage() {
         form.password,
         form.displayName,
         role,
+        null,
+        form.sendInvite,
+        form.username.trim().toLowerCase(),
       );
-      setCreateSuccess(`${ROLE_DISPLAY[role]} account created for ${created.email}`);
+      setCreateSuccess(
+        form.sendInvite
+          ? `${ROLE_DISPLAY[role]} account created — setup link sent to ${created.email}`
+          : `${ROLE_DISPLAY[role]} account created for ${created.email}`,
+      );
       setForm({
         email: '',
         password: '',
         displayName: '',
+        username: '',
         role: defaultRoleForTab(activeTab),
         partnerEntityId: '',
+        sendInvite: true,
       });
       setShowCreate(false);
       if (role === 'admin') setActiveTab('ops_lead');
-      else if (role === 'super_admin') setActiveTab('executive');
+      else if (role === 'executive') setActiveTab('executive');
+      else if (role === 'super_admin') setActiveTab('super_admin');
       await loadUsers();
     } catch (err: unknown) {
       setCreateError(err instanceof Error ? err.message : 'Failed to create account.');
@@ -763,11 +796,16 @@ export default function AccountsPage() {
         setCreateSuccess(promoted
           ? `${promoted.displayName || promoted.email} promoted to Operations Lead.`
           : 'Promoted to Operations Lead.');
-      } else {
+      } else if (role === 'executive') {
         setActiveTab('executive');
         setCreateSuccess(promoted
           ? `${promoted.displayName || promoted.email} promoted to Executive.`
           : 'Promoted to Executive.');
+      } else {
+        setActiveTab('super_admin');
+        setCreateSuccess(promoted
+          ? `${promoted.displayName || promoted.email} promoted to Super Admin.`
+          : 'Promoted to Super Admin.');
       }
     } catch (err: unknown) {
       setActionError(err instanceof Error ? err.message : 'Failed to update role.');
@@ -778,7 +816,8 @@ export default function AccountsPage() {
     activeTab === 'pending' ? 'No pending approval requests.'
       : activeTab === 'ops_lead' ? 'No Operations Lead accounts found.'
         : activeTab === 'partner' ? 'No Partner accounts found.'
-          : 'No Executive accounts found.';
+          : activeTab === 'super_admin' ? 'No Super Admin accounts found.'
+            : 'No Executive accounts found.';
 
   return (
     <div>
@@ -878,9 +917,47 @@ export default function AccountsPage() {
               <input type="email" required value={form.email} onChange={(e) => setForm((f) => ({ ...f, email: e.target.value }))} placeholder="user@globalsolutions.com" className="input-field" />
             </div>
             <div>
-              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Password</label>
-              <input type="password" required minLength={8} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 8 characters" className="input-field" />
+              <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
+                Username <span className="text-emerald-accent normal-case tracking-normal">(required — they can sign in with this or their email)</span>
+              </label>
+              <input
+                type="text"
+                required
+                minLength={3}
+                maxLength={32}
+                value={form.username}
+                onChange={(e) => setForm((f) => ({ ...f, username: e.target.value.toLowerCase() }))}
+                placeholder="jane.doe"
+                className="input-field"
+              />
             </div>
+            <div className="rounded-xl border border-white/10 bg-white/5 p-3">
+              <label className="flex items-start gap-2.5 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={form.sendInvite}
+                  onChange={(e) => setForm((f) => ({ ...f, sendInvite: e.target.checked }))}
+                  className="mt-0.5 accent-emerald-500"
+                />
+                <span>
+                  <span className="block text-xs font-semibold text-white">
+                    Email a setup link
+                  </span>
+                  <span className="block text-[11px] text-theme-muted mt-0.5">
+                    They choose their own password. Recommended — you never see or set it.
+                  </span>
+                </span>
+              </label>
+            </div>
+            {!form.sendInvite && (
+              <div>
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Password</label>
+                <input type="password" required minLength={8} value={form.password} onChange={(e) => setForm((f) => ({ ...f, password: e.target.value }))} placeholder="Min 8 characters" className="input-field" />
+                <p className="text-[11px] text-theme-muted mt-1">
+                  You will need to share this with them securely, and they should change it.
+                </p>
+              </div>
+            )}
             <div>
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">
                 Role <span className="text-emerald-accent normal-case tracking-normal">(required — sets custom claims)</span>

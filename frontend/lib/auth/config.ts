@@ -1,6 +1,6 @@
 import { PortalRole } from '@/lib/navigation/config';
 
-export type AuthRole = 'user' | 'partner' | 'admin' | 'super_admin';
+export type AuthRole = 'user' | 'partner' | 'admin' | 'executive' | 'super_admin';
 
 export interface AuthSession {
   uid: string;
@@ -17,13 +17,22 @@ export const ROLE_TO_PORTAL: Record<AuthRole, PortalRole> = {
   user: 'worker',
   partner: 'worker',
   admin: 'admin',
+  executive: 'leadership',
   super_admin: 'leadership',
 };
 
+/**
+ * Which portals each role may open. A role with a single entry gets no
+ * workspace switcher — there is nowhere else to go.
+ *
+ * Only super_admin spans all three. An executive is confined to leadership;
+ * an admin to the admin portal.
+ */
 export const ROLE_ALLOWED_PORTALS: Record<AuthRole, PortalRole[]> = {
   user: ['worker'],
   partner: ['worker'],
-  admin: ['admin', 'worker'],
+  admin: ['admin'],
+  executive: ['leadership'],
   super_admin: ['leadership', 'admin', 'worker'],
 };
 
@@ -31,7 +40,8 @@ export const ROLE_DISPLAY: Record<AuthRole, string> = {
   user: 'Worker',
   partner: 'Partner',
   admin: 'Operations Lead',
-  super_admin: 'Executive',
+  executive: 'Executive',
+  super_admin: 'Super Admin',
 };
 
 export function canAccessPortal(session: AuthSession | null, portal: PortalRole): boolean {
@@ -48,7 +58,10 @@ export function portalFromPath(pathname: string): PortalRole | null {
 
 /** Returns which roles the actor is allowed to assign when creating/elevating accounts. */
 export function assignableRoles(actorRole: AuthRole): AuthRole[] {
-  if (actorRole === 'super_admin') return ['user', 'partner', 'admin', 'super_admin'];
+  // Only a super admin may hand out leadership access.
+  if (actorRole === 'super_admin') {
+    return ['user', 'partner', 'admin', 'executive', 'super_admin'];
+  }
   if (actorRole === 'admin') return ['user', 'partner', 'admin'];
   return [];
 }

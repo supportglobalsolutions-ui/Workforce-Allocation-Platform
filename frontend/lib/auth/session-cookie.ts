@@ -1,7 +1,7 @@
 import { createHmac, timingSafeEqual } from 'crypto';
 
-type Role = 'user' | 'partner' | 'admin' | 'super_admin';
-const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'super_admin']);
+type Role = 'user' | 'partner' | 'admin' | 'executive' | 'super_admin';
+const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'executive', 'super_admin']);
 
 function cookieSecret(): string {
   return (

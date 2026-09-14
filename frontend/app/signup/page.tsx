@@ -14,7 +14,7 @@ import { ROLE_LANDING } from '@/lib/navigation/config';
 import {
   EMAIL_MAX,
   NAME_MAX,
-  PASSWORD_LENGTH,
+  PASSWORD_MAX,
   RESIDENCE_MAX,
   USERNAME_MAX,
   filterName,
@@ -26,10 +26,10 @@ import {
   validateCountry,
   validateEmail,
   validateName,
-  validatePassword,
   validatePhone,
   validateResidence,
   validateUsername,
+  passwordRuleErrors,
   type SignupField,
 } from '@/lib/auth/signup-fields';
 
@@ -166,6 +166,7 @@ export default function SignupPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+    const passwordBroken = passwordRuleErrors(password);
     const nextErrors: Partial<Record<SignupField, string>> = {
       firstName: validateName(firstName, 'First name'),
       lastName: validateName(lastName, 'Last name'),
@@ -173,13 +174,14 @@ export default function SignupPage() {
       country: validateCountry(country, countries),
       residence: validateResidence(residence),
       username: validateUsername(username),
-      password: validatePassword(password),
+      password: passwordBroken.length ? passwordBroken[0] : '',
       confirmPassword: validateConfirmPassword(password, confirmPassword),
     };
     const messages = Object.values(nextErrors).filter(Boolean);
     setFieldErrors(nextErrors);
     if (messages.length) {
-      setError(messages[0] || 'Check the highlighted fields.');
+      const banner = [nextErrors.firstName, nextErrors.lastName, nextErrors.phone, nextErrors.country, nextErrors.residence, nextErrors.username, nextErrors.confirmPassword].find(Boolean);
+      setError(banner || '');
       return;
     }
     setError('');
@@ -443,15 +445,14 @@ export default function SignupPage() {
                   <input
                     type={showPassword ? 'text' : 'password'}
                     required
-                    minLength={PASSWORD_LENGTH}
-                    maxLength={PASSWORD_LENGTH}
+                    maxLength={PASSWORD_MAX}
                     value={password}
                     onChange={(e) => {
-                      setPassword(e.target.value.slice(0, PASSWORD_LENGTH));
+                      setPassword(e.target.value.slice(0, PASSWORD_MAX));
                       clearField('password');
                       clearField('confirmPassword');
                     }}
-                    placeholder="Exactly 8 characters"
+                    placeholder="Password"
                     className={fieldInput('password', 'pr-10')}
                     autoComplete="new-password"
                   />
@@ -464,7 +465,13 @@ export default function SignupPage() {
                     {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
                   </button>
                 </div>
-                {fieldErrors.password && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.password}</p>}
+                {(password.length > 0 || fieldErrors.password) && passwordRuleErrors(password).length > 0 && (
+                  <ul className="mt-1 space-y-0.5 text-[11px] text-red-400">
+                    {passwordRuleErrors(password).map((rule) => (
+                      <li key={rule}>{rule}</li>
+                    ))}
+                  </ul>
+                )}
               </div>
               <div>
                 <label className={labelClass}>Confirm password</label>
@@ -473,11 +480,10 @@ export default function SignupPage() {
                   <input
                     type={showConfirmPassword ? 'text' : 'password'}
                     required
-                    minLength={PASSWORD_LENGTH}
-                    maxLength={PASSWORD_LENGTH}
+                    maxLength={PASSWORD_MAX}
                     value={confirmPassword}
                     onChange={(e) => {
-                      setConfirmPassword(e.target.value.slice(0, PASSWORD_LENGTH));
+                      setConfirmPassword(e.target.value.slice(0, PASSWORD_MAX));
                       clearField('confirmPassword');
                     }}
                     placeholder="Re-enter password"
@@ -504,7 +510,7 @@ export default function SignupPage() {
             )}
             <button
               type="submit"
-              disabled={loading}
+              disabled={loading || (password.length > 0 && passwordRuleErrors(password).length > 0)}
               className="w-full mt-2 flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-[0.99] transition-all disabled:opacity-60"
             >
               {loading ? (

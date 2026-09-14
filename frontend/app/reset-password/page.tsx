@@ -38,7 +38,9 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      await api.post('/auth/password-recovery', { email: email.trim() });
+      // Accepts a username or an email; the server resolves it and sends
+      // nothing at all when no account matches.
+      await api.post('/auth/password-recovery', { identifier: email.trim() });
       setStage('sent');
     } catch (err) {
       const message = err instanceof Error ? err.message : '';
@@ -119,10 +121,12 @@ export default function ResetPasswordPage() {
         {stage === 'request' && (
           <form onSubmit={requestRecovery} className="space-y-4">
             <div>
-              <label className={labelClass}>Email</label>
+              <label className={labelClass}>Username or email</label>
               <div className="relative">
                 <Mail size={16} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#0df5c4]/70" />
-                <input type="email" required maxLength={254} value={email} onChange={(event) => setEmail(event.target.value)} placeholder="you@globalsolutions.com" className={inputClass} />
+                {/* type="text" so a username is accepted — type="email" would
+                    fail browser validation before the request is even sent. */}
+                <input type="text" required maxLength={254} autoComplete="username" value={email} onChange={(event) => setEmail(event.target.value)} placeholder="yourname or you@globalsolutions.com" className={inputClass} />
               </div>
             </div>
             <button type="submit" disabled={loading} className="w-full mt-2 flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-[0.99] transition-all disabled:opacity-60">

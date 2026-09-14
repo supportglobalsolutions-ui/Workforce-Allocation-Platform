@@ -7,7 +7,8 @@ import {
   signInWithPassword,
   signOut,
   subscribeAuthState,
-  apiGetAccountStatus,
+  lookupAccountStatus,
+  resolveLoginEmail,
   requestLoginOtp,
   verifyLoginOtp,
   completeLoginSession,
@@ -53,6 +54,46 @@ interface AuthContextValue {
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
+const PENDING_APPROVAL =
+  'Your account is pending admin approval. You can sign in after an administrator approves it.';
+const BANNED_ACCOUNT =
+  'Your account has been banned due to violating system rules. Contact an administrator for assistance.';
+const REJECTED_ACCOUNT = 'Your account request was rejected. Contact an administrator.';
+
+function messageForAccountStatus(status: string | null): string | null {
+  if (status === 'pending') return PENDING_APPROVAL;
+  if (status === 'banned') return BANNED_ACCOUNT;
+  if (status === 'rejected') return REJECTED_ACCOUNT;
+  return null;
+}
+
+function isBlockedSignIn(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  const message = err.message.toLowerCase();
+  return (
+    message.includes('user-disabled') ||
+    message.includes('disabled') ||
+    message.includes('banned') ||
+    message.includes('awaiting')
+  );
+}
+
+function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error('sign-in-timeout')), ms);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (err: unknown) => {
+        clearTimeout(timer);
+        reject(err);
+      },
+    );
+  });
+}
+
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const [session, setSession] = useState<AuthSession | null>(null);
@@ -90,8 +131,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = useCallback(
     async (email: string, password: string): Promise<LoginResult> => {
       try {
+        const identifier = email.trim();
+        let lookupEmail = identifier.includes('@') ? identifier.toLowerCase() : null;
+        if (!lookupEmail) {
+          try {
+            lookupEmail = await withTimeout(resolveLoginEmail(identifier), 2000);
+          } catch {
+            lookupEmail = null;
+          }
+        }
+        if (lookupEmail) {
+          const blocked = messageForAccountStatus(await lookupAccountStatus(lookupEmail));
+          if (blocked) return { ok: false, error: blocked };
+        }
+
         otpPendingRef.current = true;
-        const { session: provisional, accessToken } = await signInWithPassword(email, password);
+        const { session: provisional, accessToken } = await withTimeout(
+          signInWithPassword(email, password),
+          8000,
+        );
         pendingAccessTokenRef.current = accessToken;
 
         if (isPrivilegedLoginRole(provisional.authRole)) {
@@ -120,49 +178,25 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         otpPendingRef.current = false;
         pendingAccessTokenRef.current = null;
         setPendingLoginOtp(null);
+
+        if (err instanceof Error && err.message === 'sign-in-timeout') {
+          void signOut();
+          return {
+            ok: false,
+            error: 'Sign-in is taking too long. If this account is still pending approval, you can sign in after an administrator approves it.',
+          };
+        }
+        if (isBlockedSignIn(err)) {
+          void signOut();
+          return { ok: false, error: PENDING_APPROVAL };
+        }
+
         try {
           await registerLoginFailure(email);
         } catch (rateErr: unknown) {
           return { ok: false, error: getAuthErrorMessage(rateErr) };
         }
-        try {
-          await signOut();
-        } catch {
-          /* ignore */
-        }
-
-        const isDisabled =
-          err instanceof Error &&
-          (err.message.includes('user-disabled') ||
-            err.message.includes('disabled') ||
-            err.message.includes('banned') ||
-            err.message.includes('awaiting'));
-
-        if (isDisabled) {
-          try {
-            const { status } = await apiGetAccountStatus(email);
-            if (status === 'banned') {
-              return {
-                ok: false,
-                error:
-                  'Your account has been banned due to violating system rules. Contact an administrator for assistance.',
-              };
-            }
-            if (status === 'pending') {
-              return { ok: false, error: 'Your account is pending admin approval. You can sign in after an administrator approves it.' };
-            }
-            if (status === 'rejected') {
-              return {
-                ok: false,
-                error: 'Your account request was rejected. Contact an administrator.',
-              };
-            }
-          } catch {
-            /* fall through */
-          }
-          return { ok: false, error: 'Your account is pending admin approval. You can sign in after an administrator approves it.' };
-        }
-
+        void signOut();
         return { ok: false, error: getAuthErrorMessage(err) };
       }
     },

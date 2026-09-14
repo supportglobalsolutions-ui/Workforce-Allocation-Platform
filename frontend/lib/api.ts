@@ -6,6 +6,7 @@
 import { supabase } from '@/lib/supabase';
 
 const BASE = '/api';
+const SERVICE_UNAVAILABLE_MESSAGE = 'We’re having trouble connecting right now. Please wait a moment and try again.';
 
 async function getToken(forceRefresh = false): Promise<string | null> {
   if (forceRefresh) {
@@ -29,20 +30,26 @@ async function parseErrorMessage(res: Response): Promise<string> {
   if (trimmed && !proxyFailure) {
     try {
       const json = JSON.parse(text) as { detail?: string | { msg: string }[] };
-      if (typeof json.detail === 'string') return json.detail;
-      if (Array.isArray(json.detail)) {
-        return json.detail.map((d) => d.msg).join(', ');
+      // Backend messages are not shown verbatim unless they are deliberate,
+      // user-actionable messages. This keeps internal implementation details
+      // out of the interface.
+      if (typeof json.detail === 'string' && /^(Too many requests|Select |Password |Invalid worker type|Your recovery session)/i.test(json.detail)) {
+        return json.detail;
       }
-    } catch {
-      if (text.length < 300) return text;
-    }
+      if (Array.isArray(json.detail)) {
+        return 'Please check the information you entered and try again.';
+      }
+    } catch { /* use the safe status message below */ }
   }
 
   if (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504 || proxyFailure) {
-    return 'Cannot reach the API server. If it is restarting, wait a moment and retry. Start it with: cd backend && python -m uvicorn main:app --reload --port 8000';
+    return SERVICE_UNAVAILABLE_MESSAGE;
   }
-
-  return `Request failed (${res.status})`;
+  if (res.status === 401) return 'Your session has expired. Please sign in again.';
+  if (res.status === 403) return 'You do not have permission to do that.';
+  if (res.status === 404) return 'We could not find what you requested.';
+  if (res.status === 422) return 'Please check the information you entered and try again.';
+  return 'We could not complete that request. Please try again.';
 }
 
 function isRetryable(status: number): boolean {
@@ -70,9 +77,7 @@ async function request<T>(
     try {
       return await fetchWith(forceRefresh);
     } catch {
-      throw new Error(
-        'Cannot reach the API server. Start the backend: cd backend && python -m uvicorn main:app --reload --port 8000',
-      );
+      throw new Error(SERVICE_UNAVAILABLE_MESSAGE);
     }
   };
 

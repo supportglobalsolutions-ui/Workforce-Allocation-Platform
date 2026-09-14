@@ -8,7 +8,7 @@ import time
 
 from core.config import settings
 
-VALID_ROLES = frozenset({"user", "partner", "admin", "super_admin"})
+VALID_ROLES = frozenset({"user", "partner", "admin", "executive", "super_admin"})
 DEFAULT_TTL_SECONDS = 86_400
 
 

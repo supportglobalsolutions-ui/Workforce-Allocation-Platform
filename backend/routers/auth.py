@@ -43,6 +43,13 @@ from models.partner import PartnerEntity
 from models.worker import Worker
 from .deps import get_admin_user
 from core.security import get_current_user
+from services.account_invite import deliver_account_invite, generate_placeholder_password
+from services.usernames import (
+    UsernameError,
+    assert_username_available,
+    email_for_identifier,
+    normalize_username,
+)
 from services.login_otp import (
     OTP_RESEND_LIMIT,
     OTP_RESEND_WINDOW_SECONDS,
@@ -70,10 +77,17 @@ router = APIRouter()
 
 class CreateUserRequest(BaseModel):
     email: EmailStr
-    password: str = Field(min_length=8, max_length=128)
+    # Omit when sendInvite is true — the invitee sets their own password.
+    password: Optional[str] = Field(default=None, min_length=8, max_length=128)
     displayName: str = Field(min_length=1, max_length=120)
-    role: str  # "user" | "partner" | "admin" | "super_admin"
+    username: str = Field(min_length=3, max_length=32)
+    role: str  # "user" | "partner" | "admin" | "executive" | "super_admin"
     partnerEntityId: Optional[UUID] = None
+    sendInvite: bool = False
+
+
+class ResolveIdentifierRequest(BaseModel):
+    identifier: str = Field(min_length=1, max_length=255)
 
 
 class UpdateRoleRequest(BaseModel):
@@ -90,13 +104,13 @@ _PHONE_RE = re.compile(r"^\+?[0-9]{8,15}$")
 
 class RegisterRequest(BaseModel):
     email: EmailStr = Field(max_length=254)
-    password: str = Field(min_length=8, max_length=8)
+    password: str = Field(min_length=8, max_length=10)
     firstName: str = Field(min_length=2, max_length=40)
     lastName: str = Field(min_length=2, max_length=40)
     phone: str = Field(min_length=8, max_length=16)
     country: str = Field(min_length=2, max_length=56)
     residence: str = Field(min_length=2, max_length=80)
-    username: Optional[str] = Field(default=None, max_length=32)
+    username: str = Field(min_length=3, max_length=32)
     verificationToken: str = Field(min_length=20, max_length=256)
 
     @field_validator("firstName", "lastName", mode="before")
@@ -133,12 +147,10 @@ class RegisterRequest(BaseModel):
 
     @field_validator("username", mode="before")
     @classmethod
-    def clean_username(cls, value: object) -> Optional[str]:
-        if value is None:
-            return None
-        text = str(value).strip()
+    def clean_username(cls, value: object) -> str:
+        text = str(value or "").strip()
         if not text:
-            return None
+            raise ValueError("Username is required.")
         if not _USERNAME_RE.match(text):
             raise ValueError(
                 "Username must be 3–32 characters, start with a letter, and use only letters, numbers, and underscores."
@@ -148,8 +160,17 @@ class RegisterRequest(BaseModel):
     @field_validator("password")
     @classmethod
     def clean_password(cls, value: str) -> str:
-        if not re.search(r"[A-Za-z]", value) or not re.search(r"\d", value):
-            raise ValueError("Password must be exactly 8 characters and include a letter and a number.")
+        broken: list[str] = []
+        if not 8 <= len(value) <= 10:
+            broken.append("use 8 to 10 characters")
+        if not re.search(r"[A-Z]", value):
+            broken.append("include 1 capital letter")
+        if not re.search(r"\d", value):
+            broken.append("include 1 number")
+        if not re.search(r"[^A-Za-z0-9]", value):
+            broken.append("include 1 special character")
+        if broken:
+            raise ValueError("Password must " + ", ".join(broken) + ".")
         return value
 
 
@@ -188,7 +209,9 @@ class LoginAttemptRequest(BaseModel):
 
 
 class PasswordRecoveryRequest(BaseModel):
-    email: EmailStr
+    # Either a username or an email — whichever the person remembers.
+    identifier: Optional[str] = Field(default=None, min_length=1, max_length=255)
+    email: Optional[EmailStr] = None
 
 
 class PasswordResetRequest(BaseModel):
@@ -224,6 +247,41 @@ def _ensure_partner_entity_id(
     db.commit()
     db.refresh(entity)
     return str(entity.id)
+
+
+def _store_account_username(
+    db: Session,
+    *,
+    uid: str,
+    email: str,
+    display_name: str,
+    username: str,
+) -> None:
+    """
+    Persist the sign-in username on the account row, creating the row when the
+    account has no local profile yet (staff accounts get one lazily).
+    """
+    if not uid or not username:
+        return
+    row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    if not row:
+        row = AdminUser(
+            auth_user_id=uid,
+            email=email or f"{uid}@unknown.local",
+            role=AdminRoleEnum.technical_admin,
+            display_name=display_name or (email or "").split("@")[0] or "Account",
+            status=AccountStatusEnum.active,
+        )
+        db.add(row)
+    row.username = username
+    db.add(row)
+
+    # Keep the worker profile's username in step so either table resolves.
+    worker = db.exec(select(Worker).where(Worker.admin_user_id == row.id)).first()
+    if worker is not None:
+        worker.username = username
+        db.add(worker)
+    db.commit()
 
 
 def _ensure_login_profile(
@@ -304,7 +362,11 @@ def _queue_otp_email(background_tasks: BackgroundTasks, payload: dict, *, signup
     return payload
 
 @router.post("/register", status_code=status.HTTP_201_CREATED)
-def register_user(body: RegisterRequest, request: Request):
+def register_user(
+    body: RegisterRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
     """
     Public self-registration. Requires a code sent to the email first.
     Creates a banned Supabase user pending admin approval.
@@ -312,14 +374,19 @@ def register_user(body: RegisterRequest, request: Request):
     email = body.email.strip().lower()
     first = body.firstName.strip()
     last = body.lastName.strip()
-    username = (body.username or "").strip().lower()
+    try:
+        username = assert_username_available(db, body.username or "")
+    except UsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
     check_rate_limit(request, scope="auth-register", limit=5, window_seconds=3600, key_suffix=email)
     check_rate_limit(request, scope="auth-register-ip", limit=20, window_seconds=3600)
     assert_signup_proof(email, body.verificationToken)
-    if len(body.password) != 8:
+    if not 8 <= len(body.password) <= 10:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Password must be exactly 8 characters.",
+            detail="Password must be 8 to 10 characters.",
         )
     try:
         user = register_pending_user(
@@ -337,6 +404,13 @@ def register_user(body: RegisterRequest, request: Request):
         raise http_error_from_auth(exc) from exc
 
     consume_signup_proof(email, body.verificationToken)
+    _store_account_username(
+        db,
+        uid=user.get("id", ""),
+        email=user.get("email") or email,
+        display_name=f"{first} {last}".strip(),
+        username=username,
+    )
     return user_to_dict(user)
 
 
@@ -477,6 +551,7 @@ def list_users(
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 def create_user(
     body: CreateUserRequest,
+    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
@@ -484,6 +559,10 @@ def create_user(
     Create a new Supabase user with a role in app_metadata.
     - admin       : can create worker, partner, or operations lead
     - super_admin : can create any role including executive
+
+    With sendInvite the admin sets no password: the account is created with an
+    unguessable placeholder and the invitee receives a one-time link to choose
+    their own credential.
     """
     actor_role = current_user["role"]
     allowed = ROLE_CAN_ASSIGN.get(actor_role, set())
@@ -493,6 +572,20 @@ def create_user(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Your role '{actor_role}' cannot create accounts with role '{body.role}'.",
         )
+
+    if not body.sendInvite and not body.password:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Provide a password, or enable sendInvite to email a setup link.",
+        )
+    password = body.password or generate_placeholder_password()
+
+    try:
+        username = assert_username_available(db, body.username)
+    except UsernameError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail=str(exc)
+        ) from exc
 
     partner_entity_id = _validate_optional_partner_entity(db, body.role, body.partnerEntityId)
     if body.role == "partner":
@@ -505,13 +598,30 @@ def create_user(
     try:
         user = create_auth_user(
             email=body.email,
-            password=body.password,
+            password=password,
             display_name=body.displayName,
             role=body.role,
             partner_entity_id=partner_entity_id,
         )
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
+
+    _store_account_username(
+        db,
+        uid=user.get("id", ""),
+        email=user.get("email") or str(body.email),
+        display_name=body.displayName,
+        username=username,
+    )
+
+    if body.sendInvite:
+        # Queued so a slow mail hop never blocks account creation.
+        background_tasks.add_task(
+            deliver_account_invite,
+            to_email=user.get("email") or str(body.email),
+            display_name=body.displayName,
+            role=body.role,
+        )
 
     if body.role in {"user", "partner"}:
         _ensure_login_profile(
@@ -524,6 +634,55 @@ def create_user(
         )
 
     return user_to_dict(user)
+
+
+@router.post("/users/{uid}/resend-invite")
+def resend_account_invite(
+    uid: str,
+    background_tasks: BackgroundTasks,
+    request: Request,
+    current_user: dict = Depends(require_admin),
+):
+    """
+    Send a fresh set-your-password link. Invite links are single-use and
+    expire, so this is the supported way to recover a lost invitation.
+    """
+    check_rate_limit(
+        request, scope="auth-resend-invite", limit=10, window_seconds=3600, key_suffix=uid
+    )
+    try:
+        target = get_auth_user(uid)
+    except Exception as exc:
+        raise http_error_from_auth(exc) from exc
+    if not target:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Account not found")
+
+    email = target.get("email")
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Account has no email address",
+        )
+
+    actor_role = current_user["role"]
+    target_role = (target.get("app_metadata") or {}).get("role", "user")
+    if actor_role == "admin" and target_role in {"executive", "super_admin"}:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admins cannot send invites for leadership accounts.",
+        )
+
+    display_name = (
+        (target.get("user_metadata") or {}).get("full_name")
+        or email.split("@")[0]
+    )
+    background_tasks.add_task(
+        deliver_account_invite,
+        to_email=email,
+        display_name=display_name,
+        role=target_role,
+    )
+    return {"sent_to": email, "sending": True}
 
 
 @router.patch("/users/{uid}/approve")
@@ -709,6 +868,53 @@ def update_user_role(
     return user_to_dict(get_auth_user(uid))
 
 
+@router.post("/resolve-identifier")
+def resolve_identifier(
+    body: ResolveIdentifierRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """
+    Map a username OR email to the address Supabase authenticates against, so
+    someone who remembers only one of the two can still sign in.
+
+    Rate-limited, and deliberately vague on failure: a precise "no such user"
+    would turn this into a username-enumeration oracle.
+    """
+    check_rate_limit(request, scope="auth-resolve-ip", limit=30, window_seconds=300)
+    identifier = body.identifier.strip()
+    check_rate_limit(
+        request,
+        scope="auth-resolve-id",
+        limit=10,
+        window_seconds=300,
+        key_suffix=identifier.lower()[:120],
+    )
+
+    email = email_for_identifier(db, identifier)
+    if not email:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No account matches that username or email.",
+        )
+    return {"email": email}
+
+
+@router.get("/username-available")
+def username_available(
+    username: str,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    """Live availability check for signup and account-creation forms."""
+    check_rate_limit(request, scope="auth-username-check", limit=40, window_seconds=300)
+    try:
+        assert_username_available(db, username)
+    except UsernameError as exc:
+        return {"available": False, "reason": str(exc), "username": normalize_username(username)}
+    return {"available": True, "reason": None, "username": normalize_username(username)}
+
+
 @router.get("/account-status")
 def get_account_status(email: str, request: Request):
     """
@@ -750,7 +956,7 @@ def create_session_token(
         ) from exc
 
     role = decoded.get("role", "user")
-    if role not in {"user", "partner", "admin", "super_admin"}:
+    if role not in {"user", "partner", "admin", "executive", "super_admin"}:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied")
 
     uid = decoded["uid"]
@@ -801,17 +1007,43 @@ def password_recovery(
     body: PasswordRecoveryRequest,
     request: Request,
     background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
 ):
-    """Queue a recovery email (returns immediately). Max 3 per email/IP in 6 hours."""
-    email = body.email.strip().lower()
+    """
+    Queue a recovery email for a username or an email address.
+
+    The account is resolved first: nothing is sent when no account matches, so
+    we never fire codes at an address that does not exist (a bounce there gets
+    the sending domain suppressed and hurts real deliveries).
+    """
+    raw = (body.identifier or (str(body.email) if body.email else "")).strip()
+    if not raw:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Enter your username or email.",
+        )
     check_rate_limit(request, scope="password-recovery-ip", limit=3, window_seconds=6 * 3600)
     check_rate_limit(
         request,
         scope="password-recovery-email",
         limit=3,
         window_seconds=6 * 3600,
-        key_suffix=email,
+        key_suffix=raw.lower()[:120],
     )
+
+    generic = {"message": "If this account exists, a recovery link is on its way."}
+
+    email = email_for_identifier(db, raw)
+    if not email:
+        # No such account — send nothing, but stay vague so the response
+        # cannot be used to enumerate usernames.
+        return generic
+
+    try:
+        get_auth_user_by_email(email)
+    except Exception:
+        return generic
+
     redirect_to = f"{settings.APP_BASE_URL.rstrip('/')}/reset-password"
 
     def _send() -> None:
@@ -822,7 +1054,7 @@ def password_recovery(
             pass
 
     background_tasks.add_task(_send)
-    return {"message": "If this email has an account, a recovery link is on its way."}
+    return generic
 
 
 @router.post("/password-reset")

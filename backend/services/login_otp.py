@@ -33,12 +33,15 @@ from services.admin_otp import (
     hash_otp,
     mask_email,
 )
+from core.permissions import STAFF_ROLES
 from services.email_resend import render_login_otp_html, render_login_otp_text, send_email
 
 logger = logging.getLogger(__name__)
 
 PURPOSE_LOGIN = "login"
-PRIVILEGED_ROLES = frozenset({"admin", "super_admin"})
+# Executives hold org-wide visibility, so they get the same login MFA as
+# admins and super admins.
+PRIVILEGED_ROLES = frozenset(STAFF_ROLES)
 # How long a verified login MFA flag lasts (covers session cookie lifetime).
 MFA_OK_TTL_SECONDS = 60 * 60 * 12  # 12 hours
 OTP_RESEND_LIMIT = 5

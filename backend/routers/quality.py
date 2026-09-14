@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import STAFF_ROLES, require_admin, require_user
 from models.enums import WorkerStatusEnum
 from models.payroll import PayrollPeriod
 from models.quality import QualityCompositeScore, QualityIndicator, QualityIndicatorRating
@@ -91,7 +91,7 @@ def list_quality_ratings(
     current_user: dict = Depends(require_user),
 ):
     stmt = select(QualityIndicatorRating)
-    if current_user.get("role") not in {"admin", "super_admin"}:
+    if current_user.get("role") not in STAFF_ROLES:
         worker = get_worker_for_user(db, current_user)
         stmt = stmt.where(QualityIndicatorRating.worker_id == worker.id)
     elif worker_id:
