@@ -81,10 +81,18 @@ class GuacamoleClient:
     def get_tunnel_connect_info(self, connection_id: str) -> dict[str, str]:
         """Auth token + identifiers for guacamole-common-js tunnel connect data."""
         token, data_source = self._get_token()
+        # Guacamole's WebSocket endpoint expects the same encoded client
+        # identifier used in its normal browser URL, not the raw database
+        # connection ID. Passing the raw value results in a 516
+        # RESOURCE_NOT_FOUND / "Requested tunnel destination does not exist".
+        client_id = base64.b64encode(
+            f"{connection_id}\0c\0{data_source}".encode()
+        ).decode()
         return {
             "token": token,
             "data_source": data_source,
             "connection_id": str(connection_id),
+            "client_id": client_id,
         }
 
     def get_token(self) -> str:

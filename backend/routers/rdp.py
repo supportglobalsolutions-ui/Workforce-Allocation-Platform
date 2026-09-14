@@ -1314,6 +1314,7 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
         info = guac.get_tunnel_connect_info(connection_id)
         guac_token = info["token"]
         data_source = info["data_source"]
+        client_id = info["client_id"]
     except Exception as exc:
         logger.warning("Failed to get Guacamole token for rdp %s: %s", rdp_id, exc)
         await websocket.close(code=1011, reason="Cannot reach Guacamole server")
@@ -1326,7 +1327,7 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
         [
             ("token", guac_token),
             ("GUAC_DATA_SOURCE", data_source),
-            ("GUAC_ID", connection_id),
+            ("GUAC_ID", client_id),
             ("GUAC_TYPE", "c"),
             ("GUAC_WIDTH", width),
             ("GUAC_HEIGHT", height),
