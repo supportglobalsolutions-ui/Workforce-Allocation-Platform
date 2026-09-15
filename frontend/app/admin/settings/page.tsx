@@ -36,11 +36,13 @@ const TOOLS = [
 
 interface AlertSettings {
   alert_email: string;
+  alert_email_masked?: string;
   otp_recipient_masked: string | null;
   using_previous_email: boolean;
   configured_email_trusted_at: string | null;
   otp_ready: boolean;
   otp_blocked_reason: string | null;
+  can_edit_alert_email?: boolean;
 }
 
 function AlertEmailCard() {
@@ -88,6 +90,7 @@ function AlertEmailCard() {
   const trustedAt = data?.configured_email_trusted_at
     ? new Date(data.configured_email_trusted_at).toLocaleString()
     : null;
+  const canEdit = data?.can_edit_alert_email === true;
 
   return (
     <section className="glass-panel p-5">
@@ -98,13 +101,27 @@ function AlertEmailCard() {
         <div>
           <h2 className="text-sm font-bold text-theme-heading">Admin alert email</h2>
           <p className="text-xs text-theme-muted mt-1">
-            Receives confirmation codes for irreversible actions. After a change, the new address cannot receive those codes for 24 hours.
+            Receives confirmation codes for irreversible actions. Only a protected Super Admin can change this address.
+            After a change, the new address cannot receive those codes for 24 hours.
           </p>
         </div>
       </div>
 
       {loading ? (
         <div className="flex justify-center py-6"><SpinningDots size="sm" className="text-emerald-accent" /></div>
+      ) : error && !data ? (
+        <p className="text-xs text-danger flex items-start gap-1.5">
+          <AlertCircle size={12} className="shrink-0 mt-0.5" /> {error}
+        </p>
+      ) : !canEdit ? (
+        <div className="space-y-2">
+          <p className="text-sm text-theme-heading font-medium">
+            {data?.alert_email_masked || data?.alert_email || '—'}
+          </p>
+          <p className="text-xs text-theme-muted">
+            This inbox can only be changed by a protected Super Admin.
+          </p>
+        </div>
       ) : (
         <form onSubmit={save} className="space-y-3">
           {error && (

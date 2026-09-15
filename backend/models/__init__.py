@@ -16,6 +16,7 @@ from .partner      import PartnerEntity, PartnerArrangement, PartnerClientOverri
 from .worker       import Worker                                                              # noqa: F401
 from .client       import Client, ClientPeriodEarning, ClientRevenueAgreement                 # noqa: F401
 from .rdp_machine  import RDPResource                                                         # noqa: F401
+from .contact_message import ContactMessage                                                    # noqa: F401
 from .shift        import Shift                                                               # noqa: F401
 from .allocation   import Allocation                                                          # noqa: F401
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary                   # noqa: F401

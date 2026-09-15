@@ -89,21 +89,27 @@ def delete_login_account(
     *,
     actor_uid: str,
     actor_role: str,
+    bypass_protection: bool = False,
 ) -> dict:
-    """Delete the person so they can never sign in. Keep session history."""
-    try:
-        assert_can_mutate_account(
-            db,
-            actor_uid=actor_uid,
-            actor_role=actor_role,
-            target_uid=uid,
-            action="delete",
-        )
-    except AccountGuardError:
-        raise
+    """Delete the person so they can never sign in. Keep session history.
 
-    if uid == actor_uid:
-        raise ValueError("You cannot delete your own account.")
+    bypass_protection is for the founder-removal script only. The HTTP API
+    must never set it.
+    """
+    if not bypass_protection:
+        try:
+            assert_can_mutate_account(
+                db,
+                actor_uid=actor_uid,
+                actor_role=actor_role,
+                target_uid=uid,
+                action="delete",
+            )
+        except AccountGuardError:
+            raise
+
+        if uid == actor_uid:
+            raise ValueError("You cannot delete your own account.")
 
     try:
         target = get_auth_user(uid)

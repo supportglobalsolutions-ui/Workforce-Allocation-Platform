@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Download, Eye } from 'lucide-react';
+import { AlertTriangle, Download, Eye } from 'lucide-react';
 
 import DataTable from '@/components/platform/DataTable';
 import FilterBar from '@/components/platform/FilterBar';
@@ -295,8 +295,18 @@ export default function SessionHistoryPage() {
       </div>
 
       {incomplete.length > 0 && !selectedId && (
-        <div className="mb-4 p-3 rounded-xl border border-amber-500/30 bg-amber-500/10 text-amber-200 text-sm">
-          {incomplete.length} session{incomplete.length === 1 ? '' : 's'} still need a start image, end image, and both times.
+        /* Amber-on-amber was unreadable on the light theme. Red reads as the
+           action item it is, and the explicit text colour keeps contrast in
+           both themes rather than inheriting a washed-out tint. */
+        <div
+          role="alert"
+          className="mb-4 flex items-start gap-2.5 p-3 rounded-xl border border-red-500/40 bg-red-500/10 text-sm font-medium text-red-700 dark:text-red-300"
+        >
+          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+          <span>
+            {incomplete.length} session{incomplete.length === 1 ? '' : 's'} still need a start image,
+            end image, and both times.
+          </span>
         </div>
       )}
 

@@ -8,9 +8,11 @@ import LiveDateTime from './LiveDateTime';
 export default function AuthPageShell({
   children,
   header,
+  navVariant = 'login',
 }: {
   children: ReactNode;
   header?: ReactNode;
+  navVariant?: 'login' | 'contact';
 }) {
   return (
     <div className="force-dark-page relative min-h-screen w-full flex flex-col overflow-x-hidden bg-[#010c09] text-white selection:bg-[#0df5c4]/30 selection:text-white">
@@ -22,7 +24,7 @@ export default function AuthPageShell({
         <div className="absolute -top-32 left-1/2 -translate-x-1/2 w-[1100px] h-[550px] rounded-full bg-[radial-gradient(ellipse_at_center,rgba(13,245,196,0.12)_0%,transparent_70%)] blur-3xl" />
       </div>
 
-      <LandingNavbar variant="login" />
+      <LandingNavbar variant={navVariant} />
 
       <main className="relative z-10 flex-1 flex flex-col items-center justify-center px-4 sm:px-6 py-10 sm:py-14">
         {header}

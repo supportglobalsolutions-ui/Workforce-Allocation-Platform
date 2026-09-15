@@ -7,13 +7,13 @@ import {
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import AddPartnerModal from '@/components/admin/AddPartnerModal';
+import ConfirmAccountActionModal, { AccountCriticalAction } from '@/components/admin/ConfirmAccountActionModal';
 import { api } from '@/lib/api';
 import {
   ManagedUser,
   apiApproveUser,
   apiBanUser,
   apiCreateUser,
-  apiDeleteUser,
   apiListUsers,
   apiRejectUser,
   apiUnbanUser,
@@ -708,6 +708,13 @@ export default function AccountsPage() {
   const [selectedUser, setSelectedUser] = useState<ManagedUser | null>(null);
   const [showPromote, setShowPromote] = useState(false);
   const [showPartner, setShowPartner] = useState(false);
+  const [criticalAction, setCriticalAction] = useState<{
+    uid: string;
+    email: string;
+    displayName: string;
+    action: AccountCriticalAction;
+    nextRole?: AuthRole;
+  } | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
@@ -880,6 +887,16 @@ export default function AccountsPage() {
   }
 
   async function handleBan(uid: string) {
+    const target = allUsers.find((u) => u.uid === uid);
+    if (target?.role === 'super_admin') {
+      setCriticalAction({
+        uid,
+        email: target.email,
+        displayName: target.displayName || target.email,
+        action: 'ban',
+      });
+      return;
+    }
     setActingOn(uid); setActionError('');
     try { await apiBanUser(uid); await loadUsers(); setSelectedUser(null); }
     catch (err: unknown) { setActionError(err instanceof Error ? err.message : 'Failed to ban account.'); }
@@ -894,25 +911,31 @@ export default function AccountsPage() {
   }
 
   async function handleDelete(uid: string) {
-    const ok = window.confirm(
-      'Delete this account? They will not be able to sign in again. Work sessions stay on record. This cannot be undone.',
-    );
-    if (!ok) return;
-    setActingOn(uid); setActionError('');
-    try {
-      await apiDeleteUser(uid);
-      await loadUsers();
-      setSelectedUser(null);
-    } catch (err: unknown) {
-      setActionError(err instanceof Error ? err.message : 'Failed to delete account.');
-    } finally { setActingOn(null); }
+    const target = allUsers.find((u) => u.uid === uid) || selectedUser;
+    if (!target) return;
+    setCriticalAction({
+      uid,
+      email: target.email,
+      displayName: target.displayName || target.email,
+      action: 'delete',
+    });
   }
 
   async function handleRoleChange(uid: string, role: AuthRole, partnerEntityId?: string | null) {
+    const promoted = allUsers.find((u) => u.uid === uid);
+    if (promoted?.role === 'super_admin' && role !== 'super_admin') {
+      setCriticalAction({
+        uid,
+        email: promoted.email,
+        displayName: promoted.displayName || promoted.email,
+        action: 'demote',
+        nextRole: role,
+      });
+      return;
+    }
     setActingOn(uid); setActionError('');
     try {
       await apiUpdateUserRole(uid, role, partnerEntityId);
-      const promoted = allUsers.find((u) => u.uid === uid);
       await loadUsers();
       setSelectedUser(null);
       if (role === 'user') {
@@ -1281,6 +1304,29 @@ export default function AccountsPage() {
             setActiveTab('partner');
             setCreateSuccess('Partner account created.');
             await loadUsers();
+          }}
+        />
+      )}
+
+      {criticalAction && (
+        <ConfirmAccountActionModal
+          uid={criticalAction.uid}
+          email={criticalAction.email}
+          displayName={criticalAction.displayName}
+          action={criticalAction.action}
+          nextRole={criticalAction.nextRole}
+          onClose={() => setCriticalAction(null)}
+          onDone={async () => {
+            setCriticalAction(null);
+            setSelectedUser(null);
+            await loadUsers();
+            if (criticalAction.action === 'delete') {
+              setCreateSuccess('Account deleted. They can no longer sign in.');
+            } else if (criticalAction.action === 'ban') {
+              setCreateSuccess('Super Admin banned.');
+            } else {
+              setCreateSuccess('Super Admin demoted.');
+            }
           }}
         />
       )}

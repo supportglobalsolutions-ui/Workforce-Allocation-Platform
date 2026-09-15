@@ -20,6 +20,7 @@ if str(BACKEND) not in sys.path:
 from sqlmodel import Session, select  # noqa: E402
 
 from core.database import engine  # noqa: E402
+from core.config import settings  # noqa: E402
 from core.supabase_auth import (  # noqa: E402
     _admin_request,
     get_auth_user_by_email,
@@ -54,6 +55,7 @@ def main() -> None:
         auth_action = "created"
 
     set_user_claims(uid, role="super_admin", status="approved")
+    protected = email in settings.protected_super_admin_emails
 
     with Session(engine) as db:
         row = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
@@ -64,6 +66,7 @@ def main() -> None:
                 display_name=name,
                 role=AdminRoleEnum.ceo_leadership,
                 status=AccountStatusEnum.active,
+                is_protected=protected,
             )
             db.add(row)
             db.commit()
@@ -73,6 +76,8 @@ def main() -> None:
             row.display_name = name
             row.role = AdminRoleEnum.ceo_leadership
             row.status = AccountStatusEnum.active
+            if protected:
+                row.is_protected = True
             db.add(row)
             db.commit()
             database_action = "updated"

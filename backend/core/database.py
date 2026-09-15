@@ -1,8 +1,14 @@
+import logging
+import time
+
+from sqlalchemy import event
 from sqlalchemy.pool import NullPool
 from sqlmodel import create_engine, Session, SQLModel  # noqa: F401
 
 from .config import settings
 from .db_url import normalize_db_url
+
+logger = logging.getLogger(__name__)
 
 engine_options = {
     # Echoing every statement is expensive and drowns the logs. Opt in with
@@ -46,6 +52,38 @@ else:
 
 
 engine = create_engine(DATABASE_URL, **engine_options)
+
+
+# Retry the act of opening a connection.
+#
+# The database is remote, and a brief DNS or network blip on the client side
+# ("could not translate host name ... to address") otherwise surfaces as a 500
+# to the worker mid-session. pool_pre_ping only recycles connections that died
+# while idle — it does nothing when establishing a new one fails.
+#
+# Query errors are NOT retried here; only connection establishment.
+_CONNECT_ATTEMPTS = 3
+_CONNECT_BACKOFF_SECONDS = 0.5
+
+
+@event.listens_for(engine, "do_connect")
+def _connect_with_retry(dialect, conn_rec, cargs, cparams):
+    last_error: Exception | None = None
+    for attempt in range(1, _CONNECT_ATTEMPTS + 1):
+        try:
+            return dialect.dbapi.connect(*cargs, **cparams)
+        except Exception as exc:  # DNS failure, refused, transient timeout
+            last_error = exc
+            if attempt == _CONNECT_ATTEMPTS:
+                break
+            logger.warning(
+                "Database connect attempt %s/%s failed (%s); retrying in %.1fs",
+                attempt, _CONNECT_ATTEMPTS, type(exc).__name__,
+                _CONNECT_BACKOFF_SECONDS * attempt,
+            )
+            time.sleep(_CONNECT_BACKOFF_SECONDS * attempt)
+    logger.error("Database unreachable after %s attempts: %s", _CONNECT_ATTEMPTS, last_error)
+    raise last_error  # type: ignore[misc]
 
 
 def get_db():

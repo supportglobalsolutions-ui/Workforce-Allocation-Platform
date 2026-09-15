@@ -322,6 +322,16 @@ export const PAGES: PageEntry[] = [
     roles: ['Technical Admin', 'CEO'],
   },
   {
+    id: 'contact-inbox',
+    title: 'Enquiries Inbox',
+    href: '/admin/notifications/inbox',
+    portal: 'audit',
+    purpose: 'Messages sent from the public contact page by people who are not signed in.',
+    features: ['Unread enquiries', 'Reply by email', 'Archive', 'Filter by status'],
+    status: 'live',
+    roles: ['Admin', 'Super Admin'],
+  },
+  {
     id: 'notifications',
     title: 'Notification Center',
     href: '/admin/notifications',

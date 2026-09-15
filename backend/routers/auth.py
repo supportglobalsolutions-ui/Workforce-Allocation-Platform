@@ -1,7 +1,7 @@
 import re
 from datetime import date
 from typing import Optional
-from uuid import UUID
+from uuid import NAMESPACE_OID, UUID, uuid5
 
 from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Request, status
 from pydantic import BaseModel, EmailStr, Field, field_validator
@@ -53,6 +53,14 @@ from services.account_guard import (
     is_protected_email,
     stamp_account_lineage,
 )
+from services.admin_otp import (
+    PURPOSE_BAN_SUPER_ADMIN,
+    PURPOSE_DELETE_ACCOUNT,
+    PURPOSE_DEMOTE_SUPER_ADMIN,
+    issue_otp,
+    verify_otp,
+)
+from services.email_resend import render_otp_html, render_otp_text, send_account_approved_email
 from services.account_invite import deliver_account_invite, generate_placeholder_password
 from services.usernames import (
     UsernameError,
@@ -70,7 +78,6 @@ from services.login_otp import (
     login_otp_required,
     verify_login_otp,
 )
-from services.email_resend import send_account_approved_email
 from services.signup_otp import (
     OTP_RESEND_LIMIT as SIGNUP_OTP_RESEND_LIMIT,
     assert_signup_proof,
@@ -103,6 +110,36 @@ class ResolveIdentifierRequest(BaseModel):
 class UpdateRoleRequest(BaseModel):
     role: str
     partnerEntityId: Optional[UUID] = None
+
+
+class ConfirmAccountActionBody(BaseModel):
+    action: str  # delete | ban | demote
+    challenge_id: UUID
+    code: str
+    role: Optional[str] = None
+    partnerEntityId: Optional[UUID] = None
+
+
+class RequestAccountActionOtpBody(BaseModel):
+    action: str
+    role: Optional[str] = None
+
+
+def _auth_uid_uuid(uid: str) -> UUID:
+    try:
+        return UUID(uid)
+    except ValueError:
+        return uuid5(NAMESPACE_OID, f"auth-uid:{uid}")
+
+
+def _critical_purpose(action: str) -> str:
+    if action == "delete":
+        return PURPOSE_DELETE_ACCOUNT
+    if action == "ban":
+        return PURPOSE_BAN_SUPER_ADMIN
+    if action == "demote":
+        return PURPOSE_DEMOTE_SUPER_ADMIN
+    raise HTTPException(status_code=400, detail="Unknown confirmation action.")
 
 
 _NAME_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ '\-]){1,39}$", re.UNICODE)
@@ -919,35 +956,155 @@ def reject_user(
     return {"ok": True, "deleted": True}
 
 
-@router.delete("/users/{uid}")
-def delete_user(
+@router.post("/users/{uid}/critical/request-otp")
+def request_account_action_otp(
     uid: str,
+    body: RequestAccountActionOtpBody,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Remove the login account. Work sessions stay; live RDP is released."""
+    """Email a 3-minute code to the Settings alert inbox. Nothing is changed yet."""
+    action = (body.action or "").strip()
+    purpose = _critical_purpose(action)
+    mutate = "delete" if action == "delete" else "ban" if action == "ban" else "role"
+    try:
+        target = assert_can_mutate_account(
+            db,
+            actor_uid=current_user["uid"],
+            actor_role=current_user["role"],
+            target_uid=uid,
+            action=mutate,
+        )
+    except AccountGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+
+    target_role = (target.get("app_metadata") or {}).get("role", "user")
+    if action in {"ban", "demote"} and target_role != "super_admin":
+        raise HTTPException(
+            status_code=400,
+            detail="A confirmation code is only required to ban or demote a Super Admin.",
+        )
+    if action == "demote":
+        next_role = (body.role or "").strip()
+        if not next_role or next_role == "super_admin":
+            raise HTTPException(status_code=400, detail="Choose the role to demote this Super Admin to.")
+        if next_role not in ROLE_CAN_ASSIGN.get(current_user["role"], set()):
+            raise HTTPException(status_code=403, detail="You cannot assign that role.")
+
+    email = (target.get("email") or uid).strip()
+    titles = {
+        "delete": ("Confirm account deletion", f"delete the login for <strong>{email}</strong>"),
+        "ban": ("Confirm Super Admin ban", f"ban Super Admin <strong>{email}</strong>"),
+        "demote": ("Confirm Super Admin demotion", f"demote Super Admin <strong>{email}</strong>"),
+    }
+    title, intro_bit = titles[action]
+    admin = get_admin_user(db, current_user)
+    html = render_otp_html(
+        title=title,
+        intro=f"An administrator asked to {intro_bit}. Enter this code in the platform to continue.",
+        warning="Protected Super Admins cannot be removed this way. This cannot be undone.",
+    )
+    text = render_otp_text(
+        title=title,
+        intro=f"An administrator asked to {action} {email}.",
+        warning="This cannot be undone.",
+    )
+    payload = issue_otp(
+        db,
+        purpose=purpose,
+        target_id=_auth_uid_uuid(uid),
+        subject=f"Confirmation code — {action} {email}",
+        html=html,
+        text=text,
+        admin=admin,
+    )
+    payload["email"] = email
+    payload["action"] = action
+    return payload
+
+
+@router.post("/users/{uid}/critical/confirm")
+def confirm_account_action(
+    uid: str,
+    body: ConfirmAccountActionBody,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Consume a valid code and run the delete, ban, or Super Admin demotion."""
+    action = (body.action or "").strip()
+    purpose = _critical_purpose(action)
+    mutate = "delete" if action == "delete" else "ban" if action == "ban" else "role"
     try:
         assert_can_mutate_account(
             db,
             actor_uid=current_user["uid"],
             actor_role=current_user["role"],
             target_uid=uid,
-            action="delete",
-        )
-        return delete_login_account(
-            db,
-            uid,
-            actor_uid=current_user["uid"],
-            actor_role=current_user["role"],
+            action=mutate,
         )
     except AccountGuardError as exc:
         raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+
+    verify_otp(
+        db,
+        challenge_id=body.challenge_id,
+        purpose=purpose,
+        target_id=_auth_uid_uuid(uid),
+        code=body.code,
+    )
+
+    if action == "delete":
+        try:
+            return delete_login_account(
+                db,
+                uid,
+                actor_uid=current_user["uid"],
+                actor_role=current_user["role"],
+            )
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception as exc:
+            raise http_error_from_auth(exc) from exc
+
+    if action == "ban":
+        try:
+            user = ban_auth_user(uid)
+        except Exception as exc:
+            raise http_error_from_auth(exc) from exc
+        return user_to_dict(user)
+
+    next_role = (body.role or "").strip()
+    if next_role not in VALID_ROLES or next_role == "super_admin":
+        raise HTTPException(status_code=400, detail="Choose a non–Super Admin role.")
+    partner_entity_id = _validate_optional_partner_entity(db, next_role, body.partnerEntityId)
+    try:
+        set_user_role(uid, next_role, partner_entity_id=partner_entity_id)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
+    admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    if admin_row:
+        admin_row.role = _AUTH_TO_ORG_ROLE.get(next_role, AdminRoleEnum.technical_admin)
+        db.add(admin_row)
+        db.commit()
+    try:
+        return user_to_dict(get_auth_user(uid))
+    except Exception as exc:
+        raise http_error_from_auth(exc) from exc
+
+
+@router.delete("/users/{uid}")
+def delete_user(
+    uid: str,
+    current_user: dict = Depends(require_admin),
+):
+    """Account delete requires an emailed confirmation code. Use /critical/confirm."""
+    del uid, current_user
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="A confirmation code is required to delete an account. Request a code first.",
+    )
 
 
 @router.patch("/users/{uid}/role")
@@ -987,6 +1144,11 @@ def update_user_role(
         raise http_error_from_auth(exc) from exc
 
     target_role = (target.get("app_metadata") or {}).get("role", "user")
+    if target_role == "super_admin" and body.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A confirmation code is required to demote a Super Admin.",
+        )
     if actor_role == "admin" and target_role == "super_admin":
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
@@ -1346,6 +1508,12 @@ def ban_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admins cannot ban Super Admin accounts.",
+        )
+
+    if target_role == "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A confirmation code is required to ban a Super Admin.",
         )
 
     try:

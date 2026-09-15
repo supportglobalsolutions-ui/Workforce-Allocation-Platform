@@ -5,18 +5,31 @@ from sqlmodel import Session
 from core.database import get_db
 from core.permissions import require_admin
 from routers.deps import get_admin_user
+from services.account_guard import is_protected_account, is_protected_email
 from services.admin_otp import get_platform_settings, mask_email, otp_recipient, set_alert_email
 from services.audit_service import record_audit
 from services.email_resend import blocked_recipient_reason
 
 router = APIRouter()
 
+_ALERT_EMAIL_FORBIDDEN = (
+    "Only a protected Super Admin can change the alert email that receives confirmation codes."
+)
+
 
 class AlertEmailUpdate(BaseModel):
     alert_email: str
 
 
-def _settings_payload(row) -> dict:
+def _can_edit_alert_email(current_user: dict, admin) -> bool:
+    if is_protected_email(current_user.get("email")):
+        return True
+    if current_user.get("protected"):
+        return True
+    return is_protected_account(None, admin)
+
+
+def _settings_payload(row, *, can_edit: bool) -> dict:
     try:
         recipient, using_previous, trusted_at = otp_recipient(row)
         otp_ready = True
@@ -27,7 +40,7 @@ def _settings_payload(row) -> dict:
         otp_blocked_reason = exc.detail
 
     return {
-        "alert_email": row.alert_email,
+        "alert_email": row.alert_email if can_edit else mask_email(row.alert_email),
         "alert_email_masked": mask_email(row.alert_email),
         "otp_recipient_masked": mask_email(recipient) if recipient else None,
         "using_previous_email": using_previous,
@@ -36,6 +49,7 @@ def _settings_payload(row) -> dict:
         "otp_blocked_reason": otp_blocked_reason,
         "alert_email_changed_at": row.alert_email_changed_at.isoformat() if row.alert_email_changed_at else None,
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "can_edit_alert_email": can_edit,
     }
 
 
@@ -43,9 +57,11 @@ def _settings_payload(row) -> dict:
 @router.get("/")
 def get_settings(
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
-    return _settings_payload(get_platform_settings(db))
+    admin = get_admin_user(db, current_user)
+    can_edit = _can_edit_alert_email(current_user, admin)
+    return _settings_payload(get_platform_settings(db), can_edit=can_edit)
 
 
 @router.patch("/alert-email")
@@ -57,10 +73,13 @@ def update_alert_email(
     """
     Change the inbox that will eventually receive deletion codes.
 
-    Password confirmation is intentionally not required yet. The 24-hour
-    cooldown is the protection: codes keep going to the previous inbox until
-    the new address has been on file for a full day.
+    Only a protected Super Admin can do this. Codes keep going to the previous
+    inbox for 24 hours after a change.
     """
+    admin = get_admin_user(db, current_user)
+    if not _can_edit_alert_email(current_user, admin):
+        raise HTTPException(status_code=403, detail=_ALERT_EMAIL_FORBIDDEN)
+
     blocked = blocked_recipient_reason(body.alert_email)
     if blocked:
         raise HTTPException(status_code=400, detail=blocked)
@@ -68,7 +87,6 @@ def update_alert_email(
     row = get_platform_settings(db)
     previous = row.alert_email
     row = set_alert_email(db, row, body.alert_email)
-    admin = get_admin_user(db, current_user)
     record_audit(
         db,
         actor_id=admin.id,
@@ -80,4 +98,4 @@ def update_alert_email(
         reason_note="Admin alert email updated; OTP cooldown 24 hours",
     )
     db.commit()
-    return _settings_payload(row)
+    return _settings_payload(row, can_edit=True)

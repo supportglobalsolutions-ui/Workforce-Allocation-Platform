@@ -7,7 +7,7 @@ import SiteFooter from '@/components/layout/SiteFooter';
 import { applyThemeToDocument } from '@/lib/theme/tokens';
 import { useTheme } from '@/lib/theme/ThemeProvider';
 
-const CINEMATIC_PATHS = ['/', '/login', '/signup', '/reset-password'];
+const CINEMATIC_PATHS = ['/', '/login', '/signup', '/reset-password', '/contact'];
 
 /** Public marketing/auth pages — theme toggle lives in LandingNavbar. */
 function CinematicShell({ children }: { children: React.ReactNode }) {

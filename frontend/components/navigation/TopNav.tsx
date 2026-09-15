@@ -4,8 +4,9 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useEffect, useState } from 'react';
 import {
-  AlignLeft, Bell, ChevronDown, ChevronLeft, ChevronRight, Handshake, LogOut, Menu, Search, X,
+  AlignLeft, ChevronDown, ChevronLeft, ChevronRight, Handshake, LogOut, Menu, Search, X,
 } from 'lucide-react';
+import NotificationBell from './NotificationBell';
 import ThemeToggle from '@/components/theme/ThemeToggle';
 import LogoMark from '@/components/theme/LogoMark';
 import PageSearchModal, { usePageSearchShortcut } from '@/components/navigation/PageSearchModal';
@@ -251,14 +252,10 @@ export default function TopNav({
           </button>
         )}
         {variant === 'portal' && (
-          <Link
-            href={notificationsHref}
-            className="relative p-2 rounded-full hover:bg-white/5 transition-colors"
-            aria-label="Notifications"
-          >
-            <Bell size={18} className="text-theme-muted" />
-            <span className="absolute top-1.5 right-1.5 w-2 h-2 bg-danger rounded-full" />
-          </Link>
+          <NotificationBell
+            notificationsHref={notificationsHref}
+            showEnquiries={role === 'admin' || role === 'leadership'}
+          />
         )}
         <ThemeToggle variant="icon" />
         {variant === 'portal' && session && (

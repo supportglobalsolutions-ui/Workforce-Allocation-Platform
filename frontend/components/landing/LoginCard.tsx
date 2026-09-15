@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, LifeBuoy, ShieldCheck } from 'lucide-react';
 import GlobalSolutionsLogo from './GlobalSolutionsLogo';
 import { AuthGlassCard } from './AuthPageShell';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -31,6 +31,9 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   const [password, setPassword] = useState(DEFAULT_SUPER_ADMIN_PASSWORD);
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
+  // After a few wrong attempts the problem is usually not the typing —
+  // offer the contact form, which works without an account.
+  const [failedAttempts, setFailedAttempts] = useState(0);
   const [loading, setLoading] = useState(false);
   const [otpChallenge, setOtpChallenge] = useState<LoginOtpChallenge | null>(null);
   const [otpCode, setOtpCode] = useState('');
@@ -55,7 +58,9 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       const result = await login(email, password);
       if (!result.ok) {
         setError(result.error ?? 'Login failed. Please check credentials.');
+        setFailedAttempts((n) => n + 1);
       } else if (result.otpRequired) {
+        setFailedAttempts(0);
         setOtpChallenge(result.challenge);
         setOtpCode('');
       } else if (onSuccess) {
@@ -63,6 +68,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       }
     } catch (err: unknown) {
       setError(getAuthErrorMessage(err));
+      setFailedAttempts((n) => n + 1);
     } finally {
       setLoading(false);
     }
@@ -282,6 +288,19 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           <div className="flex items-center gap-2 p-3 rounded-xl bg-red-500/10 border border-red-500/30 text-red-400 text-xs">
             <AlertCircle size={15} className="shrink-0" />
             <span>{error}</span>
+          </div>
+        )}
+
+        {failedAttempts >= 2 && (
+          <div className="flex items-start gap-2 p-3 rounded-xl bg-[#0df5c4]/10 border border-[#0df5c4]/30 text-[#bfece0] text-xs">
+            <LifeBuoy size={15} className="shrink-0 mt-0.5 text-[#0df5c4]" />
+            <span>
+              Still locked out after {failedAttempts} attempts?{' '}
+              <Link href="/contact" className="font-semibold text-[#0df5c4] hover:underline">
+                Message an administrator
+              </Link>{' '}
+              — no account needed, and we reply by email.
+            </span>
           </div>
         )}
 

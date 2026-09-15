@@ -5,6 +5,7 @@ import {
   Briefcase, AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import NotificationTabs from '@/components/admin/NotificationTabs';
 import { api } from '@/lib/api';
 
 interface NotificationResponse {
@@ -335,9 +336,9 @@ export default function AdminNotificationsPage() {
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-10">
-      <PageHeader
-        title="Notification Center"
-      />
+      <PageHeader title="Notification Center" />
+
+      <NotificationTabs />
 
       <div className="glass-panel rounded-2xl border border-white/5 p-6 space-y-5">
         <h2 className="text-xs font-bold uppercase tracking-widest text-gold-accent flex items-center gap-2">

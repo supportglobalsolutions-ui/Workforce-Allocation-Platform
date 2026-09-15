@@ -13,7 +13,7 @@ from core.supabase_auth import is_auth_ready
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
 from routers import (
-    assessments, audit, auth, clients, communications, currencies, intelligence, leaderboard,
+    assessments, audit, auth, clients, communications, contact, currencies, intelligence, leaderboard,
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
     settings as platform_settings, task_assessments, training, uptime_kuma, wallets, workers,
 )
@@ -222,4 +222,6 @@ app.include_router(quality.router, prefix="/quality", tags=["quality"])
 app.include_router(leaderboard.router, prefix="/leaderboard", tags=["leaderboard"])
 app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
+# Public contact form (POST) + admin inbox (GET/PATCH).
+app.include_router(contact.router, prefix="/contact", tags=["contact"])
 app.include_router(uptime_kuma.router, prefix="/integrations/uptime-kuma", tags=["integrations"])
