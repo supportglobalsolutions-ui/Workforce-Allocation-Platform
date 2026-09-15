@@ -5,6 +5,7 @@ from uuid import UUID
 from fastapi import Depends, HTTPException, status
 from sqlmodel import Session, SQLModel, select
 
+from core.config import settings
 from core.database import get_db
 from core.permissions import STAFF_ROLES
 from core.security import get_current_user
@@ -21,6 +22,7 @@ from models.worker import Worker
 # admin_users.role is metadata only; it does NOT drive auth/routing.
 _AUTH_TO_ORG_ROLE = {
     "super_admin": AdminRoleEnum.ceo_leadership,
+    "executive": AdminRoleEnum.ceo_leadership,
     "admin": AdminRoleEnum.operations_lead,
     "user": AdminRoleEnum.technical_admin,
     "partner": AdminRoleEnum.technical_admin,
@@ -52,6 +54,12 @@ def get_admin_user(db: Session, current_user: dict) -> AdminUser:
         select(AdminUser).where(AdminUser.auth_user_id == uid)
     ).first()
     if admin:
+        email = (admin.email or current_user.get("email") or "").strip().lower()
+        if email in settings.protected_super_admin_emails and not admin.is_protected:
+            admin.is_protected = True
+            db.add(admin)
+            db.commit()
+            db.refresh(admin)
         return admin
 
     email = (current_user.get("email") or f"{uid}@unknown.local").strip().lower()
@@ -72,6 +80,7 @@ def get_admin_user(db: Session, current_user: dict) -> AdminUser:
         role=_AUTH_TO_ORG_ROLE.get(current_user.get("role", "user"), AdminRoleEnum.technical_admin),
         display_name=_display_name_from(current_user),
         status=AccountStatusEnum.active,
+        is_protected=email in settings.protected_super_admin_emails,
     )
     db.add(admin)
     try:

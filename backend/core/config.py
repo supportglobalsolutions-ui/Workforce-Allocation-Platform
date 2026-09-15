@@ -101,9 +101,24 @@ class Settings(BaseSettings):
     GOOGLE_API_KEY: str = ""
     GEMINI_MODEL: str = "gemini-3.6-flash"
 
+    # Founder Super Admins. Nobody — including other Super Admins — can delete,
+    # ban, or demote these emails. Comma-separated. Override in .env to match
+    # the two people who must always retain access.
+    PROTECTED_SUPER_ADMIN_EMAILS: str = (
+        "peterkelvinkibiru1532@gmail.com,support.globalsolutions@gmail.com"
+    )
+
     @property
     def is_production(self) -> bool:
         return self.ENVIRONMENT == "production"
+
+    @property
+    def protected_super_admin_emails(self) -> frozenset[str]:
+        return frozenset(
+            part.strip().lower()
+            for part in self.PROTECTED_SUPER_ADMIN_EMAILS.split(",")
+            if part.strip()
+        )
 
 
 settings = Settings()

@@ -41,6 +41,8 @@ SUPER_ADMIN_EMAIL = "peterkelvinkibiru1532@gmail.com"
 _APP_ROLE_KEY = "role"
 _APP_STATUS_KEY = "status"
 _APP_PARTNER_KEY = "partner_entity_id"
+_APP_CREATED_BY_KEY = "created_by_uid"
+_APP_PROTECTED_KEY = "protected"
 
 _LEEWAY_SECONDS = 30  # tolerate modest clock drift
 
@@ -193,6 +195,8 @@ def verify_supabase_token(access_token: str) -> dict:
         "role": extracted_role,
         "status": extracted_status,
         "partner_entity_id": extracted_partner,
+        "createdByUid": app_md.get(_APP_CREATED_BY_KEY) or None,
+        "protected": bool(app_md.get(_APP_PROTECTED_KEY)),
     }
 
 
@@ -259,6 +263,9 @@ def create_auth_user(
     display_name: str,
     role: str,
     partner_entity_id: str | None = None,
+    *,
+    created_by_uid: str | None = None,
+    protected: bool = False,
 ) -> dict:
     if role not in VALID_ROLES:
         raise ValueError(f"Invalid role: {role}")
@@ -271,6 +278,8 @@ def create_auth_user(
             _APP_ROLE_KEY: role,
             _APP_STATUS_KEY: "approved",
             _APP_PARTNER_KEY: partner_entity_id if role == "partner" else None,
+            **({_APP_CREATED_BY_KEY: created_by_uid} if created_by_uid else {}),
+            **({_APP_PROTECTED_KEY: True} if protected else {}),
         },
     })
     return user or {}
@@ -316,9 +325,11 @@ def register_pending_user(
     return user
 
 
-def approve_auth_user(uid: str) -> dict:
+def approve_auth_user(uid: str, *, role: str = "user") -> dict:
+    if role not in VALID_ROLES:
+        raise ValueError(f"Invalid role: {role}")
     _admin_request("PUT", f"/users/{uid}", json={"ban_duration": "none"})
-    set_user_claims(uid, role="user", status="approved")
+    set_user_claims(uid, role=role, status="approved")
     return get_auth_user(uid)
 
 
@@ -411,9 +422,13 @@ def user_to_dict(u: dict) -> dict:
     last = (user_md.get("last_name") or "").strip()
     full = (user_md.get("full_name") or user_md.get("display_name") or "").strip()
     display = " ".join(part for part in (first, last) if part) or full
+    email = u.get("email", "") or ""
+    protected = bool(app_md.get(_APP_PROTECTED_KEY)) or (
+        email.strip().lower() in settings.protected_super_admin_emails
+    )
     return {
         "uid": u.get("id", ""),
-        "email": u.get("email", "") or "",
+        "email": email,
         "displayName": display,
         "firstName": first,
         "lastName": last,
@@ -427,6 +442,8 @@ def user_to_dict(u: dict) -> dict:
         "disabled": is_banned and status != "pending",
         "createdAt": u.get("created_at"),
         "partnerEntityId": app_md.get(_APP_PARTNER_KEY),
+        "protected": protected,
+        "createdByUid": app_md.get(_APP_CREATED_BY_KEY) or None,
     }
 
 
@@ -445,9 +462,35 @@ def list_auth_users() -> list[dict]:
     return out
 
 
+def mark_auth_user_protected(uid: str) -> None:
+    _merge_app_metadata(uid, {_APP_PROTECTED_KEY: True})
+
+
 def bootstrap_super_admin() -> dict:
-    """Ensure the founding account carries the super_admin role."""
-    user = get_auth_user_by_email(SUPER_ADMIN_EMAIL)
-    uid = user.get("id", "")
-    set_user_claims(uid, role="super_admin", status="approved")
-    return {"uid": uid, "email": user.get("email"), "role": "super_admin"}
+    """Ensure founding emails carry super_admin and cannot be removed."""
+    emails: list[str] = []
+    for email in (SUPER_ADMIN_EMAIL, *sorted(settings.protected_super_admin_emails)):
+        lowered = email.strip().lower()
+        if lowered and lowered not in emails:
+            emails.append(lowered)
+
+    marked: list[dict] = []
+    for email in emails:
+        try:
+            user = get_auth_user_by_email(email)
+        except Exception:
+            continue
+        uid = user.get("id", "")
+        if not uid:
+            continue
+        set_user_claims(uid, role="super_admin", status="approved")
+        _merge_app_metadata(uid, {_APP_PROTECTED_KEY: True})
+        marked.append({
+            "uid": uid,
+            "email": user.get("email"),
+            "role": "super_admin",
+            "protected": True,
+        })
+    if not marked:
+        raise ValueError("No protected Super Admin account found")
+    return marked[0] | {"accounts": marked}

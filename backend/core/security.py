@@ -69,4 +69,6 @@ def get_current_user(
         "email": decoded.get("email", ""),
         "name": decoded.get("name", ""),
         "role": role,
+        "createdByUid": decoded.get("createdByUid"),
+        "protected": bool(decoded.get("protected")),
     }

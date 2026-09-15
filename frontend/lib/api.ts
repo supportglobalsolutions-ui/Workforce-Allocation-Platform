@@ -4,6 +4,7 @@
  * Every call automatically attaches the Supabase access token as a Bearer header.
  */
 import { supabase } from '@/lib/supabase';
+import { AppError } from '@/lib/errors';
 
 const BASE = '/api';
 const SERVICE_UNAVAILABLE_MESSAGE = 'We’re having trouble connecting right now. Please wait a moment and try again.';
@@ -18,9 +19,22 @@ async function getToken(forceRefresh = false): Promise<string | null> {
 }
 
 
-async function parseErrorMessage(res: Response): Promise<string> {
+interface ParsedError {
+  /** Safe sentence for the interface. */
+  friendly: string;
+  /** Verbatim server detail — console only, never rendered. */
+  raw: string;
+  requestId?: string;
+  debug?: unknown;
+}
+
+async function parseErrorMessage(res: Response): Promise<ParsedError> {
   const text = await res.text().catch(() => '');
   const trimmed = text.trim();
+  const headerRequestId = res.headers.get('x-request-id') || undefined;
+  let rawDetail = trimmed;
+  let requestId = headerRequestId;
+  let debug: unknown;
   const proxyFailure =
     !trimmed
     || /^internal server error$/i.test(trimmed)
@@ -29,33 +43,41 @@ async function parseErrorMessage(res: Response): Promise<string> {
 
   if (trimmed && !proxyFailure) {
     try {
-      const json = JSON.parse(text) as { detail?: string | { msg: string }[] };
+      const json = JSON.parse(text) as {
+        detail?: string | { msg: string }[];
+        request_id?: string;
+        debug?: unknown;
+      };
+      requestId = json.request_id || headerRequestId;
+      debug = json.debug;
+      if (typeof json.detail === 'string') rawDetail = json.detail;
+      else if (Array.isArray(json.detail)) rawDetail = json.detail.map((d) => d.msg).join(', ');
       // Backend messages are not shown verbatim unless they are deliberate,
       // user-actionable messages. This keeps internal implementation details
       // out of the interface.
       if (typeof json.detail === 'string') {
         const detail = json.detail.trim();
-        if (
-          /^(Too many|Select |Password |Invalid |Your |An account|No account|Use |Username |Email |login_otp)/i.test(detail)
-          || detail.length <= 160
-        ) {
-          return detail;
+        if (detail) {
+          return { friendly: detail, raw: rawDetail, requestId, debug };
         }
       }
       if (Array.isArray(json.detail)) {
-        return 'Please check the information you entered and try again.';
+        return {
+          friendly: 'Please check the information you entered and try again.',
+          raw: rawDetail, requestId, debug,
+        };
       }
     } catch { /* use the safe status message below */ }
   }
 
-  if (res.status === 500 || res.status === 502 || res.status === 503 || res.status === 504 || proxyFailure) {
-    return SERVICE_UNAVAILABLE_MESSAGE;
-  }
-  if (res.status === 401) return 'Your session has expired. Please sign in again.';
-  if (res.status === 403) return 'You do not have permission to do that.';
-  if (res.status === 404) return 'We could not find what you requested.';
-  if (res.status === 422) return 'Please check the information you entered and try again.';
-  return 'We could not complete that request. Please try again.';
+  const wrap = (friendly: string): ParsedError => ({ friendly, raw: rawDetail || friendly, requestId, debug });
+
+  if (res.status >= 500 || proxyFailure) return wrap(SERVICE_UNAVAILABLE_MESSAGE);
+  if (res.status === 401) return wrap('Your session has expired. Please sign in again.');
+  if (res.status === 403) return wrap('You do not have permission to do that.');
+  if (res.status === 404) return wrap('We could not find what you requested.');
+  if (res.status === 422) return wrap('Please check the information you entered and try again.');
+  return wrap('We could not complete that request. Please try again.');
 }
 
 function isRetryable(status: number): boolean {
@@ -82,8 +104,13 @@ async function request<T>(
   const attempt = async (forceRefresh: boolean) => {
     try {
       return await fetchWith(forceRefresh);
-    } catch {
-      throw new Error(SERVICE_UNAVAILABLE_MESSAGE);
+    } catch (networkErr) {
+      throw new AppError({
+        friendly: SERVICE_UNAVAILABLE_MESSAGE,
+        raw: networkErr instanceof Error ? networkErr.message : String(networkErr),
+        url: `${BASE}${path}`,
+        method,
+      });
     }
   };
 
@@ -109,7 +136,18 @@ async function request<T>(
   }
 
   if (!res.ok) {
-    throw new Error(await parseErrorMessage(res));
+    const parsed = await parseErrorMessage(res);
+    // Carries both audiences: .friendly for the UI, everything else for the
+    // console via reportError().
+    throw new AppError({
+      friendly: parsed.friendly,
+      raw: parsed.raw,
+      status: res.status,
+      requestId: parsed.requestId,
+      debug: parsed.debug,
+      url: `${BASE}${path}`,
+      method,
+    });
   }
 
   if (res.status === 204) return undefined as unknown as T;

@@ -9,6 +9,7 @@ import {
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { reportError } from '@/lib/errors';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -21,7 +22,12 @@ interface AvailableAssessment {
   best_score_pct: number | null;
   passed: boolean;
   attempts: number;
+  allow_retakes?: boolean;
+  max_attempts?: number;
+  retakes_allowed?: number;
+  retakes_remaining?: number;
   can_attempt?: boolean;
+  attempt_blocked_reason?: string | null;
 }
 
 interface TakeQuestion {
@@ -46,6 +52,13 @@ interface TaskAssessment {
   is_timed: boolean;
   time_limit_minutes: number | null;
   passing_score_pct: number;
+  allow_retakes?: boolean;
+  max_attempts?: number;
+  attempts?: number;
+  retakes_allowed?: number;
+  retakes_remaining?: number;
+  can_attempt?: boolean;
+  attempt_blocked_reason?: string | null;
 }
 
 interface TaskResult {
@@ -81,6 +94,23 @@ function optionText(item: unknown): string {
   return String(item);
 }
 
+function retakeLimitLabel(retakesAllowed: number): string {
+  if (retakesAllowed <= 0) return 'No retakes allowed';
+  if (retakesAllowed === 1) return 'Only 1 retake is allowed';
+  return `Only ${retakesAllowed} retakes are allowed`;
+}
+
+function takeButtonLabel(a: AvailableAssessment): string {
+  if (a.can_attempt === false) {
+    return (a.retakes_allowed ?? 0) <= 0 ? 'No retakes allowed' : 'No retakes left';
+  }
+  if (a.attempts > 0) {
+    const left = a.retakes_remaining ?? 0;
+    return left > 0 ? `Retake assessment (${left} left)` : 'Retake assessment';
+  }
+  return 'Take assessment';
+}
+
 // ── MCQ take flow (inline view) ────────────────────────────────────────────────
 
 function McqTakeView({
@@ -98,14 +128,28 @@ function McqTakeView({
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
+  const [usedAttempts, setUsedAttempts] = useState(assessment.attempts);
+  const cap = assessment.max_attempts ?? 1;
+  const retakesAllowed = assessment.retakes_allowed ?? Math.max(0, cap - 1);
+  const canRetake = usedAttempts < cap && (assessment.allow_retakes || usedAttempts === 0);
 
   const inProgress = !result && !loading && questions.length > 0;
 
-  useEffect(() => {
+  function loadQuestions() {
+    setLoading(true);
+    setError(null);
     api.get<TakeQuestion[]>(`/assessments/${assessment.id}/take`)
       .then((qs) => setQuestions([...qs].sort((a, b) => a.sort_order - b.sort_order)))
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load questions'))
+      .catch((e) => {
+        setQuestions([]);
+        setError(reportError('Load assessment', e));
+      })
       .finally(() => setLoading(false));
+  }
+
+  useEffect(() => {
+    loadQuestions();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [assessment.id]);
 
   // Warn on browser navigation while mid-test.
@@ -130,18 +174,24 @@ function McqTakeView({
     setError(null);
     try {
       const res = await api.post<SubmitResult>(`/assessments/${assessment.id}/submit`, { answers });
+      setUsedAttempts((n) => n + 1);
       setResult(res);
       onFinished();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to submit answers');
+      setError(reportError('Submit assessment', e));
     } finally {
       setSubmitting(false);
     }
   }
 
   function handleRetake() {
+    if (!canRetake) {
+      setError(assessment.attempt_blocked_reason || `${retakeLimitLabel(retakesAllowed)}. You have used them.`);
+      return;
+    }
     setResult(null);
     setAnswers({});
+    loadQuestions();
   }
 
   return (
@@ -193,9 +243,20 @@ function McqTakeView({
             {result.passed ? 'Passed' : 'Not passed'}
           </p>
           <p className="text-xs text-theme-muted mt-2">Passing score: {assessment.passing_score_pct}%</p>
+          {!result.passed && !canRetake && (
+            <p className="text-xs text-amber-300 mt-3">
+              {retakesAllowed <= 0
+                ? 'No retakes allowed on this test.'
+                : `${retakeLimitLabel(retakesAllowed)} after the first attempt. You have none left.`}
+            </p>
+          )}
           <div className="flex justify-center gap-3 mt-6">
-            {!result.passed && (
-              <button type="button" onClick={handleRetake} className="btn-primary text-sm py-2 px-5">Retake assessment</button>
+            {!result.passed && canRetake && (
+              <button type="button" onClick={handleRetake} className="btn-primary text-sm py-2 px-5">
+                {retakesAllowed > 0
+                  ? `Retake assessment (${Math.max(0, cap - usedAttempts)} left)`
+                  : 'Retake assessment'}
+              </button>
             )}
             <button type="button" onClick={onExit} className="btn-secondary text-sm py-2 px-5">Back to assessments</button>
           </div>
@@ -293,7 +354,7 @@ function TaskCard({
       setUrls(['']);
       onSubmitted();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to submit');
+      setError(reportError('Submit task assessment', err));
     } finally {
       setSubmitting(false);
     }
@@ -301,6 +362,12 @@ function TaskCard({
 
   const awaitingGrade = latestResult && (latestResult.status === 'submitted' || latestResult.status === 'in_progress' || latestResult.status === 'pending');
   const graded = latestResult?.status === 'graded';
+  const canAttempt = task.can_attempt !== false;
+  const retakesAllowed = task.retakes_allowed ?? 0;
+  const blockedReason = task.attempt_blocked_reason
+    || (retakesAllowed <= 0
+      ? 'No retakes allowed. You have already used your one attempt on this test.'
+      : `${retakeLimitLabel(retakesAllowed)}. You have used them all.`);
 
   return (
     <div className="glass-panel rounded-2xl p-6 flex flex-col gap-4">
@@ -392,7 +459,11 @@ function TaskCard({
       )}
 
       {/* Submit flow */}
-      {showForm ? (
+      {!canAttempt ? (
+        <p className="text-xs text-amber-300 border border-amber-500/30 bg-amber-500/5 rounded-xl px-3 py-2">
+          {blockedReason}
+        </p>
+      ) : showForm ? (
         <form onSubmit={handleSubmit} className="space-y-3 border-t border-white/[0.06] pt-4">
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Submission Notes</label>
@@ -487,7 +558,7 @@ export default function AssessmentCenterPage() {
       setTasks(availableTasks);
       setTaskResults(myResults);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Failed to load assessments');
+      setError(reportError('Load assessments', e));
     } finally {
       setLoading(false);
     }
@@ -591,7 +662,9 @@ export default function AssessmentCenterPage() {
                   </div>
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Attempts</p>
-                    <p className="text-white font-semibold mt-0.5">{a.attempts}</p>
+                    <p className="text-white font-semibold mt-0.5">
+                      {a.attempts} / {a.max_attempts ?? 1}
+                    </p>
                   </div>
                   <div>
                     <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Best Score</p>
@@ -602,12 +675,24 @@ export default function AssessmentCenterPage() {
                 </div>
                 <button
                   type="button"
-                  onClick={() => setTaking(a)}
+                  onClick={() => {
+                    if (a.can_attempt === false) {
+                      setError(a.attempt_blocked_reason || `${retakeLimitLabel(a.retakes_allowed ?? 0)}.`);
+                      return;
+                    }
+                    setError(null);
+                    setTaking(a);
+                  }}
                   disabled={a.can_attempt === false}
-                  className={`mt-auto text-sm py-2 disabled:opacity-40 ${a.passed ? 'btn-secondary' : 'btn-primary'}`}
+                  className={`mt-auto text-sm py-2 disabled:opacity-40 disabled:cursor-not-allowed ${a.passed ? 'btn-secondary' : 'btn-primary'}`}
                 >
-                  {a.can_attempt === false ? 'No attempts left' : a.attempts > 0 ? 'Retake assessment' : 'Take assessment'}
+                  {takeButtonLabel(a)}
                 </button>
+                <p className="text-[10px] text-theme-muted -mt-2">
+                  {(a.retakes_allowed ?? 0) <= 0
+                    ? 'No retakes allowed after the first attempt.'
+                    : `${retakeLimitLabel(a.retakes_allowed ?? 0)} after the first attempt.`}
+                </p>
               </div>
             ))}
           </div>

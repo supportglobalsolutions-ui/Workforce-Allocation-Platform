@@ -5,6 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from core.database import get_db
@@ -20,7 +21,11 @@ from schemas.mcq import (
     McqQuestionUpdate,
     McqResultResponse,
 )
-from services.assessment_marks import max_attempts_for, require_marks_total_100
+from services.assessment_marks import (
+    attempt_progress,
+    attempts_exhausted_detail,
+    require_marks_total_100,
+)
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -46,10 +51,10 @@ def _current_mcq_result(db: Session, worker_id: UUID, source_id: UUID) -> McqRes
 
 
 def _enforce_attempts(s: McqAssessmentSet, existing: McqResult | None) -> None:
-    cap = max_attempts_for(s.allow_retakes, s.max_attempts)
     used = existing.attempt_count if existing else 0
-    if used >= cap:
-        raise HTTPException(status_code=400, detail=f"Maximum attempts reached ({cap}).")
+    progress = attempt_progress(s.allow_retakes, s.max_attempts, used)
+    if not progress["can_attempt"]:
+        raise HTTPException(status_code=409, detail=progress["blocked_reason"])
 
 
 class AvailableAssessment(BaseModel):
@@ -64,7 +69,10 @@ class AvailableAssessment(BaseModel):
     attempts: int = 0
     allow_retakes: bool = False
     max_attempts: int = 1
+    retakes_allowed: int = 0
+    retakes_remaining: int = 0
     can_attempt: bool = True
+    attempt_blocked_reason: str | None = None
 
 
 class QuestionForWorker(BaseModel):
@@ -192,8 +200,8 @@ def list_available_assessments(
             continue
         mine = by_set.get(s.id, [])
         row = mine[0] if mine else None
-        cap = max_attempts_for(s.allow_retakes, s.max_attempts)
         used = row.attempt_count if row else 0
+        progress = attempt_progress(s.allow_retakes, s.max_attempts, used)
         out.append(AvailableAssessment(
             id=s.id,
             title=s.title,
@@ -205,8 +213,11 @@ def list_available_assessments(
             passed=row.passed if row else None,
             attempts=used,
             allow_retakes=s.allow_retakes,
-            max_attempts=cap,
-            can_attempt=used < cap,
+            max_attempts=progress["cap"],
+            retakes_allowed=progress["retakes_allowed"],
+            retakes_remaining=progress["retakes_remaining"],
+            can_attempt=progress["can_attempt"],
+            attempt_blocked_reason=progress["blocked_reason"],
         ))
     return out
 
@@ -265,43 +276,50 @@ def submit_assessment(
     if score_pct > 100:
         score_pct = Decimal("100.00")
     now = datetime.now(timezone.utc)
-    if existing:
-        for ans in list(existing.answers or []):
-            db.delete(ans)
-        db.flush()
-        existing.score_pct = score_pct
-        existing.passed = score_pct >= Decimal(s.passing_score_pct)
-        existing.completed_at = now
-        existing.title_snapshot = s.title
-        existing.assessment_set_id = set_id
-        existing.attempt_count = (existing.attempt_count or 1) + 1
-        result = existing
-        db.add(result)
-        db.flush()
-    else:
-        result = McqResult(
-            worker_id=worker.id,
-            assessment_set_id=set_id,
-            source_id=set_id,
-            title_snapshot=s.title,
-            score_pct=score_pct,
-            passed=score_pct >= Decimal(s.passing_score_pct),
-            attempt_count=1,
-            completed_at=now,
-        )
-        db.add(result)
-        db.flush()
-    for q, selected, is_correct in graded:
-        db.add(McqResultAnswer(
-            mcq_result_id=result.id,
-            question_id=q.id,
-            selected_option_key=selected or "-",
-            is_correct=is_correct,
-            prompt_snapshot=q.prompt,
-            options_snapshot=q.options,
-            marks_snapshot=q.marks,
-        ))
-    db.commit()
+    try:
+        if existing:
+            for ans in list(existing.answers or []):
+                db.delete(ans)
+            db.flush()
+            existing.score_pct = score_pct
+            existing.passed = score_pct >= Decimal(s.passing_score_pct)
+            existing.completed_at = now
+            existing.title_snapshot = s.title
+            existing.assessment_set_id = set_id
+            existing.attempt_count = (existing.attempt_count or 1) + 1
+            result = existing
+            db.add(result)
+            db.flush()
+        else:
+            result = McqResult(
+                worker_id=worker.id,
+                assessment_set_id=set_id,
+                source_id=set_id,
+                title_snapshot=s.title,
+                score_pct=score_pct,
+                passed=score_pct >= Decimal(s.passing_score_pct),
+                attempt_count=1,
+                completed_at=now,
+            )
+            db.add(result)
+            db.flush()
+        for q, selected, is_correct in graded:
+            db.add(McqResultAnswer(
+                mcq_result_id=result.id,
+                question_id=q.id,
+                selected_option_key=selected or "-",
+                is_correct=is_correct,
+                prompt_snapshot=q.prompt,
+                options_snapshot=q.options,
+                marks_snapshot=q.marks,
+            ))
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=attempts_exhausted_detail(s.allow_retakes, s.max_attempts),
+        ) from None
     db.refresh(result)
     return result
 

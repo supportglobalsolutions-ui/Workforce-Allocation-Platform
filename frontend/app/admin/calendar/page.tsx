@@ -227,6 +227,9 @@ export default function WorkingPeriodCalendarPage() {
           </button>
         }
       />
+      <p className="text-xs text-theme-muted -mt-2 mb-4 max-w-3xl">
+        A new work month opens automatically on the 1st, and the previous month stops being current when it ends. You can still rename, change dates, or pin a different period.
+      </p>
       <AdminSectionTabs tabs={PAYROLL_TABS} />
 
       {loading ? (

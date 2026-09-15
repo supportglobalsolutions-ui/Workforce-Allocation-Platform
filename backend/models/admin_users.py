@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, String, text
+from sqlalchemy import Boolean, Column, DateTime, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -48,6 +48,15 @@ class AdminUser(SQLModel, table=True):
     first_login_verified_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # Auth uid of the admin who created or first approved this account.
+    created_by_auth_user_id: Optional[str] = Field(
+        default=None, sa_column=Column(String(128), nullable=True, index=True)
+    )
+    # Founder Super Admin: cannot be deleted, banned, or demoted by anyone.
+    is_protected: bool = Field(
+        default=False,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
     )
     created_at: Optional[datetime] = Field(
         default=None,

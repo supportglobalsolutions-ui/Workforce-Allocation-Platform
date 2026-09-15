@@ -182,7 +182,9 @@ function McqFormModal({
   const [passing,  setPassing]  = useState(String(existing?.passing_score_pct ?? 70));
   const [active,   setActive]   = useState(existing?.is_active ?? false);
   const [retakes,  setRetakes]  = useState(existing?.allow_retakes ?? false);
-  const [maxAttempts, setMaxAttempts] = useState(String(existing?.max_attempts ?? 1));
+  const [maxAttempts, setMaxAttempts] = useState(
+    String(existing?.allow_retakes ? Math.max(1, (existing.max_attempts ?? 2) - 1) : 1),
+  );
   const [saving,   setSaving]   = useState(false);
   const [error,    setError]    = useState('');
 
@@ -190,7 +192,8 @@ function McqFormModal({
     e.preventDefault(); setSaving(true); setError('');
     const body = {
       title, category, passing_score_pct: Number(passing), is_active: active,
-      allow_retakes: retakes, max_attempts: retakes ? Number(maxAttempts) : 1,
+      allow_retakes: retakes,
+      max_attempts: retakes ? 1 + Math.max(1, Number(maxAttempts) || 1) : 1,
     };
     try {
       if (existing) { onSaved(await api.patch<AssessmentSet>(`/assessments/${existing.id}`, body)); }
@@ -224,8 +227,13 @@ function McqFormModal({
               <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
             </div>
             {retakes && (
-              <input type="number" min={2} max={10} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)}
-                className="input-field mt-2" placeholder="Max attempts" />
+              <>
+                <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)}
+                  className="input-field mt-2" placeholder="Retakes allowed" />
+                <p className="text-[10px] text-theme-muted mt-1">
+                  Number of retakes after the first try. 2 means they can sit the test 3 times.
+                </p>
+              </>
             )}
           </Field>
           {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
@@ -598,7 +606,9 @@ function TaskFormModal({
   const [passing,     setPassing]     = useState(String(existing?.passing_score_pct ?? 70));
   const [active,      setActive]      = useState(existing?.is_active ?? false);
   const [retakes,     setRetakes]     = useState(existing?.allow_retakes ?? false);
-  const [maxAttempts, setMaxAttempts] = useState(String(existing?.max_attempts ?? 1));
+  const [maxAttempts, setMaxAttempts] = useState(
+    String(existing?.allow_retakes ? Math.max(1, (existing.max_attempts ?? 2) - 1) : 1),
+  );
   const [saving,      setSaving]      = useState(false);
   const [error,       setError]       = useState('');
 
@@ -612,7 +622,7 @@ function TaskFormModal({
       passing_score_pct: Number(passing),
       is_active: active,
       allow_retakes: retakes,
-      max_attempts: retakes ? Number(maxAttempts) : 1,
+      max_attempts: retakes ? 1 + Math.max(1, Number(maxAttempts) || 1) : 1,
     };
     try {
       if (existing) { onSaved(await api.patch<TaskAssessment>(`/task-assessments/${existing.id}`, body)); }
@@ -687,8 +697,9 @@ function TaskFormModal({
               </div>
             </Field>
             {retakes && (
-              <Field label="Max attempts">
-                <input type="number" min={2} max={10} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} className="input-field" />
+              <Field label="Retakes allowed">
+                <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} className="input-field" />
+                <p className="text-[10px] text-theme-muted mt-1">After the first try. 2 means they can sit the test 3 times.</p>
               </Field>
             )}
           </div>

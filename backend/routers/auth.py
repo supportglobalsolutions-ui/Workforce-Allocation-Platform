@@ -12,6 +12,7 @@ from core.config import settings
 from core.database import get_db
 from core.supabase_auth import (
     SUPER_ADMIN_EMAIL,
+    VALID_ROLES,
     approve_auth_user,
     ban_auth_user,
     bootstrap_super_admin,
@@ -27,6 +28,8 @@ from core.supabase_auth import (
     unban_auth_user,
     user_to_dict,
     verify_supabase_token,
+    mark_auth_user_protected,
+    set_user_claims,
 )
 from core.permissions import ROLE_CAN_ASSIGN, require_admin, require_super_admin
 from core.rate_limit import check_rate_limit, current_rate_count
@@ -41,8 +44,15 @@ from models.enums import (
 )
 from models.partner import PartnerEntity
 from models.worker import Worker
-from .deps import get_admin_user
+from .deps import _AUTH_TO_ORG_ROLE, get_admin_user
 from core.security import get_current_user
+from services.account_delete import delete_login_account
+from services.account_guard import (
+    AccountGuardError,
+    assert_can_mutate_account,
+    is_protected_email,
+    stamp_account_lineage,
+)
 from services.account_invite import deliver_account_invite, generate_placeholder_password
 from services.usernames import (
     UsernameError,
@@ -168,10 +178,11 @@ class SessionTokenRequest(BaseModel):
 
 
 class ApproveUserRequest(BaseModel):
-    """Approval decision: designate the account as GS Member or Partner worker."""
+    """Approval: enable login and assign a role (worker, partner, ops, executive, super admin)."""
     worker_type: Optional[str] = None        # "gs_registered" | "partner_worker"
     partner_entity_id: Optional[UUID] = None
     country: Optional[str] = None
+    role: Optional[str] = None               # AuthRole; default worker
 
 
 class LoginOtpVerifyRequest(BaseModel):
@@ -554,7 +565,36 @@ def list_users(
     current_user: dict = Depends(require_admin),
 ):
     """List accounts from Supabase Auth."""
-    return list_auth_users()
+    users = list_auth_users()
+    rows = {
+        row.auth_user_id: row
+        for row in db.exec(select(AdminUser)).all()
+        if row.auth_user_id
+    }
+    dirty = False
+    for item in users:
+        uid = item.get("uid") or ""
+        row = rows.get(uid)
+        email = (item.get("email") or (row.email if row else "") or "").strip().lower()
+        protected = bool(item.get("protected")) or (row.is_protected if row else False) or is_protected_email(email)
+        if protected:
+            item["protected"] = True
+            if row and not row.is_protected:
+                row.is_protected = True
+                db.add(row)
+                dirty = True
+            if item.get("role") != "super_admin" and uid:
+                try:
+                    set_user_claims(uid, role="super_admin", status="approved")
+                    mark_auth_user_protected(uid)
+                    item["role"] = "super_admin"
+                except Exception:
+                    pass
+        if row and row.created_by_auth_user_id and not item.get("createdByUid"):
+            item["createdByUid"] = row.created_by_auth_user_id
+    if dirty:
+        db.commit()
+    return users
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
@@ -580,6 +620,12 @@ def create_user(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Your role '{actor_role}' cannot create accounts with role '{body.role}'.",
+        )
+
+    if is_protected_email(str(body.email)) and body.role != "super_admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="That email is a protected Super Admin and can only be Super Admin.",
         )
 
     if not body.sendInvite and not body.password:
@@ -611,9 +657,20 @@ def create_user(
             display_name=body.displayName,
             role=body.role,
             partner_entity_id=partner_entity_id,
+            created_by_uid=current_user["uid"],
+            protected=is_protected_email(str(body.email)),
         )
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
+
+    stamp_account_lineage(
+        db,
+        uid=user.get("id", ""),
+        email=user.get("email") or str(body.email),
+        display_name=body.displayName,
+        actor_uid=current_user["uid"],
+        org_role=_AUTH_TO_ORG_ROLE.get(body.role, AdminRoleEnum.technical_admin),
+    )
 
     _store_account_username(
         db,
@@ -703,16 +760,37 @@ def approve_user(
     current_user: dict = Depends(require_admin),
 ):
     """
-    Enable a pending account so the user can sign in, and (optionally) provision
-    the worker profile as a GS Member or Partner worker in the same step.
-    New workers start with work_ready=false until onboarding training is done.
+    Enable a pending account so the user can sign in, assigned as any role
+    the actor is allowed to grant (worker, partner, ops lead, executive, super admin).
+    Worker profiles are created only for worker/partner roles.
     """
     body = body or ApproveUserRequest()
+    actor_role = current_user["role"]
+    assigned_role = (body.role or "user").strip()
+    try:
+        pending = get_auth_user(uid)
+    except Exception as exc:
+        raise http_error_from_auth(exc) from exc
+    pending_email = (pending.get("email") or "").strip().lower()
+    if is_protected_email(pending_email):
+        assigned_role = "super_admin"
+    if assigned_role not in VALID_ROLES:
+        raise HTTPException(status_code=400, detail="Invalid role.")
+    if assigned_role not in ROLE_CAN_ASSIGN.get(actor_role, set()):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Your role cannot approve someone as {assigned_role}.",
+        )
 
     worker_type: Optional[WorkerTypeEnum] = None
-    if body.worker_type:
+    if assigned_role in {"user", "partner"}:
+        raw_type = body.worker_type
+        if assigned_role == "partner":
+            raw_type = raw_type or WorkerTypeEnum.partner_worker.value
+        else:
+            raw_type = raw_type or WorkerTypeEnum.gs_registered.value
         try:
-            worker_type = WorkerTypeEnum(body.worker_type)
+            worker_type = WorkerTypeEnum(raw_type)
         except ValueError:
             raise HTTPException(status_code=400, detail="Invalid worker type.")
         if worker_type == WorkerTypeEnum.partner_worker:
@@ -725,30 +803,45 @@ def approve_user(
                 raise HTTPException(status_code=404, detail="Partner company not found.")
 
     try:
-        user = approve_auth_user(uid)
+        user = approve_auth_user(uid, role=assigned_role)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
     profile = user_to_dict(user if isinstance(user, dict) else {})
     email = profile.get("email") or f"{uid}@unknown.local"
     display_name = profile.get("displayName") or email.split("@")[0] or "New Worker"
+    org_role = _AUTH_TO_ORG_ROLE.get(assigned_role, AdminRoleEnum.technical_admin)
 
-    # Eagerly provision admin_users + workers so the admin can finish the
-    # profile immediately instead of waiting for the worker's first login.
+    stamp_account_lineage(
+        db,
+        uid=uid,
+        email=email,
+        display_name=display_name,
+        actor_uid=current_user["uid"],
+        org_role=org_role,
+    )
+
+    admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    if not admin_row:
+        admin_row = AdminUser(
+            auth_user_id=uid,
+            email=email,
+            role=org_role,
+            display_name=display_name,
+            status=AccountStatusEnum.active,
+        )
+        db.add(admin_row)
+        db.commit()
+        db.refresh(admin_row)
+    else:
+        admin_row.role = org_role
+        admin_row.display_name = display_name or admin_row.display_name
+        admin_row.status = AccountStatusEnum.active
+        db.add(admin_row)
+        db.commit()
+        db.refresh(admin_row)
+
     if worker_type is not None:
-        admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
-        if not admin_row:
-            admin_row = AdminUser(
-                auth_user_id=uid,
-                email=email,
-                role=AdminRoleEnum.technical_admin,
-                display_name=display_name,
-                status=AccountStatusEnum.active,
-            )
-            db.add(admin_row)
-            db.commit()
-            db.refresh(admin_row)
-
         worker = db.exec(select(Worker).where(Worker.admin_user_id == admin_row.id)).first()
         profile = user_to_dict(user if isinstance(user, dict) else {})
         display_name = profile.get("displayName") or admin_row.display_name
@@ -802,7 +895,16 @@ def reject_user(
     current_user: dict = Depends(require_admin),
 ):
     """Reject a pending request and delete the account."""
-    del current_user
+    try:
+        assert_can_mutate_account(
+            db,
+            actor_uid=current_user["uid"],
+            actor_role=current_user["role"],
+            target_uid=uid,
+            action="reject",
+        )
+    except AccountGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     admin = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
     if admin:
         worker = db.exec(select(Worker).where(Worker.admin_user_id == admin.id)).first()
@@ -815,6 +917,37 @@ def reject_user(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
     return {"ok": True, "deleted": True}
+
+
+@router.delete("/users/{uid}")
+def delete_user(
+    uid: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Remove the login account. Work sessions stay; live RDP is released."""
+    try:
+        assert_can_mutate_account(
+            db,
+            actor_uid=current_user["uid"],
+            actor_role=current_user["role"],
+            target_uid=uid,
+            action="delete",
+        )
+        return delete_login_account(
+            db,
+            uid,
+            actor_uid=current_user["uid"],
+            actor_role=current_user["role"],
+        )
+    except AccountGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except Exception as exc:
+        raise http_error_from_auth(exc) from exc
 
 
 @router.patch("/users/{uid}/role")
@@ -840,7 +973,16 @@ def update_user_role(
         )
 
     try:
+        assert_can_mutate_account(
+            db,
+            actor_uid=current_user["uid"],
+            actor_role=actor_role,
+            target_uid=uid,
+            action="role",
+        )
         target = get_auth_user(uid)
+    except AccountGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 
@@ -863,6 +1005,12 @@ def update_user_role(
         set_user_role(uid, body.role, partner_entity_id=partner_entity_id)
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
+
+    admin_row = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    if admin_row:
+        admin_row.role = _AUTH_TO_ORG_ROLE.get(body.role, AdminRoleEnum.technical_admin)
+        db.add(admin_row)
+        db.commit()
 
     if body.role == "partner":
         _ensure_login_profile(
@@ -1173,11 +1321,21 @@ def login_otp_clear(
 @router.patch("/users/{uid}/ban")
 def ban_user(
     uid: str,
+    db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
     """Disable a user's account and mark it as banned. Admins cannot ban super_admins."""
     try:
+        assert_can_mutate_account(
+            db,
+            actor_uid=current_user["uid"],
+            actor_role=current_user["role"],
+            target_uid=uid,
+            action="ban",
+        )
         target = get_auth_user(uid)
+    except AccountGuardError as exc:
+        raise HTTPException(status_code=exc.status_code, detail=str(exc)) from exc
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
 

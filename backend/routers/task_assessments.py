@@ -1,8 +1,11 @@
 from datetime import datetime, timezone
 from decimal import Decimal
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, func, select
 
 from core.database import get_db
@@ -28,7 +31,11 @@ from schemas.task_assessment import (
     TaskResultScorePatch,
     TaskResultWithWorker,
 )
-from services.assessment_marks import max_attempts_for, require_marks_total_100
+from services.assessment_marks import (
+    attempt_progress,
+    attempts_exhausted_detail,
+    require_marks_total_100,
+)
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -64,30 +71,78 @@ def _current_task_result(db: Session, worker_id: UUID, source_id: UUID) -> TaskA
 
 
 def _enforce_attempts(a: TaskAssessment, existing: TaskAssessmentResult | None) -> None:
-    cap = max_attempts_for(a.allow_retakes, a.max_attempts)
     used = existing.attempt_count if existing else 0
-    if used >= cap:
-        raise HTTPException(status_code=400, detail=f"Maximum attempts reached ({cap}).")
+    progress = attempt_progress(a.allow_retakes, a.max_attempts, used)
+    if not progress["can_attempt"]:
+        raise HTTPException(status_code=409, detail=progress["blocked_reason"])
 
 
-@router.get("/available", response_model=list[TaskAssessmentResponse])
+class AvailableTask(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    title: str
+    category: str
+    description: str
+    instructions: str
+    media_urls: list[Any]
+    is_timed: bool
+    time_limit_minutes: int | None = None
+    passing_score_pct: Decimal
+    is_active: bool
+    allow_retakes: bool = False
+    max_attempts: int = 1
+    attempts: int = 0
+    retakes_allowed: int = 0
+    retakes_remaining: int = 0
+    can_attempt: bool = True
+    attempt_blocked_reason: str | None = None
+
+
+@router.get("/available", response_model=list[AvailableTask])
 def list_available_tasks(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
+    worker = get_worker_for_user(db, current_user)
     items = db.exec(
         select(TaskAssessment)
         .where(TaskAssessment.is_active.is_(True))
         .order_by(col(TaskAssessment.title))
     ).all()
-    ready = []
+    results = db.exec(
+        select(TaskAssessmentResult).where(TaskAssessmentResult.worker_id == worker.id)
+    ).all()
+    by_source = {r.source_id: r for r in results}
+    ready: list[AvailableTask] = []
     for a in items:
         acts = _activities(a.id, db)
         try:
             require_marks_total_100([x.max_marks for x in acts], "Task")
         except HTTPException:
             continue
-        ready.append(a)
+        row = by_source.get(a.id)
+        used = row.attempt_count if row else 0
+        progress = attempt_progress(a.allow_retakes, a.max_attempts, used)
+        ready.append(AvailableTask(
+            id=a.id,
+            title=a.title,
+            category=a.category,
+            description=a.description,
+            instructions=a.instructions,
+            media_urls=a.media_urls or [],
+            is_timed=a.is_timed,
+            time_limit_minutes=a.time_limit_minutes,
+            passing_score_pct=a.passing_score_pct,
+            is_active=a.is_active,
+            allow_retakes=a.allow_retakes,
+            max_attempts=progress["cap"],
+            attempts=used,
+            retakes_allowed=progress["retakes_allowed"],
+            retakes_remaining=progress["retakes_remaining"],
+            can_attempt=progress["can_attempt"],
+            attempt_blocked_reason=progress["blocked_reason"],
+        ))
     return ready
 
 
@@ -418,6 +473,13 @@ def submit_task_result(
             attempt_count=1,
         )
         db.add(r)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail=attempts_exhausted_detail(a.allow_retakes, a.max_attempts),
+        ) from None
     db.refresh(r)
     return r

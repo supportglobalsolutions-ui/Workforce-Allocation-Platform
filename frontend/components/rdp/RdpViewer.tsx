@@ -3,6 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { supabase } from '@/lib/supabase';
+import { reportError, reportWarning } from '@/lib/errors';
 
 type ConnectionStatus = 'connecting' | 'connected' | 'disconnected' | 'error';
 
@@ -118,10 +119,26 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
           }
         };
 
-        client.onerror = (err: { message?: string } | undefined) => {
+        // Guacamole reports a numeric status alongside the text; 516 means the
+        // connection id does not exist, 769 means the credentials were refused.
+        // The worker never needs those numbers — the console always does.
+        client.onerror = (err: { message?: string; code?: number } | undefined) => {
           if (!mounted) return;
           if (connectionTimer) clearTimeout(connectionTimer);
-          setError(err?.message || 'Remote desktop connection failed.');
+          reportError('Remote desktop tunnel', new Error(err?.message || 'unknown Guacamole error'), {
+            rdpId,
+            guacamoleCode: err?.code,
+            hint: err?.code === 516
+              ? 'Connection id not found in Guacamole — it will be rebuilt on the next attempt.'
+              : err?.code === 769
+                ? 'Guacamole rejected the RDP credentials for this machine.'
+                : undefined,
+          });
+          setError(
+            err?.code === 769
+              ? 'The saved sign-in for this machine was rejected. Ask an admin to update it.'
+              : 'The remote desktop could not start. Please try again, or ask an admin to check the machine.',
+          );
           setStatus('error');
         };
 
@@ -211,8 +228,9 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         requestAnimationFrame(resizeRemote);
         window.setTimeout(resizeRemote, 180);
       } catch (e) {
+        reportError('Start remote desktop', e, { rdpId });
         if (!mounted) return;
-        setError(e instanceof Error ? e.message : 'Failed to start remote session');
+        setError('We could not start the remote desktop. Please close this tab and try again.');
         setStatus('error');
       }
     })();

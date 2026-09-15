@@ -1,4 +1,5 @@
 import asyncio
+import uuid
 import logging
 import traceback
 from contextlib import asynccontextmanager
@@ -21,6 +22,7 @@ from services.email_resend import close_http_client
 from services.email_events import run_email_events_loop
 from services.rdp_lifecycle import run_rdp_lifecycle_loop
 from services.rdp_reconcile import run_rdp_reconcile_loop
+from services.period_lifecycle import run_period_lifecycle_loop
 
 _log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
 if settings.is_production:
@@ -52,6 +54,7 @@ async def lifespan(app: FastAPI):
         # Rebuilds Guacamole connections that do not exist on this host, so a
         # fresh deployment provisions itself instead of showing black screens.
         asyncio.create_task(run_rdp_reconcile_loop()),
+        asyncio.create_task(run_period_lifecycle_loop()),
     ]
     if settings.EMAIL_DISPATCH_ENABLED:
         background_tasks.append(asyncio.create_task(run_email_dispatch_loop()))
@@ -111,6 +114,22 @@ async def rate_limit_middleware(request: Request, call_next):
 
 
 @app.middleware("http")
+async def request_id_middleware(request: Request, call_next):
+    """
+    Tag every request so a message the user sees can be traced to the exact
+    server-side log line. The id goes back in X-Request-ID and, on failures,
+    inside the JSON body — the browser console prints it next to the friendly
+    message, so "it broke" becomes a grep.
+    """
+    incoming = (request.headers.get("x-request-id") or "").strip()
+    request_id = incoming[:64] if incoming else uuid.uuid4().hex[:12]
+    request.state.request_id = request_id
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+
+@app.middleware("http")
 async def security_headers_middleware(request: Request, call_next):
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
@@ -123,25 +142,57 @@ async def security_headers_middleware(request: Request, call_next):
     return response
 
 
+def _request_id(request: Request) -> str:
+    return getattr(request.state, "request_id", "") or "-"
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
+    """
+    The full traceback always goes to the server log. What crosses the wire
+    depends on environment: production sends only the id, development sends
+    the real type and message so the browser console can show it.
+    """
+    request_id = _request_id(request)
     logger.error(
-        "Unhandled exception on %s %s:\n%s",
+        "[%s] Unhandled %s on %s %s:\n%s",
+        request_id,
+        type(exc).__name__,
         request.method,
         request.url,
         traceback.format_exc(),
     )
-    if settings.is_production:
-        return JSONResponse(status_code=500, content={"detail": "Internal server error"})
-    return JSONResponse(status_code=500, content={"detail": str(exc), "type": type(exc).__name__})
+    body = {
+        "detail": "Something went wrong on our side. Please try again.",
+        "request_id": request_id,
+    }
+    if not settings.is_production:
+        body["debug"] = {"type": type(exc).__name__, "message": str(exc)[:500]}
+    return JSONResponse(status_code=500, content=body, headers={"X-Request-ID": request_id})
 
 
 @app.exception_handler(HTTPException)
 async def http_exception_handler(request: Request, exc: HTTPException):
-    if settings.is_production and exc.status_code >= 500:
-        logger.error("HTTP %s on %s %s: %s", exc.status_code, request.method, request.url, exc.detail)
-        return JSONResponse(status_code=exc.status_code, content={"detail": "Internal server error"})
-    return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    request_id = _request_id(request)
+    if exc.status_code >= 500:
+        logger.error(
+            "[%s] HTTP %s on %s %s: %s",
+            request_id, exc.status_code, request.method, request.url, exc.detail,
+        )
+        detail = "Something went wrong on our side. Please try again." if settings.is_production else exc.detail
+    else:
+        # 4xx are the caller's problem and already phrased for a human; log at
+        # a level that does not drown real failures.
+        logger.info(
+            "[%s] HTTP %s on %s %s: %s",
+            request_id, exc.status_code, request.method, request.url, exc.detail,
+        )
+        detail = exc.detail
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": detail, "request_id": request_id},
+        headers={"X-Request-ID": request_id},
+    )
 
 
 @app.get("/health")

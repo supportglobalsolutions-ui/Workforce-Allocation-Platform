@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, Briefcase, CheckCircle, ChevronDown, Eye, Search, ShieldCheck, User, UserPlus, X, XCircle,
+  AlertCircle, Ban, Briefcase, CheckCircle, ChevronDown, Eye, Search, ShieldCheck, Trash2, User, UserPlus, X, XCircle,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -13,6 +13,7 @@ import {
   apiApproveUser,
   apiBanUser,
   apiCreateUser,
+  apiDeleteUser,
   apiListUsers,
   apiRejectUser,
   apiUnbanUser,
@@ -21,7 +22,7 @@ import {
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 
-type AccountsTab = 'ops_lead' | 'executive' | 'super_admin' | 'partner' | 'pending';
+type AccountsTab = 'all' | 'ops_lead' | 'executive' | 'super_admin' | 'partner' | 'pending';
 
 interface PartnerOption { id: string; name: string; }
 interface CountryOption { id: string; name: string; currency_code: string; is_active: boolean; }
@@ -30,6 +31,7 @@ interface ApproveBody {
   worker_type?: string;
   partner_entity_id?: string | null;
   country?: string | null;
+  role?: AuthRole;
 }
 
 const ROLE_BADGE: Record<AuthRole, string> = {
@@ -47,6 +49,33 @@ const ROLE_HINT: Record<AuthRole, string> = {
   executive: 'Leadership portal only — dashboards and reporting. No admin or worker pages.',
   super_admin: 'Every portal — leadership, admin and worker, switchable from the workspace menu.',
 };
+
+function ancestorUidsOf(actorUid: string | null, accounts: ManagedUser[]): Set<string> {
+  const byId = new Map(accounts.map((u) => [u.uid, u]));
+  const out = new Set<string>();
+  let current = actorUid ? byId.get(actorUid) : undefined;
+  const seen = new Set<string>();
+  while (current?.createdByUid && !seen.has(current.uid)) {
+    seen.add(current.uid);
+    out.add(current.createdByUid);
+    current = byId.get(current.createdByUid);
+  }
+  return out;
+}
+
+function accountLockReason(
+  user: ManagedUser,
+  actorUid: string | null,
+  ancestors: Set<string>,
+): string | null {
+  if (user.protected) {
+    return 'This is a protected Super Admin. Nobody can delete, ban, or change its role.';
+  }
+  if (actorUid && ancestors.has(user.uid)) {
+    return 'You cannot remove or change the account that created yours.';
+  }
+  return null;
+}
 
 function RoleBadge({ role }: { role: AuthRole }) {
   const Icon = role === 'partner'
@@ -85,6 +114,7 @@ function PromoteAccountModal({
     (r) => r === 'admin' || r === 'executive' || r === 'super_admin',
   );
   const canDemote = roles.includes('user');
+  const ancestors = useMemo(() => ancestorUidsOf(actorUid, accounts), [actorUid, accounts]);
   const [tab, setTab] = useState<PromoteModalTab>('promote');
   const [query, setQuery] = useState('');
   const [targetRole, setTargetRole] = useState<AuthRole>(
@@ -95,20 +125,22 @@ function PromoteAccountModal({
     return accounts.filter((u) => {
       if (u.status !== 'approved' || u.role !== 'user') return false;
       if (actorUid && u.uid === actorUid) return false;
+      if (accountLockReason(u, actorUid, ancestors)) return false;
       return true;
     });
-  }, [accounts, actorUid]);
+  }, [accounts, actorUid, ancestors]);
 
   const promoted = useMemo(() => {
     return accounts.filter((u) => {
       if (u.status !== 'approved') return false;
       if (u.role !== 'admin' && u.role !== 'executive' && u.role !== 'super_admin') return false;
       if (actorUid && u.uid === actorUid) return false;
+      if (accountLockReason(u, actorUid, ancestors)) return false;
       // An admin may not manage leadership accounts.
       if (actorRole === 'admin' && (u.role === 'super_admin' || u.role === 'executive')) return false;
       return true;
     });
-  }, [accounts, actorRole, actorUid]);
+  }, [accounts, actorRole, actorUid, ancestors]);
 
   const list = tab === 'promote' ? toPromote : promoted;
 
@@ -296,31 +328,41 @@ function PromoteAccountModal({
 interface AccountModalProps {
   user: ManagedUser;
   actorRole: AuthRole;
+  actorUid: string | null;
+  ancestors: Set<string>;
   onClose: () => void;
   onApprove: (uid: string, body?: ApproveBody) => void;
   onReject: (uid: string) => void;
   onBan: (uid: string) => void;
   onUnban: (uid: string) => void;
   onRoleChange: (uid: string, role: AuthRole, partnerEntityId?: string | null) => void;
+  onDelete: (uid: string) => void;
   actingOn: string | null;
 }
 
 function AccountDetailModal({
-  user, actorRole, onClose, onApprove, onReject, onBan, onUnban, onRoleChange, actingOn,
+  user, actorRole, actorUid, ancestors, onClose, onApprove, onReject, onBan, onUnban, onRoleChange, onDelete, actingOn,
 }: AccountModalProps) {
   const isActing = actingOn === user.uid;
+  const lockReason = accountLockReason(user, actorUid, ancestors);
   // Only admins/executives can ban; only executives can ban other executives.
   const canBan =
-    actorRole === 'super_admin' ||
-    (actorRole === 'admin' && user.role !== 'super_admin');
-  const isPendingWorker = user.status === 'pending' && user.role === 'user';
-  const roleOptions: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner');
-  // Admins may promote workers ↔ ops lead; they cannot touch Executive accounts.
-  // Partner role is assigned via Partner account modal.
+    !lockReason &&
+    (actorRole === 'super_admin' ||
+    (actorRole === 'admin' && user.role !== 'super_admin' && user.role !== 'executive'));
+  const canDelete =
+    !lockReason &&
+    Boolean(actorUid) &&
+    actorUid !== user.uid &&
+    (actorRole === 'super_admin' ||
+      (actorRole === 'admin' && user.role !== 'super_admin' && user.role !== 'executive'));
+  const isPending = user.status === 'pending';
+  const roleOptions: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner' || isPending);
   const canChangeRole =
-    user.status === 'approved' &&
+    !lockReason &&
+    (user.status === 'approved' || user.status === 'banned') &&
     roleOptions.length > 0 &&
-    (actorRole === 'super_admin' || user.role !== 'super_admin');
+    (actorRole === 'super_admin' || (user.role !== 'super_admin' && user.role !== 'executive'));
 
   const [workerType, setWorkerType] = useState<'gs_registered' | 'partner_worker'>('gs_registered');
   const [partnerId, setPartnerId] = useState('');
@@ -328,7 +370,7 @@ function AccountDetailModal({
   const [partners, setPartners] = useState<PartnerOption[] | null>(null);
   const [countries, setCountries] = useState<CountryOption[] | null>(null);
   const [nextRole, setNextRole] = useState<AuthRole>(
-    roleOptions.includes(user.role) ? user.role : (roleOptions[0] ?? user.role),
+    isPending ? 'user' : (roleOptions.includes(user.role) ? user.role : (roleOptions[0] ?? user.role)),
   );
 
   // Reset approval form + role picker whenever a different account is opened.
@@ -338,27 +380,38 @@ function AccountDetailModal({
     setCountry(user.country || '');
     setPartners(null);
     setCountries(null);
-    const opts: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner');
-    setNextRole(opts.includes(user.role) ? user.role : (opts[0] ?? user.role));
-  }, [user.uid, user.role, user.country, actorRole]);
+    const opts = assignableRoles(actorRole);
+    if (user.status === 'pending') {
+      setNextRole(opts.includes('user') ? 'user' : (opts[0] ?? 'user'));
+    } else {
+      setNextRole(opts.includes(user.role) ? user.role : (opts[0] ?? user.role));
+    }
+  }, [user.uid, user.role, user.country, user.status, actorRole]);
+
+  const needsWorkerFields = isPending && (nextRole === 'user' || nextRole === 'partner');
 
   useEffect(() => {
-    if (!isPendingWorker || countries !== null) return;
+    if (!needsWorkerFields || countries !== null) return;
     api.get<CountryOption[]>('/currencies/countries').then(setCountries).catch(() => setCountries([]));
-  }, [isPendingWorker, countries]);
+  }, [needsWorkerFields, countries]);
 
   useEffect(() => {
-    if (workerType !== 'partner_worker' || partners !== null) return;
+    const needPartners = nextRole === 'partner' || workerType === 'partner_worker';
+    if (!needPartners || partners !== null) return;
     api.get<PartnerOption[]>('/partners').then(setPartners).catch(() => setPartners([]));
-  }, [workerType, partners]);
+  }, [nextRole, workerType, partners]);
 
-  const approveDisabled = workerType === 'partner_worker' && !partnerId;
+  const approveDisabled =
+    (nextRole === 'partner' || workerType === 'partner_worker') && !partnerId && needsWorkerFields;
 
   function handleApproveClick() {
-    if (!isPendingWorker) { onApprove(user.uid); return; }
+    const asPartner = nextRole === 'partner' || (nextRole === 'user' && workerType === 'partner_worker');
     onApprove(user.uid, {
-      worker_type: workerType,
-      partner_entity_id: workerType === 'partner_worker' ? partnerId : null,
+      role: nextRole,
+      worker_type: nextRole === 'user' || nextRole === 'partner'
+        ? (asPartner ? 'partner_worker' : 'gs_registered')
+        : undefined,
+      partner_entity_id: asPartner ? partnerId : null,
       country: country || null,
     });
   }
@@ -372,7 +425,14 @@ function AccountDetailModal({
           <div className="min-w-0 flex-1 pr-4">
             <p className="text-[15px] font-bold text-gray-900 truncate">{user.displayName || '—'}</p>
             <p className="text-xs text-gray-400 mt-0.5 truncate">{user.email}</p>
-            <div className="mt-2.5"><RoleBadge role={user.role} /></div>
+            <div className="mt-2.5 flex items-center gap-2 flex-wrap">
+              <RoleBadge role={user.role} />
+              {user.protected && (
+                <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-amber-50 text-amber-800 border border-amber-200">
+                  Protected
+                </span>
+              )}
+            </div>
           </div>
           <button type="button" onClick={onClose}
             className="shrink-0 w-8 h-8 flex items-center justify-center rounded-xl bg-gray-100 hover:bg-gray-200 text-gray-400 hover:text-gray-700 transition-colors">
@@ -501,8 +561,30 @@ function AccountDetailModal({
                 <div className="flex justify-center py-3"><SpinningDots size="sm" className="text-emerald-500" /></div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3">
-                  {isPendingWorker && (
+                  <div className="sm:col-span-2">
+                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Approve as</p>
+                    <div className="relative">
+                      <select
+                        value={nextRole}
+                        onChange={(e) => {
+                          const role = e.target.value as AuthRole;
+                          setNextRole(role);
+                          if (role === 'partner') setWorkerType('partner_worker');
+                          if (role === 'user') setWorkerType('gs_registered');
+                        }}
+                        className="w-full px-3 py-2.5 rounded-xl border border-gray-200 bg-gray-50 text-sm text-gray-800 appearance-none pr-8 focus:outline-none focus:border-emerald-400"
+                      >
+                        {assignableRoles(actorRole).map((r) => (
+                          <option key={r} value={r}>{ROLE_DISPLAY[r]}</option>
+                        ))}
+                      </select>
+                      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 pointer-events-none" />
+                    </div>
+                    <p className="text-[10px] text-gray-400 mt-1">{ROLE_HINT[nextRole]}</p>
+                  </div>
+                  {needsWorkerFields && (
                     <>
+                      {nextRole === 'user' && (
                       <div>
                         <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-2">Worker Designation</p>
                         <div className="flex gap-4">
@@ -520,7 +602,8 @@ function AccountDetailModal({
                           ))}
                         </div>
                       </div>
-                      {workerType === 'partner_worker' && (
+                      )}
+                      {(nextRole === 'partner' || workerType === 'partner_worker') && (
                         <div className="sm:col-span-2">
                           <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Partner Company *</p>
                           <select value={partnerId} onChange={(e) => setPartnerId(e.target.value)}
@@ -541,35 +624,60 @@ function AccountDetailModal({
                     </>
                   )}
                   <div className="flex gap-3 sm:col-span-2">
-                    <button type="button" onClick={handleApproveClick} disabled={isPendingWorker && approveDisabled}
+                    <button type="button" onClick={handleApproveClick} disabled={approveDisabled}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-                      <CheckCircle size={13} /> Approve
+                      <CheckCircle size={13} /> Approve as {ROLE_DISPLAY[nextRole]}
                     </button>
+                    {!lockReason && (
                     <button type="button" onClick={() => onReject(user.uid)}
                       className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
                       <XCircle size={13} /> Reject & delete
                     </button>
+                    )}
                   </div>
                 </div>
               )}
             </div>
           )}
 
-          {canBan && (user.status === 'approved' || user.status === 'banned') && (
+          {lockReason && (
+            <div className="border-t border-gray-100 pt-4">
+              <p className="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2">
+                {lockReason}
+              </p>
+            </div>
+          )}
+
+          {(canBan || canDelete) && (user.status === 'approved' || user.status === 'banned') && (
             <div className="border-t border-gray-100 pt-4">
               <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Account Access</p>
               {isActing ? (
                 <div className="flex justify-center py-3"><SpinningDots size="sm" className="text-red-500" /></div>
-              ) : user.status === 'banned' ? (
-                <button type="button" onClick={() => onUnban(user.uid)}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors">
-                  Unban Account
-                </button>
               ) : (
-                <button type="button" onClick={() => onBan(user.uid)}
-                  className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
-                  <Ban size={13} /> Lock / Ban Account
-                </button>
+                <div className="space-y-2">
+                  {canBan && (user.status === 'banned' ? (
+                    <button type="button" onClick={() => onUnban(user.uid)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-600 text-white text-xs font-bold uppercase tracking-wider transition-colors">
+                      Unban Account
+                    </button>
+                  ) : (
+                    <button type="button" onClick={() => onBan(user.uid)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-200 bg-red-50 hover:bg-red-100 text-red-600 text-xs font-bold uppercase tracking-wider transition-colors">
+                      <Ban size={13} /> Lock / Ban Account
+                    </button>
+                  ))}
+                  {canDelete && (
+                    <button type="button" onClick={() => onDelete(user.uid)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl border border-red-300 bg-red-600 hover:bg-red-700 text-white text-xs font-bold uppercase tracking-wider transition-colors">
+                      <Trash2 size={13} /> Delete account
+                    </button>
+                  )}
+                  {canDelete && (
+                    <p className="text-[10px] text-gray-400">
+                      Deletes the login so this person can never sign in. Work sessions stay on record; a live RDP is released.
+                    </p>
+                  )}
+                </div>
               )}
             </div>
           )}
@@ -590,7 +698,7 @@ export default function AccountsPage() {
   const canPromote = allAssignable.some((r) => r === 'admin' || r === 'super_admin');
   const canPartner = allAssignable.includes('partner');
 
-  const [activeTab, setActiveTab] = useState<AccountsTab>('ops_lead');
+  const [activeTab, setActiveTab] = useState<AccountsTab>('all');
   const [allUsers, setAllUsers] = useState<ManagedUser[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -629,6 +737,8 @@ export default function AccountsPage() {
 
   useEffect(() => { loadUsers(); }, []);
 
+  const ancestors = useMemo(() => ancestorUidsOf(actorUid, allUsers), [actorUid, allUsers]);
+
   const opsLeads = useMemo(() => {
     const q = search.trim().toLowerCase();
     return allUsers
@@ -664,14 +774,23 @@ export default function AccountsPage() {
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
+  const allAccounts = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    return allUsers.filter(
+      (u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
+    );
+  }, [allUsers, search]);
+
   const tabUsers =
-    activeTab === 'ops_lead' ? opsLeads
+    activeTab === 'all' ? allAccounts
+    : activeTab === 'ops_lead' ? opsLeads
       : activeTab === 'executive' ? executives
         : activeTab === 'super_admin' ? superAdmins
           : activeTab === 'partner' ? partners
             : pendingUsers;
 
   const TABS: { key: AccountsTab; label: string; count: number }[] = [
+    { key: 'all', label: 'All accounts', count: allAccounts.length },
     { key: 'ops_lead', label: 'Operations Lead', count: opsLeads.length },
     { key: 'executive', label: 'Executive', count: executives.length },
     { key: 'super_admin', label: 'Super Admin', count: superAdmins.length },
@@ -774,6 +893,21 @@ export default function AccountsPage() {
     finally { setActingOn(null); }
   }
 
+  async function handleDelete(uid: string) {
+    const ok = window.confirm(
+      'Delete this account? They will not be able to sign in again. Work sessions stay on record. This cannot be undone.',
+    );
+    if (!ok) return;
+    setActingOn(uid); setActionError('');
+    try {
+      await apiDeleteUser(uid);
+      await loadUsers();
+      setSelectedUser(null);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to delete account.');
+    } finally { setActingOn(null); }
+  }
+
   async function handleRoleChange(uid: string, role: AuthRole, partnerEntityId?: string | null) {
     setActingOn(uid); setActionError('');
     try {
@@ -813,7 +947,8 @@ export default function AccountsPage() {
   }
 
   const emptyLabel =
-    activeTab === 'pending' ? 'No pending approval requests.'
+    activeTab === 'all' ? 'No accounts found.'
+    : activeTab === 'pending' ? 'No pending approval requests.'
       : activeTab === 'ops_lead' ? 'No Operations Lead accounts found.'
         : activeTab === 'partner' ? 'No Partner accounts found.'
           : activeTab === 'super_admin' ? 'No Super Admin accounts found.'
@@ -1053,7 +1188,16 @@ export default function AccountsPage() {
                     <p className="text-xs text-theme-muted">{u.email}</p>
                   </td>
                   {activeTab !== 'pending' && (
-                    <td className="px-4 py-3"><RoleBadge role={u.role} /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <RoleBadge role={u.role} />
+                        {u.protected && (
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
+                            Protected
+                          </span>
+                        )}
+                      </div>
+                    </td>
                   )}
                   <td className="px-4 py-3">
                     {activeTab === 'pending' ? (
@@ -1101,12 +1245,15 @@ export default function AccountsPage() {
           key={selectedUser.uid}
           user={selectedUser}
           actorRole={actorRole}
+          actorUid={actorUid}
+          ancestors={ancestors}
           onClose={() => setSelectedUser(null)}
           onApprove={handleApprove}
           onReject={handleReject}
           onBan={handleBan}
           onUnban={handleUnban}
           onRoleChange={handleRoleChange}
+          onDelete={handleDelete}
           actingOn={actingOn}
         />
       )}

@@ -267,6 +267,8 @@ export interface ManagedUser {
   banned: boolean;
   createdAt: number;
   partnerEntityId?: string | null;
+  protected?: boolean;
+  createdByUid?: string | null;
 }
 
 export const apiListUsers = () =>
@@ -332,11 +334,19 @@ export const verifySignupOtp = (email: string, code: string) =>
 
 export const apiApproveUser = (
   uid: string,
-  body?: { worker_type?: string; partner_entity_id?: string | null; country?: string | null },
+  body?: {
+    worker_type?: string;
+    partner_entity_id?: string | null;
+    country?: string | null;
+    role?: AuthRole;
+  },
 ) => api.patch<ManagedUser>(`/auth/users/${uid}/approve`, body ?? {});
 
 export const apiRejectUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/reject`, {});
+
+export const apiDeleteUser = (uid: string) =>
+  api.delete<{ ok: boolean; deleted: boolean; uid: string }>(`/auth/users/${uid}`);
 
 export const apiBanUser = (uid: string) =>
   api.patch<ManagedUser>(`/auth/users/${uid}/ban`, {});

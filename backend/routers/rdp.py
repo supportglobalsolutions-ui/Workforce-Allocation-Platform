@@ -785,6 +785,15 @@ def _provision_guacamole(
     Returns an error string instead of raising unless `strict` is set, so an
     unreachable Guacamole never blocks saving the machine record.
     """
+    # Re-read before writing. The reconcile loop runs in its own session and
+    # may have just repaired guacamole_connection_id; committing a request's
+    # stale copy of this row would silently revert it to a connection that no
+    # longer exists, and the viewer would fail with 516.
+    try:
+        db.refresh(resource)
+    except Exception:
+        pass
+
     # Keep the credentials on the machine (password encrypted) so the
     # connection can be rebuilt on any Guacamole instance without an admin
     # retyping it — a fresh VPS starts with an empty Guacamole database.
@@ -1379,6 +1388,25 @@ async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
             resource.guacamole_connection_id = connection_id
             db.add(resource)
             db.commit()
+
+        # A stored id that no longer exists in Guacamole yields 516 and a
+        # viewer stuck on "Connecting…". Rebuild it here rather than making
+        # the worker wait for the next reconcile pass.
+        try:
+            if not GuacamoleClient(get_redis()).get_connection(connection_id):
+                logger.warning(
+                    "Connection %s missing in Guacamole for %s — rebuilding",
+                    connection_id, resource.nickname,
+                )
+                repaired = sync_connection(get_redis(), resource)
+                connection_id = repaired.connection_id
+                resource.guacamole_connection_id = connection_id
+                db.add(resource)
+                db.commit()
+        except GuacamoleProvisionError as exc:
+            logger.warning("Could not rebuild connection for %s: %s", resource.nickname, exc)
+        except Exception as exc:
+            logger.warning("Connection existence check failed for %s: %s", resource.nickname, exc)
 
     # --- 4. Fetch Guacamole token server-side ---
     redis_client = get_redis()

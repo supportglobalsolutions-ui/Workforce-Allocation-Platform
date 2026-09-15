@@ -9,6 +9,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageUpload from '@/components/rdp/SessionImageUpload';
 import { api } from '@/lib/api';
+import { reportError, reportWarning } from '@/lib/errors';
 import { endRdpConnection, getMyActiveRdp, openRdpDesktopTab } from '@/lib/rdp';
 
 interface RDPResource {
@@ -36,7 +37,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   useEffect(() => {
     api.get<RDPResource>(`/rdp/${rdpId}`)
       .then(setMachine)
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load machine'))
+      .catch((e) => setError(reportError('Load RDP machine', e, { rdpId })))
       .finally(() => setLoading(false));
   }, [rdpId]);
 

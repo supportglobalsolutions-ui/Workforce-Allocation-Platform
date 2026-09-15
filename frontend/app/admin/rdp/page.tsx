@@ -19,6 +19,7 @@ import {
   updateRdpResource,
 } from '@/lib/rdp';
 import { api } from '@/lib/api';
+import { reportError } from '@/lib/errors';
 
 interface ClientOption {
   id: string;
@@ -122,7 +123,7 @@ export default function RdpManagementPage() {
       .then(setMachines)
       .then(reloadHealth)
       .catch((e) => {
-        setError(e instanceof Error ? e.message : 'Failed to load machines');
+        setError(reportError('Load RDP machines', e));
       });
 
   useEffect(() => {
@@ -143,7 +144,7 @@ export default function RdpManagementPage() {
       await action();
       await reload();
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Action failed');
+      setError(reportError('RDP admin action', e, { machineId: id }));
     } finally {
       setBusyId(null);
     }
@@ -159,7 +160,7 @@ export default function RdpManagementPage() {
       setShowCreate(false);
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create machine');
+      setError(reportError('Create RDP machine', err));
     } finally {
       setCreating(false);
     }
@@ -186,7 +187,7 @@ export default function RdpManagementPage() {
       cancelEdit();
       await reload();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to update machine');
+      setError(reportError('Update RDP machine', err, { machineId: editingId }));
     } finally {
       setSavingEdit(false);
     }

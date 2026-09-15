@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import { reportError, reportWarning } from '@/lib/errors';
 import { api } from '@/lib/api';
 import {
   claimRdp,
@@ -60,7 +61,8 @@ export default function RdpClaimBoard() {
       setMachines(data);
       setMyActive(active);
       setMyWorkerId(worker?.id ?? null);
-    } catch {
+    } catch (err) {
+      reportWarning('Load claim board', err);
       setMachines([]);
     } finally {
       setLoading(false);
@@ -103,8 +105,7 @@ export default function RdpClaimBoard() {
         }
       } catch (probeErr) {
         closeReservedTab(desktopTab);
-        const msg = probeErr instanceof Error ? probeErr.message : 'Could not test this machine.';
-        setError(msg);
+        setError(reportError('RDP preflight', probeErr, { machineId }));
         return;
       }
       const result = await claimRdp(machineId);
@@ -118,8 +119,9 @@ export default function RdpClaimBoard() {
       router.push(`/worker/rdp-session/${machineId}`);
     } catch (e) {
       closeReservedTab(desktopTab);
-      const msg = e instanceof Error ? e.message : 'Failed to claim machine';
-      if (msg.includes('already have an open session')) {
+      const msg = reportError('Claim RDP', e, { machineId });
+      const raw = e instanceof Error ? e.message : String(e);
+      if (raw.includes('already have an open session') || msg.includes('already have an open session')) {
         const active = await getMyActiveRdp().catch(() => null);
         if (active?.rdp_resource_id) {
           navigated = true;

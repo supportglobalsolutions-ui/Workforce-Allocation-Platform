@@ -25,6 +25,7 @@ from models.task_assessment import TaskAssessmentResult, TaskResultActivityScore
 from models.training import TrainingProgress
 from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
+from services.account_guard import is_protected_email
 from services.session_purge import purge_sessions
 
 logger = logging.getLogger(__name__)
@@ -72,10 +73,19 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
             admin = db.get(AdminUser, worker.admin_user_id)
             auth_user_id = admin.auth_user_id if admin else None
         if auth_user_id:
-            try:
-                ban_auth_user(auth_user_id)
-            except Exception as exc:  # noqa: BLE001
-                logger.warning("Could not ban Supabase user for worker %s: %s", wid, exc)
+            admin_row = worker.admin_user
+            if admin_row is None and worker.admin_user_id:
+                from models.admin_users import AdminUser
+                admin_row = db.get(AdminUser, worker.admin_user_id)
+            if admin_row and (
+                admin_row.is_protected or is_protected_email(admin_row.email)
+            ):
+                logger.warning("Skip ban of protected Super Admin linked to worker %s", wid)
+            else:
+                try:
+                    ban_auth_user(auth_user_id)
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("Could not ban Supabase user for worker %s: %s", wid, exc)
 
         # Sessions (including active)
         session_ids = list(db.exec(select(WorkSession.id).where(WorkSession.worker_id == wid)).all())
