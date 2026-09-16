@@ -23,6 +23,8 @@ export interface ErrorDetail {
   method?: string;
   /** Extra server-side diagnostics (development only). */
   debug?: unknown;
+  /** From `Retry-After` when the server asked us to wait (ms). */
+  retryAfterMs?: number;
 }
 
 /** Error carrying both audiences' information. Thrown by lib/api.ts. */
@@ -34,6 +36,7 @@ export class AppError extends Error {
   readonly url?: string;
   readonly method?: string;
   readonly debug?: unknown;
+  readonly retryAfterMs?: number;
 
   constructor(detail: ErrorDetail) {
     super(detail.friendly || detail.raw);
@@ -45,6 +48,7 @@ export class AppError extends Error {
     this.url = detail.url;
     this.method = detail.method;
     this.debug = detail.debug;
+    this.retryAfterMs = detail.retryAfterMs;
   }
 }
 

@@ -111,15 +111,26 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pendingAccessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
+    // If cookie sync / role lookup hangs (e.g. API DB timeout), stop the
+    // portal loading gate so pages are not stuck on a blank brand background.
+    // A late auth callback can still populate the session afterwards.
+    const failSafe = window.setTimeout(() => {
+      setIsLoading(false);
+    }, 12_000);
+
     const unsub = subscribeAuthState(
       (s) => {
+        window.clearTimeout(failSafe);
         setSession(s);
         setIsLoading(false);
         if (!s) clearAuthRoleCookie();
       },
       { skipIf: () => otpPendingRef.current },
     );
-    return unsub;
+    return () => {
+      window.clearTimeout(failSafe);
+      unsub();
+    };
   }, []);
 
   const finishLogin = useCallback(

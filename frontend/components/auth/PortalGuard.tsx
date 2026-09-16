@@ -17,7 +17,7 @@ export default function PortalGuard({
   const router = useRouter();
   const redirecting = useRef(false);
 
-  const allowed = session && canAccess(requiredPortal);
+  const allowed = Boolean(session && canAccess(requiredPortal));
 
   useEffect(() => {
     if (isLoading || allowed || redirecting.current) return;
@@ -30,15 +30,16 @@ export default function PortalGuard({
     router.replace(ROLE_LANDING[session.primaryPortal]);
   }, [isLoading, allowed, session, router]);
 
-  if (isLoading) {
+  // Never paint an empty viewport. `return null` used to leave only the root
+  // brand background — which looks like a broken app during auth resolve or
+  // portal redirect.
+  if (isLoading || !allowed) {
     return (
-      <div className="flex-1 flex items-center justify-center">
+      <div className="min-h-screen bg-brand-background flex items-center justify-center">
         <SpinningDots size="lg" className="text-emerald-accent" />
       </div>
     );
   }
-
-  if (!allowed) return null;
 
   return <>{children}</>;
 }

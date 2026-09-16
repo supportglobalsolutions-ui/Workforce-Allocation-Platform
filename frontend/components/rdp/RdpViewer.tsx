@@ -3,7 +3,7 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
 
 import { supabase } from '@/lib/supabase';
-import { reportError, reportWarning } from '@/lib/errors';
+import { AppError, reportError, reportWarning } from '@/lib/errors';
 import { createJoinTicket, getDesktopGuard } from '@/lib/rdp';
 
 type ConnectionStatus =
@@ -54,6 +54,9 @@ interface GatewayAuth {
 
 /** The server asked us to wait — how long, in ms, if it said. */
 function retryAfterMs(error: unknown): number | null {
+  if (error instanceof AppError && error.retryAfterMs && error.retryAfterMs > 0) {
+    return error.retryAfterMs;
+  }
   const status = (error as { status?: number })?.status;
   if (status !== 503) return null;
   const header = (error as { headers?: Headers })?.headers?.get?.('retry-after');
@@ -399,13 +402,31 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
                 ? 'Guacamole rejected the RDP credentials for this machine.'
                 : undefined,
           });
-          setError(
-            err?.code === 769
-              ? 'The saved sign-in for this machine was rejected. Ask an admin to update it.'
-              : 'The remote desktop could not start. Please try again, or ask an admin to check the machine.',
-          );
-          setStatus('error');
-          setConnectFailures((n) => n + 1);
+          // Hard credential rejection — never reconnect into the same refusal.
+          if (err?.code === 769) {
+            setError(
+              'The saved sign-in for this machine was rejected. Ask an admin to update it.',
+            );
+            setStatus('error');
+            setConnectFailures((n) => n + 1);
+            return;
+          }
+          // A media restart often fires onerror *before* DISCONNECTED. Painting
+          // `error` here used to make the state-5 handler refuse to reconnect
+          // (`if (current === 'error') return 'error'`), so every worker tab
+          // died on gateway bounce. Leave reconnect to DISCONNECTED when we
+          // already had a live (or mid-reconnect) session.
+          setStatus((current) => {
+            if (current === 'connected' || current === 'reconnecting') {
+              setError(null);
+              return 'reconnecting';
+            }
+            setError(
+              'The remote desktop could not start. Please try again, or ask an admin to check the machine.',
+            );
+            setConnectFailures((n) => n + 1);
+            return 'error';
+          });
         };
 
         // Keep the RDP canvas matched to the actual browser viewport. A

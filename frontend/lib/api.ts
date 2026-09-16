@@ -84,6 +84,15 @@ function isRetryable(status: number): boolean {
   return status === 500 || status === 502 || status === 503 || status === 504;
 }
 
+/** Honour `Retry-After` seconds (or HTTP-date is ignored → undefined). */
+function retryAfterHeaderMs(res: Response): number | undefined {
+  const header = res.headers.get('retry-after');
+  if (!header) return undefined;
+  const seconds = Number(header);
+  if (!Number.isFinite(seconds) || seconds <= 0) return undefined;
+  return Math.round(seconds * 1000);
+}
+
 async function request<T>(
   method: string,
   path: string,
@@ -147,6 +156,7 @@ async function request<T>(
       debug: parsed.debug,
       url: `${BASE}${path}`,
       method,
+      retryAfterMs: retryAfterHeaderMs(res),
     });
   }
 

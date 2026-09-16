@@ -812,13 +812,13 @@ A `100%` action may therefore still carry Pending rows, and those rows may only 
 
 | Details of what is supposed to be done | What we will do | % |
 |---|---|---|
-| A media node restart drops every tunnel on it at once and every viewer retries immediately — a thundering herd against guacd and Nginx at the moment they are most fragile. `RdpViewer` has no reconnect backoff, and the per-worker join-ticket rate limit (120/hour) does nothing to shape a fleet-wide surge. | - `RdpViewer`: **full jitter** backoff (`backoffDelayMs`, base 1s, cap 30s, 6 attempts) — **done**. Full jitter rather than plain exponential on purpose: plain backoff keeps the fleet synchronised, just hitting less often<br>- Retry instead of falling through to the proxy on the first failure — **done** (`mintGatewayAuthWithBackoff`), so a gateway blip cannot quietly move the whole fleet back into Python<br>- Silent auth refresh also backs off with jitter now, so refresh timers cannot converge during an outage — **done**<br>- Per-gateway admission control — **done** (`admit_connect`, `RDP_GATEWAY_ADMIT_PER_SECOND=5`, per-second bucket, per gateway, **fails open** so a broken limiter is never an outage of its own)<br>- `retry_after_ms` hint honoured by the viewer — **done** (503 + `Retry-After`; the viewer prefers the server's hint over its own backoff)<br>- Unit-tested: limit enforcement, wait hint, per-gateway isolation, fail-open, disabled-at-zero, atomicity under 16 threads — **done** | **80%** |
+| A media node restart drops every tunnel on it at once and every viewer retries immediately — a thundering herd against guacd and Nginx at the moment they are most fragile. `RdpViewer` has no reconnect backoff, and the per-worker join-ticket rate limit (120/hour) does nothing to shape a fleet-wide surge. | **Local / code — complete (nothing left to build under this action):**<br>- Unattended drop reconnects in-tab — **done** (`reconnectNonce` rebuilds the tunnel; **Reconnecting…** UI; tab stays open; End / Switch here / unmount set `intentionalCloseRef` so deliberate leaves do not bounce back)<br>- Full jitter backoff — **done** (`backoffDelayMs`, base 1s, cap 30s, **8** attempts sized inside the 5-minute grace; mid-reconnect 20s hang spends another attempt instead of aborting the loop)<br>- `onerror` no longer paints a hard `error` ahead of DISCONNECTED on a live session — **done** (that race used to block reconnect on every gateway bounce; credential `769` still hard-fails)<br>- Retry instead of falling through to the proxy on the first failure — **done** (`mintGatewayAuthWithBackoff`)<br>- Silent auth refresh backs off with jitter — **done**<br>- Per-gateway admission control — **done** (`admit_connect`, `RDP_GATEWAY_ADMIT_PER_SECOND=5`, fails open)<br>- `Retry-After` carried on `AppError` and honoured by the viewer — **done**<br>- Unit-tested admission limiter — **done** | **100%** |
 
 **Pending**
 
 | Details of what is supposed to be done | What we will do |
 |---|---|
-| `RDP_GATEWAY_ADMIT_PER_SECOND=5` is a guess. The whole point of this action is behaviour under a real restart, and no restart has ever been measured — the number should come from Phase 6, not from a default. | - After the Phase 6 measurement, size the admission rate from what guacd actually absorbs on a cold start<br>- Prove it under the Phase 7 `gateway_loss` acceptance scenario: restart a node with N desktops live and confirm the reconnects spread instead of spiking<br>- Confirm no worker is pushed past their 5-minute grace by the backoff itself (6 attempts, 30s cap ≈ well inside it, but verify with real numbers) |
+| Live measurement only — no further local code. Default `RDP_GATEWAY_ADMIT_PER_SECOND=5` stays until Phase 6 sizes it from a real cold start. | - After the Phase 6 measurement, size the admission rate from what guacd actually absorbs on a cold start<br>- Prove it under the Phase 7 `gateway_loss` acceptance scenario: restart a node with N desktops live and confirm reconnects spread (jitter + admit) instead of spiking or closing every tab<br>- Confirm no worker is pushed past their 5-minute grace by the backoff itself (8 attempts, 30s cap ≈ well inside it) |
 
 ### Action 5 — Backend test harness and concurrency gates
 
@@ -857,6 +857,6 @@ A `100%` action may therefore still carry Pending rows, and those rows may only 
 | Phase 5 | Pixels on Guacamole | **93%** |
 | Phase 6 | Split media + measure | **65%** |
 | Phase 7 | Redundancy + acceptance | **62%** |
-| Phase 8 | Close the silent-failure gaps | **92%** |
+| Phase 8 | Close the silent-failure gaps | **97%** |
 
 When every phase is **100%**, delete **Section 2** and keep **Section 1** as the permanent design reference.

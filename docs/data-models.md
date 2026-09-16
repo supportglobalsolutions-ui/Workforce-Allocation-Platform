@@ -1,6 +1,6 @@
-**Document:** Phase 0 canonical database specification  
-**Version:** 1.1  
-**Status:** Requirements lock — pending GlobalSolutions approval  
+**Document:** Canonical database specification (kept in sync with `backend/models/`)  
+**Version:** 1.2  
+**Status:** Living schema reference — matches the deployed Alembic/SQLModel models  
 **Charter reference:** Project Charter V2.0 (90-Day Delivery Plan)
 
 ---
@@ -165,8 +165,9 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | `workers` | Read/update own row | `id`, `worker_type`, `partner_entity_id`, `display_name`, `country`, `pay_tier`, `status` | FK → `partner_entities`; optional FK → `admin_users` |
 | `shifts` | Create/read own | `worker_id`, `rdp_resource_id`, `scheduled_start`, `scheduled_end`, `status` | FK → `workers`, `rdp_resources`, `admin_users` (approver) |
 | `rdp_resources` | Read board (no direct write) | `nickname`, `country`, `status`, `assigned_worker_id` | FK → `workers` when claimed |
-| `allocations` | Create via claim; read own | `worker_id`, `rdp_resource_id`, `claimed_at`, `released_at`, `guacamole_token` | FK → `shifts`, `workers`, `rdp_resources` |
-| `sessions` | Create/read own | `session_type`, `start_time`, `end_time`, `type_specific_fields` (JSONB) | FK → `workers`, `allocations`, `rdp_resources`, `partner_entities` |
+| `allocations` | Create via claim; read own | `worker_id`, `rdp_resource_id`, `claimed_at`, `released_at`, `connection_generation`, `allocation_status`, `tunnel_status`, `gateway_id` | FK → `shifts`, `workers`, `rdp_resources` |
+| `sessions` | Create/read own | `session_type`, `start_time`, `end_time`, `type_specific_fields` (JSONB), evidence image fields | FK → `workers`, `allocations`, `rdp_resources`, `partner_entities` |
+| `chat_threads` / `chat_messages` | Own support thread | message body, unread counters | FK → `admin_users` (optional) |
 | `mcq_assessment_sets` | Read active | `title`, `category`, `passing_score_pct` | — |
 | `mcq_questions` | Read | `prompt`, `options`, `sort_order` | FK → `mcq_assessment_sets` |
 | `mcq_results` | Create/read own | `score_pct`, `passed`, `completed_at` | FK → `workers`, `mcq_assessment_sets` |
@@ -245,9 +246,10 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | `admin_users` | Read own profile | `role`, `country_scope`, `display_name` | Identity for ops actions |
 | `workers` | Read/write (country-scoped for managers) | All worker columns | FK → `partner_entities`, `admin_users` |
 | `shifts` | Approve/reject/assign RDP | `status`, `approved_by`, `rdp_resource_id`, `rejection_reason` | FK → `workers`, `rdp_resources`, `admin_users` |
-| `rdp_resources` | Full ops control | `status` (8-state enum), `assigned_worker_id`, `health_notes`, `risk_flags`, `last_health_check_at` | FK → `workers`; central to state machine |
-| `allocations` | Read all; force-release | `release_reason`, `released_at` | FK → `shifts`, `workers`, `rdp_resources` |
-| `sessions` | Read all; force-release; `admin_notes` | `close_status`, `admin_notes`, `payroll_approval_state` | FK → `workers`, `allocations`, `rdp_resources` |
+| `rdp_resources` | Full ops control | `status`, `machine_health`, `version`, `assigned_worker_id`, credentials-at-rest, `health_notes`, `risk_flags`, `last_health_check_at` | FK → `workers`, `clients` |
+| `allocations` | Read all; force-release; quarantine repair | `release_reason`, `released_at`, `gateway_id`, `connection_generation`, `allocation_status`, `quarantined_at`, `quarantine_reason` | FK → `shifts`, `workers`, `rdp_resources` |
+| `sessions` | Read all; force-release; `admin_notes`; `suspicious` flag | `close_status`, `admin_notes`, `payroll_approval_state`, `suspicious` | FK → `workers`, `allocations`, `rdp_resources` |
+| `chat_threads` / `chat_messages` | Admin inbox + reply | unread counters, archive | Support surface |
 | `quality_indicators` | Read/configure | `code`, `weight_in_subjective_pool`, `input_mode` | — |
 | `quality_indicator_ratings` | Create manual ratings | `score`, `reason_note`, `rated_by`, `session_id` | FK → `workers`, `quality_indicators`, `admin_users` |
 | `mcq_assessment_sets` | Create/manage | `title`, `is_active`, `created_by` | FK → `admin_users` |
@@ -676,18 +678,24 @@ GlobalSolutions RDP machines managed through the 8-state machine.
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
 | `id` | `UUID` | PK | Internal machine ID |
-| `nickname` | `VARCHAR(64)` | UNIQUE, NOT NULL | Display ID (e.g. `RDP-KE-001`) |
+| `nickname` | `VARCHAR(64)` | UNIQUE, NOT NULL | Display ID (e.g. `RDP2`) |
 | `country` | `VARCHAR(64)` | NOT NULL | Geographic grouping |
 | `client_group` | `VARCHAR(128)` | NOT NULL | Client/account grouping |
-| `status` | `rdp_status_enum` | NOT NULL | Current state (see below) |
-| `assigned_worker_id` | `UUID` | FK → `workers.id`, NULL | Worker with current claim |
-| `guacamole_connection_id` | `VARCHAR(128)` | NULL | Server-side Guacamole reference |
+| `client_id` | `UUID` | FK → `clients.id`, NULL | Client account this desktop works on |
+| `status` | `rdp_status_enum` | NOT NULL | Ownership / claim state (see below) |
+| `machine_health` | `machine_health_enum` | NOT NULL, default `unknown` | Independent of ownership; probe-driven |
+| `version` | `INTEGER` | NOT NULL, default `1` | Optimistic concurrency for status writes |
+| `assigned_worker_id` | `UUID` | FK → `workers.id`, NULL | Standing / shift assignee |
+| `guacamole_connection_id` | `VARCHAR(128)` | NULL | Guacamole connection id/name |
+| `rdp_username` | `VARCHAR(128)` | NULL | Windows sign-in (not returned to workers) |
+| `rdp_password_enc` | `TEXT` | NULL | Fernet-encrypted password at rest |
+| `rdp_domain` | `VARCHAR(128)` | NULL | Optional Windows domain |
 | `health_notes` | `TEXT` | NULL | Admin/ops notes |
 | `risk_flags` | `JSONB` | default `'[]'` | Structured risk markers |
 | `last_health_check_at` | `TIMESTAMPTZ` | NULL | Last Uptime Kuma / port check |
 | `monitor_host` | `VARCHAR(255)` | NULL | IP or hostname for Uptime Kuma TCP monitor |
 | `monitor_port` | `INTEGER` | NULL, default `3389` | Port for Uptime Kuma TCP monitor |
-| `status_changed_at` | `TIMESTAMPTZ` | NOT NULL, default `now()` | Last state transition timestamp |
+| `status_changed_at` | `TIMESTAMPTZ` | NOT NULL, default `now()` | Last ownership-state transition |
 
 **RDP status enum (`rdp_status_enum`):**
 
@@ -697,12 +705,14 @@ GlobalSolutions RDP machines managed through the 8-state machine.
 | `online_free` | Available for claiming |
 | `assigned` | Allocated; session not yet active |
 | `active` | Live worker session |
-| `idle` | Session open; heartbeat exceeded threshold |
+| `idle` | Tunnel lost; inside disconnect grace |
 | `unhealthy` | Reachable but port/health check failing |
 | `admin_locked` | Manually locked by leadership |
-| `maintenance` | Under maintenance |
+| `maintenance` | Held out of service (manual **or** quarantine / unconfirmed close) |
 
-**Frontend alignment:** the claim board's machine `status` values map 1:1 to this enum (see `frontend/lib/rdp.ts`). (Previously illustrated by `frontend/lib/mock-data.ts`, since removed.)
+**Machine health enum (`machine_health_enum`):** `unknown`, `healthy`, `degraded`, `unreachable` — updated by probes, never by claim/release.
+
+**Frontend alignment:** the claim board's machine `status` values map 1:1 to `rdp_status_enum` (see `frontend/lib/rdp.ts` / `frontend/lib/status.ts`).
 
 ---
 
@@ -727,7 +737,7 @@ Worker availability submissions and admin-approved schedules.
 
 ### 8. `allocations`
 
-Atomic claim records linking a worker to an RDP at a point in time. Central to **double-claim prevention**.
+Atomic claim records linking a worker to an RDP at a point in time. Central to **double-claim prevention** and ownership generations.
 
 | Column | Type | Constraints | Description |
 | :--- | :--- | :--- | :--- |
@@ -736,19 +746,34 @@ Atomic claim records linking a worker to an RDP at a point in time. Central to *
 | `worker_id` | `UUID` | FK, NOT NULL | Claiming worker |
 | `rdp_resource_id` | `UUID` | FK, NOT NULL | Claimed machine |
 | `claimed_at` | `TIMESTAMPTZ` | NOT NULL | Claim timestamp |
-| `released_at` | `TIMESTAMPTZ` | NULL | Release timestamp |
-| `release_reason` | `release_reason_enum` | NULL | Why session ended |
-| `guacamole_token` | `VARCHAR(512)` | NULL | Short-lived connection token |
+| `released_at` | `TIMESTAMPTZ` | NULL | Release timestamp (`NULL` = still open) |
+| `release_reason` | `release_reason_enum` | NULL | Why the claim ended |
+| `guacamole_token` | `VARCHAR(512)` | NULL | Legacy / unused on direct gateway path |
+| `guacamole_active_connection_id` | `VARCHAR(128)` | NULL | Last known Guacamole active connection |
+| `gateway_id` | `VARCHAR(64)` | NULL, indexed | Sticky media-node id (`RDP_GATEWAYS`) |
+| `connection_generation` | `INTEGER` | NOT NULL, default `1` | Bumps on Switch-here / reconnect ownership |
+| `version` | `INTEGER` | NOT NULL, default `1` | Optimistic concurrency |
+| `allocation_status` | `allocation_lifecycle_enum` | NOT NULL, default `assigned` | Lifecycle (see below) |
+| `tunnel_status` | `tunnel_status_enum` | NOT NULL, default `none` | Observed tunnel state |
+| `last_gateway_observation_at` | `TIMESTAMPTZ` | NULL | Last successful gateway observation |
+| `quarantined_at` | `TIMESTAMPTZ` | NULL | When the seat was held out of service |
+| `quarantine_reason` | `VARCHAR(300)` | NULL | Why repair is required |
+| `last_client_heartbeat_at` | `TIMESTAMPTZ` | NULL | Optional client liveness |
+| `ended_at` | `TIMESTAMPTZ` | NULL | Soft end marker |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Record created |
 
-**Critical constraint:** Partial unique index on `rdp_resource_id WHERE released_at IS NULL` — only one open allocation per machine at any time.
+**Critical constraint:** Partial unique index `uq_allocations_active_rdp` on `rdp_resource_id WHERE released_at IS NULL` — only one open allocation per machine.
 
-**Claim flow (Phase 1 acceptance):**
-1. Redis distributed lock acquired on `rdp:{id}`
-2. PostgreSQL transaction: verify `rdp_resources.status = online_free`
-3. Update status → `assigned`, insert `allocations` row, write `audit_log`
-4. Commit transaction
-5. Second concurrent claim fails at step 2 or unique index
+**Allocation lifecycle enum:** `assigned`, `connecting`, `active`, `idle`, `ending`, `ended`, `quarantined`
+
+**Tunnel status enum:** `none`, `connecting`, `open`, `closing`, `closed`
+
+**Claim / ownership flow (current):**
+1. Capacity + eligibility checks; optional Redis helpers for tickets/locks
+2. PostgreSQL transaction inserts open `allocations` row (partial unique index enforces single claim)
+3. Machine `status` → `active`; `connection_generation` starts at 1
+4. Direct path: join ticket + sticky `gateway_id`; proxy path: FastAPI ws-tunnel
+5. Unconfirmed close → machine `maintenance` + quarantine stamp; admin `POST /rdp/{id}/repair`
 
 ---
 
@@ -765,6 +790,7 @@ Unified session log for all three session types.
 | `rdp_resource_id` | `UUID` | FK, NULL | Set for GS RDP sessions |
 | `partner_entity_id` | `UUID` | FK, NULL | Set for partner / some third-party sessions |
 | `partner_arrangement_id` | `UUID` | FK, NULL | Arrangement used for payroll split |
+| `client_id` | `UUID` | FK → `clients.id`, NULL | Client account the work was on |
 | `start_time` | `TIMESTAMPTZ` | NOT NULL | Session start |
 | `end_time` | `TIMESTAMPTZ` | NULL | Session end |
 | `duration_minutes` | `INTEGER` | NULL | Calculated on close |
@@ -772,6 +798,11 @@ Unified session log for all three session types.
 | `payroll_approval_state` | `payroll_session_enum` | NOT NULL, default `pending` | Payroll review state |
 | `payroll_period_id` | `UUID` | FK, NULL | Assigned after period close |
 | `admin_notes` | `TEXT` | NULL | Admin corrections / context |
+| `suspicious` | `BOOLEAN` | NOT NULL, default `false` | Admin-only review flag (not shown to workers) |
+| `start_image_url` | `TEXT` | NULL | Start evidence image |
+| `end_image_url` | `TEXT` | NULL | End evidence image |
+| `image_start_at` | `TIMESTAMPTZ` | NULL | Time shown on start screenshot |
+| `image_end_at` | `TIMESTAMPTZ` | NULL | Time shown on end screenshot |
 | `type_specific_fields` | `JSONB` | NOT NULL, default `'{}'` | Type-specific payload |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Record created |
 | `updated_at` | `TIMESTAMPTZ` | NOT NULL | Last update |
@@ -779,6 +810,42 @@ Unified session log for all three session types.
 **Session type enum:** `gs_rdp`, `partner_multilog`, `third_party_platform`
 
 **Close status enum:** `completed`, `force_released`, `abandoned`, `timed_out`
+
+---
+
+### 9b. `chat_threads` / `chat_messages`
+
+In-app support chat (worker → admin team). One thread per signed-in account.
+
+**`chat_threads`**
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Thread ID |
+| `auth_user_id` | `VARCHAR(128)` | UNIQUE, NOT NULL | Supabase uid of the account |
+| `admin_user_id` | `UUID` | FK → `admin_users.id`, NULL | Optional owning admin |
+| `display_name` | `VARCHAR(255)` | NOT NULL | Denormalised for the inbox list |
+| `email` | `VARCHAR(254)` | NOT NULL | Denormalised |
+| `role` | `VARCHAR(32)` | NOT NULL | Account role at thread creation |
+| `subject` | `VARCHAR(160)` | NULL | Optional subject |
+| `last_message_at` | `TIMESTAMPTZ` | NOT NULL | Inbox sort key |
+| `last_message_preview` | `VARCHAR(200)` | NULL | Inbox preview |
+| `unread_for_admin` | `INTEGER` | NOT NULL, default `0` | Admin unread count |
+| `unread_for_user` | `INTEGER` | NOT NULL, default `0` | Worker unread count |
+| `is_archived` | `BOOLEAN` | NOT NULL, default `false` | Admin archive |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | Thread opened |
+
+**`chat_messages`**
+
+| Column | Type | Constraints | Description |
+| :--- | :--- | :--- | :--- |
+| `id` | `UUID` | PK | Message ID |
+| `thread_id` | `UUID` | FK → `chat_threads.id`, NOT NULL | Parent thread |
+| `sender_side` | `VARCHAR(8)` | NOT NULL | `user` or `admin` |
+| `sender_auth_user_id` | `VARCHAR(128)` | NOT NULL | Who wrote it |
+| `sender_name` | `VARCHAR(255)` | NOT NULL | Display name at send time |
+| `body` | `TEXT` | NOT NULL | Message text (API cap 2000 chars) |
+| `created_at` | `TIMESTAMPTZ` | NOT NULL | Sent at |
 
 ---
 
@@ -1213,11 +1280,15 @@ Redis holds short-lived coordination keys and session heartbeats.
 
 ## Redis keys
 
-| Key pattern | Purpose | TTL |
+| Key pattern | Purpose | TTL / notes |
 | :--- | :--- | :--- |
-| `lock:rdp:{rdp_id}` | Distributed claim lock | 30 seconds (renewed during claim txn) |
-| `heartbeat:session:{session_id}` | Last heartbeat timestamp | Session duration + buffer |
-| `rate:claim:{worker_id}` | Claim attempt rate limiting | 60 seconds |
+| `lock:rdp:{rdp_id}` / tunnel epoch keys | Live-tunnel ownership for proxy path | Short-lived; generation-aware |
+| `rdp:join:{nonce}` | Single-use join ticket (SHA-256 at rest) | ~30s; burned via `GETDEL` |
+| `rdp:coord:leader` | Coordinator leader lease | Renewed each tick; released on clean shutdown |
+| `rdp:gateway:*` | Drain / health / admission buckets | Per media node |
+| `rdp:sweep:miss:{rdp_id}` | Session-sweep miss streak | Cleared when a live session is seen |
+| `rdp:degraded:*` | Datastore outage + recovery window marker | Survives coordinator failover |
+| `rate:*` | API / join-ticket rate limits | Windowed |
 
 ---
 
@@ -1252,11 +1323,12 @@ This matrix links the DB roles to the portal layers above.
 
 ## Implementation notes
 
-1. **Backend models not yet coded** — `backend/` is scaffolded in README; SQLAlchemy models in `backend/models/` are planned but not committed. This document is the build reference.
+1. **Backend models are live** — SQLModel tables in `backend/models/` (exported from `backend/models/__init__.py`) and Alembic revisions under `backend/migrations/versions/` are the source of truth. Shared Supabase Postgres is migrated; this document tracks those definitions.
 2. ~~**Frontend uses mock data**~~ — no longer true. `frontend/lib/mock-data.ts` has been removed; the UI reads the live API through `frontend/lib/api.ts` and the per-feature clients beside it (`rdp.ts`, `hours.ts`, …).
-3. **Migrations** — Alembic migrations will be generated from these definitions during Phase 1 Week 2.
-4. **Charter amendments included** — Extended worker model, three session types, variable payroll percentages, 50/50 quality weighting, deferred WhatsApp, and Claude AI placeholder are all reflected in schema design.
+3. **Migrations** — schema changes ship as Alembic revisions (RDP ownership, quarantine, gateway sticky id, session `suspicious`, chat threads, etc.). Apply with `cd backend && alembic upgrade head`.
+4. **Charter amendments included** — Extended worker model, three session types, variable payroll percentages, 50/50 quality weighting, deferred WhatsApp, and Claude AI placeholder remain reflected in schema design.
 5. **Layering is documentation only** — the scope layers above do not change the schema; they describe which portal role primarily needs each table. The canonical schema in Appendix A remains one shared set of tables.
+6. **Ephemeral (not Postgres)** — Redis holds join-ticket nonces, tunnel locks/epochs, coordinator leadership, gateway drain/health, sweep miss counters, admission buckets, and degraded-recovery markers. Losing Redis must not invent frees; see `docs/rdp-architecture.md` §1.9.
 
 ---
 

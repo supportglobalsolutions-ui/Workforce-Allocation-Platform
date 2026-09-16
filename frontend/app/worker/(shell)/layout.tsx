@@ -11,15 +11,29 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    let cancelled = false;
+    const failSafe = window.setTimeout(() => {
+      if (!cancelled) setReady(true);
+    }, 8_000);
+
     api.get<{ username: string | null }>('/workers/me')
       .then((w) => {
+        if (cancelled) return;
         if (!w.username) {
           router.replace('/worker/setup-username');
         } else {
           setReady(true);
         }
       })
-      .catch(() => setReady(true)); // fail open — auth/network error shouldn't soft-lock the app
+      .catch(() => {
+        if (!cancelled) setReady(true); // fail open — auth/network error shouldn't soft-lock the app
+      })
+      .finally(() => window.clearTimeout(failSafe));
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(failSafe);
+    };
   }, [router]);
 
   if (!ready) {
