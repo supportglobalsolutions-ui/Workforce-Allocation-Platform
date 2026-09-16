@@ -1,0 +1,49 @@
+# Install in sites-available, replace example domain/private IPs before enabling.
+map $http_upgrade $media_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
+# Private control-plane REST access. Tomcat stays bound to loopback.
+server {
+    listen 10.20.0.3:8081;
+    server_name _;
+    allow 10.20.0.2;
+    deny all;
+    access_log off;
+    location /guacamole/ {
+        proxy_pass http://127.0.0.1:8080;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $media_connection_upgrade;
+        proxy_buffering off;
+        proxy_set_header Host $host;
+        proxy_connect_timeout 10s;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+    location / { return 404; }
+}
+
+# Bootstrap HTTP vhost; certbot --nginx adds TLS and HTTP redirect.
+server {
+    listen 80;
+    server_name guac.example.com;
+    # Guacamole URLs can carry authentication tokens. Do not log query strings.
+    access_log off;
+    location ~* ^/(guacamole/)?api/session/data/ {
+        return 404;
+    }
+    location / {
+        proxy_pass http://127.0.0.1:8080/guacamole/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $media_connection_upgrade;
+        proxy_buffering off;
+        proxy_read_timeout 3600s;
+        proxy_send_timeout 3600s;
+    }
+}

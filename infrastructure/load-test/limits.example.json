@@ -1,0 +1,10 @@
+{
+  "min_steady_minutes": 30,
+  "first_frame_p95_ms": 5000,
+  "reconnect_p95_ms": 5000,
+  "max_failure_rate": 0.01,
+  "max_drops_per_session_hour": 0.02,
+  "max_cpu_percent": 75,
+  "max_memory_percent": 80,
+  "reserve_fraction": 0.2
+}

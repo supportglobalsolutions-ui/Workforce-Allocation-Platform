@@ -214,7 +214,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         void signOut();
-        return { ok: false, error: getAuthErrorMessage(err) };
+        const { reportError } = await import('@/lib/errors');
+        return { ok: false, error: reportError('Sign in', err) };
       }
     },
     [finishLogin],

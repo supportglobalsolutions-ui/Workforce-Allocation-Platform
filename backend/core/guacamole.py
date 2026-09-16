@@ -1,5 +1,7 @@
 import base64
+import hashlib
 import logging
+import time
 
 import httpx
 import redis as redis_lib
@@ -8,8 +10,19 @@ from .config import settings
 
 logger = logging.getLogger(__name__)
 
-_CACHE_KEY = "guac:auth"
+_CACHE_PREFIX = "guac:auth"
 _CACHE_TTL = 2700  # 45 min (tokens expire after 60 min)
+
+
+def _token_cache_key(base_url: str) -> str:
+    """Cache Guacamole tokens per gateway, never globally.
+
+    A token is only valid on the node that minted it. With a gateway cluster
+    (Phase 7) a single shared key would hand gw1's token to gw2, which rejects
+    it — and the retry would evict the other node's good token in turn.
+    """
+    digest = hashlib.sha256(base_url.encode("utf-8")).hexdigest()[:12]
+    return f"{_CACHE_PREFIX}:{digest}"
 
 
 def raw_connection_id(connection_id: str | None) -> str:
@@ -37,13 +50,30 @@ def raw_connection_id(connection_id: str | None) -> str:
 class GuacamoleClient:
     """Thin wrapper around the Guacamole REST API."""
 
-    def __init__(self, redis_client: redis_lib.Redis):
+    def __init__(
+        self,
+        redis_client: redis_lib.Redis,
+        *,
+        base_url: str | None = None,
+        gateway_id: str | None = None,
+    ):
+        """
+        `base_url` selects which Guacamole this client talks to. It defaults to
+        the single configured node, so every existing caller is unchanged; a
+        gateway cluster passes the chosen node's private URL (Phase 7).
+        """
         self._redis = redis_client
-        self._base = settings.GUACAMOLE_URL.rstrip("/")
+        self._base = (base_url or settings.GUACAMOLE_URL).rstrip("/")
+        self.gateway_id = gateway_id
+        self._cache_key = _token_cache_key(self._base)
         # Per-instance memo. A single request often needs the token 3-6 times
         # (url + client id + tunnel info); without this each one re-validates
         # against Guacamole, adding a round-trip apiece to every claim.
         self._token_memo: tuple[str, str] | None = None
+
+    @property
+    def base_url(self) -> str:
+        return self._base
 
     def _fetch_fresh_token(self) -> tuple[str, str]:
         with httpx.Client(timeout=10.0) as client:
@@ -58,7 +88,7 @@ class GuacamoleClient:
             data = resp.json()
         token: str = data["authToken"]
         data_source: str = data.get("dataSource", "postgresql")
-        self._redis.setex(_CACHE_KEY, _CACHE_TTL, f"{token}:{data_source}")
+        self._redis.setex(self._cache_key, _CACHE_TTL, f"{token}:{data_source}")
         self._token_memo = (token, data_source)
         return token, data_source
 
@@ -66,7 +96,7 @@ class GuacamoleClient:
         if self._token_memo is not None:
             return self._token_memo
 
-        cached = self._redis.get(_CACHE_KEY)
+        cached = self._redis.get(self._cache_key)
         if cached:
             token, data_source = cached.decode().split(":", 1)
             # Validate the cached token is still accepted by Guacamole.
@@ -79,7 +109,7 @@ class GuacamoleClient:
                 self._token_memo = (token, data_source)
                 return token, data_source
             # Token rejected (e.g. Guacamole restarted) — clear cache and re-fetch.
-            self._redis.delete(_CACHE_KEY)
+            self._redis.delete(self._cache_key)
         return self._fetch_fresh_token()
 
     def _client_id(self, connection_id: str) -> str:
@@ -90,19 +120,22 @@ class GuacamoleClient:
         ).decode()
 
     def get_connection_url(self, connection_id: str) -> str:
-        """Build the Guacamole web-client URL for a connection."""
-        token, _ = self._get_token()
-        return f"{self._base}/#/client/{self._client_id(connection_id)}?token={token}"
+        """Build the Guacamole web-client path for a connection (no auth token).
+
+        Never embed guacadmin (or any Guacamole) tokens in URLs returned to
+        browsers. The browser canvas uses the FastAPI ws-tunnel, which mints
+        the token server-side.
+        """
+        return f"{self._base}/#/client/{self._client_id(connection_id)}"
 
     def get_proxied_connection_path(
         self, connection_id: str, *, proxy_prefix: str = "/remote"
     ) -> str:
-        """Same as get_connection_url but for embedding via Next.js /remote proxy."""
-        token, _ = self._get_token()
-        return f"{proxy_prefix}/#/client/{self._client_id(connection_id)}?token={token}"
+        """Same as get_connection_url but under a path prefix (no auth token)."""
+        return f"{proxy_prefix}/#/client/{self._client_id(connection_id)}"
 
     def get_tunnel_connect_info(self, connection_id: str) -> dict[str, str]:
-        """Auth token + identifiers for guacamole-common-js tunnel connect data."""
+        """Server-side Guacamole tunnel params. Token must never leave the API."""
         token, data_source = self._get_token()
         ident = raw_connection_id(connection_id)
         client_id = base64.b64encode(
@@ -280,3 +313,48 @@ class GuacamoleClient:
         except Exception as exc:
             logger.warning("Guacamole kill_active_connections failed: %s", exc)
             return 0
+
+    def close_and_confirm(self, connection_id: str, *, timeout_seconds: float = 5.0) -> dict[str, object]:
+        """Close one resource's tunnels and prove they have gone away.
+
+        A desktop can become available only after this returns ``closed`` or
+        ``already_closed``. The structured outcome keeps gateway failure
+        distinct from a connection that simply ended before the request.
+        """
+        ident = raw_connection_id(connection_id)
+        try:
+            active_before = self.list_active_connections()
+            matching = [
+                str(active_id)
+                for active_id, meta in active_before.items()
+                if isinstance(meta, dict)
+                and raw_connection_id(str(meta.get("connectionIdentifier") or meta.get("connectionID") or "")) == ident
+            ]
+            if not matching:
+                return {"outcome": "already_closed", "closed": 0}
+
+            token, data_source = self._get_token()
+            patch = [{"op": "remove", "path": f"/{active_id}"} for active_id in matching]
+            with httpx.Client(timeout=10.0) as client:
+                response = client.patch(
+                    f"{self._base}/api/session/data/{data_source}/activeConnections",
+                    params={"token": token},
+                    json=patch,
+                    headers={"Content-Type": "application/json"},
+                )
+                response.raise_for_status()
+
+            deadline = time.monotonic() + timeout_seconds
+            while time.monotonic() < deadline:
+                remaining = [
+                    meta for meta in self.list_active_connections().values()
+                    if isinstance(meta, dict)
+                    and raw_connection_id(str(meta.get("connectionIdentifier") or meta.get("connectionID") or "")) == ident
+                ]
+                if not remaining:
+                    return {"outcome": "closed", "closed": len(matching)}
+                time.sleep(0.2)
+            return {"outcome": "pending", "closed": 0}
+        except Exception as exc:
+            logger.warning("Guacamole close-and-confirm failed for %s: %s", ident, exc)
+            return {"outcome": "failed", "closed": 0, "error": type(exc).__name__}

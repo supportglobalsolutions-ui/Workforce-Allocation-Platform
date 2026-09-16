@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, CheckCircle, ChevronDown, Clock, Download, Eye, RefreshCw, Server, TimerOff, Trash2, Users, X } from 'lucide-react';
+import { Calendar, CheckCircle, ChevronDown, Clock, Download, Eye, Flag, RefreshCw, Server, TimerOff, Trash2, Users, X } from 'lucide-react';
 
 import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import DataTable from '@/components/platform/DataTable';
@@ -29,6 +29,7 @@ interface WorkSession {
   evidence_complete?: boolean | null;
   type_specific_fields?: Record<string, unknown> | null;
   payroll_period_id?: string | null;
+  suspicious?: boolean;
 }
 
 interface Worker {
@@ -71,6 +72,7 @@ interface SessionRow {
   duration_minutes?: number | null;
   evidence_complete?: boolean | null;
   period: string;
+  suspicious: boolean;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -313,6 +315,7 @@ export default function AdminSessionsPage() {
   const [customTo, setCustomTo] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
+  const [suspiciousFilter, setSuspiciousFilter] = useState<'all' | 'suspicious' | 'clear'>('all');
   const [now, setNow] = useState(() => Date.now());
 
   const [selectedSession, setSelectedSession] = useState<SessionRow | null>(null);
@@ -419,6 +422,7 @@ export default function AdminSessionsPage() {
           duration_minutes: s.duration_minutes,
           evidence_complete: s.evidence_complete,
           period: covering ? shortPeriodLabel(covering.label ?? '') : '—',
+          suspicious: Boolean(s.suspicious),
         };
       });
   }, [sessions, workerMap, rdpMap, now, periods]);
@@ -438,10 +442,12 @@ export default function AdminSessionsPage() {
       if (selectedWorkerId && byId[r.id]?.worker_id !== selectedWorkerId) return false;
       if (statusVal && r.status !== statusVal) return false;
       if (typeVal && r.session_type !== typeVal) return false;
+      if (suspiciousFilter === 'suspicious' && !r.suspicious) return false;
+      if (suspiciousFilter === 'clear' && r.suspicious) return false;
       if (!passesDateFilter(r.start_time, dateRange, customFrom, customTo)) return false;
       return true;
     });
-  }, [allRows, sessions, view, selectedWorkerId, dateRange, customFrom, customTo, statusFilter, typeFilter]);
+  }, [allRows, sessions, view, selectedWorkerId, dateRange, customFrom, customTo, statusFilter, typeFilter, suspiciousFilter]);
 
   const deletableRows = useMemo(() => filteredRows.filter((r) => !r.live), [filteredRows]);
   const allDeletableSelected =
@@ -494,6 +500,7 @@ export default function AdminSessionsPage() {
               image_end_at: full.image_end_at,
               duration_minutes: full.duration_minutes,
               evidence_complete: full.evidence_complete,
+              suspicious: Boolean(full.suspicious),
               start_time: full.start_time,
               end_time: full.end_time,
               rdp_minutes: rdpUptimeMinutes(full, Date.now()),
@@ -511,6 +518,15 @@ export default function AdminSessionsPage() {
     );
     setSelectedSession((prev) =>
       prev?.id === sessionId ? { ...prev, [`${type}_image_url`]: url } : prev,
+    );
+  };
+
+  const handleSuspiciousChanged = (sessionId: string, suspicious: boolean) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, suspicious } : s)),
+    );
+    setSelectedSession((prev) =>
+      prev?.id === sessionId ? { ...prev, suspicious } : prev,
     );
   };
 
@@ -659,6 +675,17 @@ export default function AdminSessionsPage() {
               <option key={t} value={t}>{t}</option>
             ))}
           </select>
+
+          <select
+            value={suspiciousFilter}
+            onChange={(e) => setSuspiciousFilter(e.target.value as 'all' | 'suspicious' | 'clear')}
+            className="px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40"
+            title="Admin review flag — not visible to workers"
+          >
+            <option value="all">Review flag</option>
+            <option value="suspicious">Suspicious only</option>
+            <option value="clear">Not flagged</option>
+          </select>
         </div>
 
         {/* Row 2: date range pills */}
@@ -799,6 +826,15 @@ export default function AdminSessionsPage() {
                     {(r.live as boolean) && (
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-accent animate-pulse shrink-0" title="In progress" />
                     )}
+                    {(r.suspicious as boolean) && (
+                      <span
+                        className="inline-flex items-center gap-1 rounded-md bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-300 border border-amber-500/30"
+                        title="Marked suspicious"
+                      >
+                        <Flag size={10} />
+                        Flag
+                      </span>
+                    )}
                     {r.date as string}
                   </span>
                 ),
@@ -898,9 +934,11 @@ export default function AdminSessionsPage() {
         session={selectedSession}
         onClose={() => setSelectedSession(null)}
         onImageUploaded={handleImageUploaded}
+        onSuspiciousChanged={handleSuspiciousChanged}
         workerLabel={workerLabel}
         allowUpload={false}
         allowEvidenceEdit={false}
+        allowSuspiciousFlag
       />
 
       {deleteOpen && selectedIds.size > 0 && (

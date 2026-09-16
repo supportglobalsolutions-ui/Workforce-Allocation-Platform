@@ -18,6 +18,14 @@ export function getAuthErrorMessage(err: unknown): string {
   const lower = raw.toLowerCase();
 
   if (
+    lower.includes('cannot reach the database')
+    || lower.includes('database_url')
+    || lower.includes('supabase pooler')
+  ) {
+    return 'Cannot reach the database right now. Check your connection and try again.';
+  }
+
+  if (
     lower.includes('cannot reach')
     || lower.includes('api server')
     || lower.includes('network')

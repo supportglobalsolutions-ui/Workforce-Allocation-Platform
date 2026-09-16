@@ -81,7 +81,8 @@ def check_rate_limit(
             logger.error("Rate limiter unavailable: %s", exc)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service temporarily unavailable.",
+                detail="Service temporarily unavailable. Please try again shortly.",
+                headers={"Retry-After": "5"},
             ) from exc
         logger.warning("Rate limiter skipped (Redis unavailable): %s", exc)
         return 0

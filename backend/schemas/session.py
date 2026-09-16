@@ -35,6 +35,7 @@ class SessionUpdate(SQLModel):
     payroll_approval_state: Optional[PayrollSessionEnum]  = None
     payroll_period_id:      Optional[UUID]                = None
     admin_notes:            Optional[str]                 = None
+    suspicious:             Optional[bool]                = None
     start_image_url:        Optional[str]                 = None
     end_image_url:          Optional[str]                 = None
     image_start_at:         Optional[datetime]            = None
@@ -52,6 +53,7 @@ class SessionResponse(SessionBase):
     payroll_approval_state: PayrollSessionEnum
     payroll_period_id:      Optional[UUID]
     admin_notes:            Optional[str]
+    suspicious:             bool = False
     start_image_url:        Optional[str]      = None
     end_image_url:          Optional[str]      = None
     image_start_at:         Optional[datetime] = None

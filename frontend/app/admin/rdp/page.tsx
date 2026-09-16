@@ -10,10 +10,14 @@ import {
   forceReleaseRdp,
   getGuacamoleHealth,
   GuacamoleHealth,
+  listQuarantinedRdp,
   listRdpResources,
   lockRdp,
   maintenanceRdp,
   provisionRdpConnection,
+  QuarantinedLists,
+  QuarantinedRdpRow,
+  repairRdp,
   RdpResource,
   unlockRdp,
   updateRdpResource,
@@ -114,14 +118,21 @@ export default function RdpManagementPage() {
   const [savingEdit, setSavingEdit] = useState(false);
 
   const [health, setHealth] = useState<GuacamoleHealth | null>(null);
+  const [holds, setHolds] = useState<QuarantinedLists>({ quarantined: [], held: [] });
+  const [repairingId, setRepairingId] = useState<string | null>(null);
 
   const reloadHealth = () =>
     getGuacamoleHealth().then(setHealth).catch(() => setHealth(null));
 
+  const reloadHolds = () =>
+    listQuarantinedRdp()
+      .then(setHolds)
+      .catch(() => setHolds({ quarantined: [], held: [] }));
+
   const reload = () =>
     listRdpResources()
       .then(setMachines)
-      .then(reloadHealth)
+      .then(() => Promise.all([reloadHealth(), reloadHolds()]))
       .catch((e) => {
         setError(reportError('Load RDP machines', e));
       });
@@ -192,6 +203,25 @@ export default function RdpManagementPage() {
       setSavingEdit(false);
     }
   };
+
+  const handleRepair = async (rdpId: string) => {
+    setRepairingId(rdpId);
+    setError(null);
+    try {
+      await repairRdp(rdpId);
+      await reload();
+    } catch (e) {
+      setError(reportError('Repair RDP machine', e, { machineId: rdpId }));
+      await reloadHolds();
+    } finally {
+      setRepairingId(null);
+    }
+  };
+
+  const holdRows: { kind: 'quarantined' | 'held'; row: QuarantinedRdpRow }[] = [
+    ...holds.quarantined.map((row) => ({ kind: 'quarantined' as const, row })),
+    ...holds.held.map((row) => ({ kind: 'held' as const, row })),
+  ];
 
   const formFields = (
     form: MachineForm,
@@ -376,6 +406,62 @@ export default function RdpManagementPage() {
             {health.machines.filter((m) => m.ready).length}/{health.machines.length} machines ready
           </span>
           {health.error && <span className="text-danger">{health.error}</span>}
+        </div>
+      )}
+
+      {holdRows.length > 0 && (
+        <div className="glass-panel p-4 mb-4 space-y-3 border border-amber-500/30">
+          <div>
+            <h2 className="text-sm font-bold text-white">Held / quarantined</h2>
+            <p className="text-xs text-brand-on-surface-variant mt-1">
+              Closure could not be confirmed. Repair retries the disconnect on the machine&apos;s
+              gateway — it will not free the seat unless the tunnel is gone.
+            </p>
+          </div>
+          <div className="space-y-2">
+            {holdRows.map(({ kind, row }) => {
+              const when = row.quarantined_at || row.held_at;
+              return (
+                <div
+                  key={`${kind}-${row.allocation_id}-${row.rdp_resource_id}`}
+                  className="flex flex-col sm:flex-row sm:items-center gap-3 rounded-lg border border-white/10 bg-white/5 p-3"
+                >
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-2 mb-1">
+                      <span className="font-bold text-white text-sm">
+                        {row.nickname || row.rdp_resource_id.slice(0, 8)}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${
+                          kind === 'quarantined'
+                            ? 'border-amber-500/40 text-amber-300 bg-amber-500/10'
+                            : 'border-white/20 text-brand-on-surface-variant bg-white/5'
+                        }`}
+                      >
+                        {kind === 'quarantined' ? 'Quarantined' : 'Held'}
+                      </span>
+                    </div>
+                    <p className="text-xs text-brand-on-surface-variant break-words">
+                      {row.reason || 'No reason recorded'}
+                    </p>
+                    {when && (
+                      <p className="text-[11px] text-theme-muted mt-1">
+                        Since {new Date(when).toLocaleString()}
+                      </p>
+                    )}
+                  </div>
+                  <button
+                    type="button"
+                    disabled={repairingId === row.rdp_resource_id}
+                    onClick={() => handleRepair(row.rdp_resource_id)}
+                    className="btn-primary text-xs py-2 px-3 shrink-0 disabled:opacity-60"
+                  >
+                    {repairingId === row.rdp_resource_id ? 'Repairing…' : 'Repair'}
+                  </button>
+                </div>
+              );
+            })}
+          </div>
         </div>
       )}
 

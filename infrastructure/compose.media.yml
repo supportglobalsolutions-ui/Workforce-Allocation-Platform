@@ -1,0 +1,48 @@
+name: workforce-media
+services:
+  guacd:
+    image: guacamole/guacd:${GUACAMOLE_VERSION:?Set the deployed Guacamole version}
+    restart: unless-stopped
+  guac_db:
+    image: postgres:15-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: guacamole_db
+      POSTGRES_USER: guacamole_user
+      POSTGRES_PASSWORD: ${GUAC_DB_PASSWORD:?Set a database password}
+    volumes:
+      - guac_db_data:/var/lib/postgresql/data
+    healthcheck:
+      test: [CMD-SHELL, "pg_isready -U guacamole_user -d guacamole_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+  guacamole:
+    image: guacamole/guacamole:${GUACAMOLE_VERSION:?Set the deployed Guacamole version}
+    restart: unless-stopped
+    depends_on:
+      guac_db:
+        condition: service_healthy
+      guacd:
+        condition: service_started
+    environment:
+      GUACD_HOSTNAME: guacd
+      POSTGRESQL_HOSTNAME: guac_db
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USER: guacamole_user
+      POSTGRESQL_USERNAME: guacamole_user
+      POSTGRESQL_PASSWORD: ${GUAC_DB_PASSWORD:?Set a database password}
+      # Phase 5 — enables guacamole-auth-json so FastAPI can hand a worker a
+      # token scoped to the single connection they claimed. Must be the same
+      # 32 hex characters as GUACAMOLE_JSON_SECRET_KEY in the backend .env.
+      #
+      # JSON_TRUSTED_NETWORKS is deliberately NOT set: the auth blob is POSTed
+      # by the worker's own browser from arbitrary addresses. Nginx
+      # auth_request on /api/tokens is the gate instead — see
+      # nginx/guacamole-join-ticket.conf.
+      JSON_ENABLED: "true"
+      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:?Set the shared auth-json key}
+    ports:
+      - "127.0.0.1:8080:8080"
+volumes:
+  guac_db_data:

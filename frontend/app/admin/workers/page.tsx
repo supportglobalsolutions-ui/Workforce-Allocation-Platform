@@ -57,6 +57,7 @@ interface WorkSession {
   end_image_url: string | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
+  suspicious?: boolean;
 }
 
 interface RDPResource {
@@ -278,6 +279,7 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
       image_start_at: s.image_start_at,
       image_end_at: s.image_end_at,
       duration_minutes: s.duration_minutes,
+      suspicious: Boolean(s.suspicious),
     };
   });
 
@@ -579,8 +581,12 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
         onImageUploaded={(sessionId, type, url) => {
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, [`${type}_image_url`]: url } : s));
         }}
+        onSuspiciousChanged={(sessionId, suspicious) => {
+          setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, suspicious } : s));
+        }}
         allowUpload={false}
         allowEvidenceEdit={false}
+        allowSuspiciousFlag
       />
       {showRate && (
         <RateWorkerModal

@@ -171,3 +171,70 @@ export async function uploadSessionImage(
   // Signed link so the caller can render it straight away.
   return (await getSessionImageUrl(path)) ?? path;
 }
+
+/**
+ * Full pipeline from an in-browser capture Blob (getDisplayMedia / canvas flatten).
+ * Skips the file-type gate used for disk uploads — captures are always JPEG.
+ */
+export async function uploadSessionImageBlob(
+  sessionId: string,
+  imageType: 'start' | 'end',
+  blob: Blob,
+  onProgress?: (pct: number) => void,
+): Promise<string> {
+  onProgress?.(0);
+  const file = new File([blob], `${imageType}.jpg`, { type: blob.type || 'image/jpeg' });
+  const compressed = await compressImage(file, onProgress);
+  const path = await uploadToStorage(sessionId, imageType, compressed, onProgress);
+  onProgress?.(90);
+  const field = `${imageType}_image_url` as const;
+  await api.patch(`/sessions/${sessionId}`, { [field]: path });
+  onProgress?.(100);
+  return (await getSessionImageUrl(path)) ?? path;
+}
+
+/**
+ * Ask the browser to share a screen/window, grab one frame, then stop the stream.
+ * Returns null when the worker cancels the picker (NotAllowedError is rethrown
+ * only for real failures — AbortError resolves to null).
+ */
+export async function captureDisplayFrame(): Promise<Blob | null> {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices?.getDisplayMedia) {
+    throw new Error('Screen capture is not available in this browser.');
+  }
+  let stream: MediaStream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({
+      video: { frameRate: 1 },
+      audio: false,
+    });
+  } catch (err) {
+    const name = err instanceof DOMException ? err.name : '';
+    if (name === 'NotAllowedError' || name === 'AbortError') return null;
+    throw err;
+  }
+  try {
+    const track = stream.getVideoTracks()[0];
+    if (!track) return null;
+    const video = document.createElement('video');
+    video.srcObject = stream;
+    video.muted = true;
+    await video.play();
+    await new Promise<void>((resolve) => {
+      if (video.readyState >= 2) resolve();
+      else video.onloadeddata = () => resolve();
+    });
+    const w = video.videoWidth || 1280;
+    const h = video.videoHeight || 720;
+    const canvas = document.createElement('canvas');
+    const scale = Math.min(1, 1400 / Math.max(w, h));
+    canvas.width = Math.round(w * scale);
+    canvas.height = Math.round(h * scale);
+    canvas.getContext('2d')!.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return await new Promise<Blob | null>((resolve) => {
+      canvas.toBlob((blob) => resolve(blob), 'image/jpeg', 0.82);
+    });
+  } finally {
+    stream.getTracks().forEach((t) => t.stop());
+  }
+}

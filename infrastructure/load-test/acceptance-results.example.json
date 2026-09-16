@@ -1,0 +1,53 @@
+{
+  "_comment": [
+    "Template for a Phase 7 acceptance run. Replace every value with what was",
+    "actually observed — the evaluator rejects a run that records no evidence,",
+    "and a scenario that was not exercised counts as 'not run', never as a pass.",
+    "Judge it with:",
+    "  python scripts/rdp_acceptance.py <this file> --limits infrastructure/load-test/acceptance.example.json"
+  ],
+  "run": {
+    "started_at": "2026-01-01T09:00:00Z",
+    "duration_minutes": 240,
+    "peak_concurrent_desktops": 12,
+    "session_minutes": 2880,
+    "connect_attempts": 210,
+    "connect_failures": 0,
+    "reconnect_attempts": 46,
+    "reconnect_failures": 0,
+    "unexpected_disconnects": 0,
+    "media_path": "direct"
+  },
+  "scenarios": [
+    {
+      "name": "duplicate_tab",
+      "passed": true,
+      "evidence": "Opened the same desktop in a second tab: refused with the already-open message; first tab kept drawing. After Switch here, generation bumped and the old tunnel closed before the new one opened."
+    },
+    {
+      "name": "force_stop",
+      "passed": true,
+      "evidence": "Admin force-stop on a live session: API returned only after close_and_confirm reported closed; machine went online_free; worker saw the ended message."
+    },
+    {
+      "name": "grace_expiry",
+      "passed": true,
+      "evidence": "Killed the worker's network. Lock held for RDP_DISCONNECT_GRACE_SECONDS, coordinator released it on the next tick, Windows left running."
+    },
+    {
+      "name": "api_deploy_mid_session",
+      "passed": true,
+      "evidence": "systemctl restart workforce-backend with 12 desktops live: no canvas interruption; claim board recovered after the API came back."
+    },
+    {
+      "name": "gateway_loss",
+      "passed": true,
+      "evidence": "Stopped guacamole on gw2. Coordinator marked it down within one tick; new claims placed on gw1; sessions already on gw2 ended and were released by grace."
+    },
+    {
+      "name": "coordinator_failover",
+      "passed": true,
+      "evidence": "Killed the coordinator holding the Redis leader key. Second instance took the lease after TTL expiry and resumed grace expiry and reconcile."
+    }
+  ]
+}

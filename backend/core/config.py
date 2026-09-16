@@ -53,14 +53,79 @@ class Settings(BaseSettings):
     REDIS_URL: str = "redis://localhost:6379/0"
 
     # ── RDP session lifecycle ─────────────────────────────────
-    RDP_HEARTBEAT_IDLE_SECONDS: int = 600       # 10m without heartbeat → idle
-    RDP_IDLE_AUTO_RELEASE_SECONDS: int = 1200   # 20m idle → auto-release
+    # A tunnel disconnect keeps its exclusive claim briefly, allowing a
+    # worker to reconnect after a Wi-Fi blip without losing the desktop.
+    RDP_DISCONNECT_GRACE_SECONDS: int = 300
     RDP_LIFECYCLE_INTERVAL_SECONDS: int = 60    # background tick interval
+    # When false, API workers do not run lifecycle/reconcile loops — use the
+    # standalone workforce-rdp-coordinator systemd unit instead (Phase 4).
+    # Default true keeps a single-box deploy working via Redis leader election.
+    RDP_RUN_COORDINATOR_IN_API: bool = True
+    # Conservative default for the current 2 GB all-in-one VPS. Tune from
+    # measured load after moving the media plane to larger hardware.
+    RDP_MAX_LIVE_SESSIONS: int = 6
+    # Per-gateway seat cap when RDP_GATEWAYS lists multiple media nodes.
+    RDP_GATEWAY_CAPACITY: int = 50
+    # JSON array of gateway nodes (Phase 7). Empty → single GUACAMOLE_PUBLIC_URL.
+    # Example:
+    # [{"id":"gw1","public_url":"https://guac1.example.com",
+    #   "private_url":"http://10.0.0.2:8080/guacamole","capacity":50}]
+    RDP_GATEWAYS: str = ""
+
+    # ── Phase 8: silent-failure guards ────────────────────────
+    # An allocation stuck in `ending` this long becomes `quarantined` instead
+    # of hanging forever. "Unknown is not free" needs an exit, not a loop.
+    RDP_ENDING_ESCALATE_SECONDS: int = 90
+
+    # After Redis/Postgres come back, hold off on releases this long. A long
+    # outage leaves every idle machine already past its grace window; without
+    # this the first healthy tick would release the whole fleet at once,
+    # instead of giving workers a fair reconnect.
+    RDP_DEGRADED_RECOVERY_SECONDS: int = 300
+
+    # The sweep must see a machine sessionless this many consecutive ticks
+    # before starting its grace clock. One flaky REST call is not evidence.
+    RDP_SWEEP_CONFIRMATIONS: int = 2
+    # Kill live gateway sessions that match no open allocation. Off until the
+    # direct gateway path is live, because on the proxy path a session can
+    # legitimately exist for a moment before its allocation row commits.
+    RDP_SWEEP_KILL_ORPHANS: bool = False
+
+    # New connects admitted per gateway per second. Shapes the thundering herd
+    # when a media node restarts and every viewer reconnects at once.
+    RDP_GATEWAY_ADMIT_PER_SECOND: int = 5
 
     # ── Apache Guacamole ──────────────────────────────────────
     GUACAMOLE_URL: str = "http://localhost:8080/guacamole"
     GUACAMOLE_USERNAME: str = "guacadmin"
     GUACAMOLE_PASSWORD: str = ""
+
+    # ── Direct Guacamole media plane (Phase 5) ────────────────
+    # Public origin the browser opens the canvas against, e.g.
+    # https://guac.gsdeck.com. Pixels go here; they never touch FastAPI.
+    # Empty means the legacy Python ws-tunnel stays in the pixel path.
+    GUACAMOLE_PUBLIC_URL: str = ""
+
+    # 128-bit key shared with guacamole-auth-json (`json-secret-key` in
+    # guacamole.properties). 32 hex characters. FastAPI signs and encrypts a
+    # one-connection auth blob with it, so a worker's browser can mint a
+    # Guacamole token scoped to the single machine they claimed — no
+    # guacadmin login in the browser.
+    GUACAMOLE_JSON_SECRET_KEY: str = ""
+
+    # Lifetime of the single-use join ticket FastAPI hands the browser. Long
+    # enough to POST it to Guacamole, short enough to be useless if copied.
+    RDP_JOIN_TICKET_TTL_SECONDS: int = 30
+    # Lifetime stamped into the auth-json blob. The tunnel outlives it; this
+    # only bounds how long the blob itself can mint a token.
+    RDP_GUAC_SESSION_TTL_SECONDS: int = 600
+
+    # Rollout switch for the direct gateway: off | pilot | on.
+    #   off   — everyone keeps the Python ws-tunnel
+    #   pilot — only PILOT emails get the direct canvas
+    #   on    — everyone gets the direct canvas
+    RDP_DIRECT_GATEWAY_MODE: str = "off"
+    RDP_DIRECT_GATEWAY_PILOT_EMAILS: str = ""
 
     # ── Uptime Kuma (RDP TCP heartbeat) ─────────────────────
     UPTIME_KUMA_URL: str = "http://localhost:3001"
@@ -119,6 +184,24 @@ class Settings(BaseSettings):
             for part in self.PROTECTED_SUPER_ADMIN_EMAILS.split(",")
             if part.strip()
         )
+
+    @property
+    def direct_gateway_pilot_emails(self) -> frozenset[str]:
+        return frozenset(
+            part.strip().lower()
+            for part in self.RDP_DIRECT_GATEWAY_PILOT_EMAILS.split(",")
+            if part.strip()
+        )
+
+    @property
+    def guacamole_public_url(self) -> str:
+        """Public Guacamole origin, without a trailing slash."""
+        return (self.GUACAMOLE_PUBLIC_URL or "").strip().rstrip("/")
+
+    @property
+    def direct_gateway_configured(self) -> bool:
+        """True when the media plane can actually be reached without FastAPI."""
+        return bool(self.guacamole_public_url and self.GUACAMOLE_JSON_SECRET_KEY.strip())
 
 
 settings = Settings()

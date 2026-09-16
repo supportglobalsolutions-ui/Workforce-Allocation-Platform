@@ -3,9 +3,10 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Inbox, Send } from 'lucide-react';
+import { Inbox, MessageSquare, Send } from 'lucide-react';
 
 import { contactUnreadCount } from '@/lib/contact';
+import { chatThreadsUnread } from '@/lib/chat';
 
 /**
  * Sub-navigation for the Notifications section.
@@ -17,18 +18,25 @@ import { contactUnreadCount } from '@/lib/contact';
 export default function NotificationTabs() {
   const pathname = usePathname();
   const [unread, setUnread] = useState(0);
+  const [chatUnread, setChatUnread] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
-    contactUnreadCount()
-      .then(({ unread: n }) => { if (!cancelled) setUnread(n); })
-      .catch(() => { /* badge simply stays hidden */ });
+    Promise.all([
+      contactUnreadCount().catch(() => ({ unread: 0 })),
+      chatThreadsUnread().catch(() => ({ unread: 0, messages: 0 })),
+    ]).then(([contact, chat]) => {
+      if (cancelled) return;
+      setUnread(contact.unread);
+      setChatUnread(chat.unread);
+    });
     return () => { cancelled = true; };
   }, [pathname]);
 
   const tabs = [
     { href: '/admin/notifications', label: 'Notification Center', icon: Send, badge: 0 },
     { href: '/admin/notifications/inbox', label: 'Enquiries inbox', icon: Inbox, badge: unread },
+    { href: '/admin/notifications/chat', label: 'Worker chat', icon: MessageSquare, badge: chatUnread },
   ];
 
   return (

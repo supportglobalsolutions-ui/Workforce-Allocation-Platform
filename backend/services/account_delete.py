@@ -26,7 +26,7 @@ def _utc_now() -> datetime:
 
 def _release_live_rdp(db: Session, worker_id: UUID) -> None:
     """Free machines this person is on. Session rows stay (closed, not deleted)."""
-    from routers.rdp import _bg_disconnect_guacamole, _end_rdp_connection
+    from services.rdp_support import bg_disconnect_guacamole, end_rdp_connection
 
     redis_client = get_redis()
     assigned = db.exec(select(RDPResource).where(RDPResource.assigned_worker_id == worker_id)).all()
@@ -45,7 +45,7 @@ def _release_live_rdp(db: Session, worker_id: UUID) -> None:
         if not resource:
             continue
         try:
-            result = _end_rdp_connection(
+            result = end_rdp_connection(
                 db,
                 resource,
                 redis_client,
@@ -57,7 +57,7 @@ def _release_live_rdp(db: Session, worker_id: UUID) -> None:
             guac_id = result.get("guacamole_connection_id") or resource.guacamole_connection_id
             if guac_id:
                 try:
-                    _bg_disconnect_guacamole(str(guac_id))
+                    bg_disconnect_guacamole(str(guac_id))
                 except Exception as exc:  # noqa: BLE001
                     logger.warning("Guacamole disconnect after account delete failed: %s", exc)
         except Exception as exc:  # noqa: BLE001

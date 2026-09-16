@@ -1,0 +1,7 @@
+{
+  "min_duration_minutes": 120,
+  "min_peak_concurrent": 10,
+  "max_failure_rate": 0.01,
+  "max_drops_per_session_hour": 0.02,
+  "require_direct_media": true
+}

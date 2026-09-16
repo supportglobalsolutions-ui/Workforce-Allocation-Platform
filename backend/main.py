@@ -13,15 +13,14 @@ from core.supabase_auth import is_auth_ready
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
 from routers import (
-    assessments, audit, auth, clients, communications, contact, currencies, intelligence, leaderboard,
+    assessments, audit, auth, chat, clients, communications, contact, currencies, intelligence, leaderboard,
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
     settings as platform_settings, task_assessments, training, uptime_kuma, wallets, workers,
 )
 from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
 from services.email_events import run_email_events_loop
-from services.rdp_lifecycle import run_rdp_lifecycle_loop
-from services.rdp_reconcile import run_rdp_reconcile_loop
+from services.rdp_coordinator import run_rdp_coordinator_loop
 from services.period_lifecycle import run_period_lifecycle_loop
 
 _log_level = getattr(logging, settings.LOG_LEVEL.upper(), logging.INFO)
@@ -50,12 +49,12 @@ async def lifespan(app: FastAPI):
         )
 
     background_tasks = [
-        asyncio.create_task(run_rdp_lifecycle_loop()),
-        # Rebuilds Guacamole connections that do not exist on this host, so a
-        # fresh deployment provisions itself instead of showing black screens.
-        asyncio.create_task(run_rdp_reconcile_loop()),
         asyncio.create_task(run_period_lifecycle_loop()),
     ]
+    # Phase 4: one leader-elected coordinator owns grace + reconcile. Prefer the
+    # standalone systemd unit in production (RDP_RUN_COORDINATOR_IN_API=false).
+    if settings.RDP_RUN_COORDINATOR_IN_API:
+        background_tasks.append(asyncio.create_task(run_rdp_coordinator_loop()))
     if settings.EMAIL_DISPATCH_ENABLED:
         background_tasks.append(asyncio.create_task(run_email_dispatch_loop()))
     if settings.RESEND_API_KEY:
@@ -162,6 +161,37 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         request.url,
         traceback.format_exc(),
     )
+    # DB / network blips during login OTP must not look like a mysterious 500.
+    exc_name = type(exc).__name__
+    exc_text = str(exc).lower()
+    db_unreachable = exc_name in {
+        "OperationalError",
+        "InterfaceError",
+        "TimeoutError",
+    } or any(
+        needle in exc_text
+        for needle in (
+            "could not connect",
+            "connection timed out",
+            "connection refused",
+            "name or service not known",
+            "could not translate host name",
+            "ssl connection has been closed",
+            "server closed the connection",
+        )
+    )
+    if db_unreachable:
+        body = {
+            "detail": (
+                "Cannot reach the database right now. Check your network "
+                "or DATABASE_URL (Supabase pooler :6543 is preferred), then try again."
+            ),
+            "request_id": request_id,
+        }
+        if not settings.is_production:
+            body["debug"] = {"type": exc_name, "message": str(exc)[:500]}
+        return JSONResponse(status_code=503, content=body, headers={"X-Request-ID": request_id})
+
     body = {
         "detail": "Something went wrong on our side. Please try again.",
         "request_id": request_id,
@@ -224,4 +254,6 @@ app.include_router(audit.router, prefix="/audit", tags=["audit"])
 app.include_router(notifications.router, prefix="/notifications", tags=["notifications"])
 # Public contact form (POST) + admin inbox (GET/PATCH).
 app.include_router(contact.router, prefix="/contact", tags=["contact"])
+# Signed-in accounts chatting with the admin team (contact.py is the no-account path).
+app.include_router(chat.router, prefix="/chat", tags=["chat"])
 app.include_router(uptime_kuma.router, prefix="/integrations/uptime-kuma", tags=["integrations"])

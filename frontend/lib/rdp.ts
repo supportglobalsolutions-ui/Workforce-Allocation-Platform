@@ -19,13 +19,17 @@ export interface ClaimResult {
   guacamole_viewer_path: string | null;
   guacamole_error?: string | null;
   resumed?: boolean;
+  /** Phase 4 — stale disconnects/tickets must carry this generation. */
+  connection_generation?: number;
 }
 
 export interface TunnelInfo {
   tunnel_url: string;
-  token: string;
+  /** Always null — Guacamole tokens never leave the API (Phase 1 Safety). */
+  token: null;
   data_source: string;
   connection_id: string;
+  note?: string;
 }
 
 export interface EndConnectionResult {
@@ -55,6 +59,54 @@ export const claimRdp = (rdpId: string) =>
 export const endRdpConnection = (rdpId: string) =>
   api.post<EndConnectionResult>(`/rdp/${rdpId}/end-connection`, {});
 
+/** Tell sibling tabs (desktop / claim board / control) the session is over. */
+export function broadcastRdpSessionEnded(payload: {
+  rdpId: string;
+  sessionId?: string | null;
+  evidenceUrl: string;
+  openedBy: 'control' | 'desktop';
+  fromTabId?: string;
+}): void {
+  try {
+    const ch = new BroadcastChannel('rdp-events');
+    ch.postMessage({ type: 'session-ended', ...payload });
+    ch.close();
+  } catch {
+    /* BroadcastChannel unsupported — sibling tabs poll instead */
+  }
+}
+
+/**
+ * Release the claim, but never hang the End button forever.
+ * Guacamole confirmation can stall; workers must still be able to leave.
+ */
+export async function endRdpConnectionSafe(
+  rdpId: string,
+  timeoutMs = 20_000,
+): Promise<{ ok: true } | { ok: false; error: unknown }> {
+  try {
+    await Promise.race([
+      endRdpConnection(rdpId),
+      new Promise<never>((_, reject) => {
+        window.setTimeout(() => reject(new Error('End session timed out')), timeoutMs);
+      }),
+    ]);
+    return { ok: true };
+  } catch (error) {
+    const raw = error instanceof Error ? error.message : String(error);
+    if (raw.toLowerCase().includes('already') || raw.toLowerCase().includes('no longer')) {
+      return { ok: true };
+    }
+    return { ok: false, error };
+  }
+}
+
+export function sessionEvidenceUrl(rdpId: string, sessionId?: string | null): string {
+  const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
+  if (sessionId) q.set('session', sessionId);
+  return `/worker/session-history?${q.toString()}`;
+}
+
 export const lockRdp = (rdpId: string) =>
   api.post<{ rdp_resource_id: string; status: string }>(`/rdp/${rdpId}/lock`, {});
 
@@ -66,6 +118,36 @@ export const maintenanceRdp = (rdpId: string) =>
 
 export const forceReleaseRdp = (rdpId: string, reason: string) =>
   api.post<EndConnectionResult & { reason: string }>(`/rdp/${rdpId}/force-release`, { reason });
+
+/** Machines stranded mid-close or held after an unconfirmed End (Phase 8). */
+export interface QuarantinedRdpRow {
+  allocation_id: string;
+  rdp_resource_id: string;
+  nickname: string | null;
+  worker_id: string;
+  gateway_id?: string | null;
+  connection_generation?: number;
+  quarantined_at?: string | null;
+  held_at?: string | null;
+  reason: string | null;
+  status?: string;
+  allocation_released?: boolean;
+}
+
+export interface QuarantinedLists {
+  quarantined: QuarantinedRdpRow[];
+  held: QuarantinedRdpRow[];
+}
+
+export const listQuarantinedRdp = () =>
+  api.get<QuarantinedLists>('/rdp/quarantined');
+
+/** Retry the closure that stranded the machine; never frees on unproven close. */
+export const repairRdp = (rdpId: string) =>
+  api.post<{ ok: boolean; code: string; friendly?: string; status?: string }>(
+    `/rdp/${rdpId}/repair`,
+    {},
+  );
 
 export interface RdpResource {
   id: string;
@@ -161,8 +243,43 @@ export const provisionRdpConnection = (rdpId: string, creds: RdpCredentials = {}
 
 export const getGuacamoleHealth = () => api.get<GuacamoleHealth>('/rdp/guacamole/health');
 
+/** Staff-only diagnostics. Never returns a Guacamole auth token. */
 export const getRdpTunnelInfo = (rdpId: string) =>
   api.get<TunnelInfo>(`/rdp/${rdpId}/tunnel-info`);
+
+/**
+ * Pass to open the desktop directly on the Guacamole gateway (Phase 5).
+ *
+ * `mode: 'proxy'` is a normal answer, not a failure: this caller is outside
+ * the rollout cohort and the viewer should keep using the FastAPI ws-tunnel.
+ */
+export interface RdpJoinTicket {
+  mode: 'direct' | 'proxy';
+  /** Single-use, ~30s. Spent on the Guacamole token mint, never reused. */
+  ticket: string | null;
+  /**
+   * Encrypted guacamole-auth-json blob. Opaque to the browser — only
+   * Guacamole holds the key — and grants exactly one connection.
+   */
+  auth_data: string | null;
+  guacamole_url: string | null;
+  data_source: string | null;
+  connection_name: string | null;
+  generation: number | null;
+  expires_in: number | null;
+  /** Seconds until the viewer should quietly mint a fresh token. */
+  refresh_in: number | null;
+  reason: string | null;
+}
+
+export const createJoinTicket = (rdpId: string) =>
+  api.post<RdpJoinTicket>(`/rdp/${rdpId}/join-ticket`, {});
+
+/** True when another tab already holds the live desktop tunnel. */
+export const getDesktopGuard = (rdpId: string) =>
+  api.get<{ already_open: boolean; switch_allowed: boolean; message: string | null }>(
+    `/rdp/${rdpId}/desktop-guard`,
+  );
 
 export const rdpDesktopUrl = (rdpId: string) => `/worker/rdp-session/${rdpId}/desktop`;
 

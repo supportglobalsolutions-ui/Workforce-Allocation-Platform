@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { LifeBuoy } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
@@ -29,25 +29,16 @@ interface RDPResource {
   guacamole_connection_id: string | null;
 }
 
-const STATE_LEGEND: { status: string; label: string; description: string }[] = [
-  { status: 'online_free', label: 'Online Free', description: 'Available, unassigned' },
-  { status: 'assigned', label: 'Assigned', description: 'Reserved for your upcoming shift' },
-  { status: 'active', label: 'Active', description: 'In live use by a worker' },
-  { status: 'idle', label: 'Idle', description: 'No heartbeat detected' },
-  { status: 'offline', label: 'Offline', description: 'Unreachable / powered off' },
-  { status: 'unhealthy', label: 'Unhealthy', description: 'Reachable but port failing' },
-  { status: 'admin_locked', label: 'Locked', description: 'Locked by leadership' },
-  { status: 'maintenance', label: 'Maintenance', description: 'Under maintenance' },
-];
-
 export default function RdpClaimBoard() {
-  const router = useRouter();
   const { session, isLoading: authLoading } = useAuth();
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [myActive, setMyActive] = useState<MyActiveRdp | null>(null);
   const [myWorkerId, setMyWorkerId] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  // Two failures in a row usually means the machine or the account needs
+  // an admin, not another click. Offer a way to reach one.
+  const [failedAttempts, setFailedAttempts] = useState(0);
   const [info, setInfo] = useState<string | null>(null);
   const [claiming, setClaiming] = useState<string | null>(null);
 
@@ -80,7 +71,14 @@ export default function RdpClaimBoard() {
     let ch: BroadcastChannel | null = null;
     try {
       ch = new BroadcastChannel('rdp-events');
-      ch.onmessage = () => loadMachines();
+      ch.onmessage = (e) => {
+        // End from desktop/control — drop the "open session" banner immediately.
+        if (e.data?.type === 'session-ended') {
+          setMyActive(null);
+          setClaiming(null);
+        }
+        void loadMachines();
+      };
     } catch { /* ignore */ }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, [loadMachines]);
@@ -101,11 +99,13 @@ export default function RdpClaimBoard() {
         if (!ready.ok) {
           closeReservedTab(desktopTab);
           setError(ready.error || 'This machine is not reachable right now.');
+          setFailedAttempts((n) => n + 1);
           return;
         }
       } catch (probeErr) {
         closeReservedTab(desktopTab);
         setError(reportError('RDP preflight', probeErr, { machineId }));
+        setFailedAttempts((n) => n + 1);
         return;
       }
       const result = await claimRdp(machineId);
@@ -116,7 +116,10 @@ export default function RdpClaimBoard() {
       }
       sendTabToDesktop(desktopTab, machineId);
       navigated = true;
-      router.push(`/worker/rdp-session/${machineId}`);
+      setFailedAttempts(0);
+      // Hard navigate so this tab always becomes the Active Session control
+      // page (timer + End session), even if focus moved to the desktop tab.
+      window.location.assign(`/worker/rdp-session/${machineId}`);
     } catch (e) {
       closeReservedTab(desktopTab);
       const msg = reportError('Claim RDP', e, { machineId });
@@ -125,10 +128,13 @@ export default function RdpClaimBoard() {
         const active = await getMyActiveRdp().catch(() => null);
         if (active?.rdp_resource_id) {
           navigated = true;
-          router.push(`/worker/rdp-session/${active.rdp_resource_id}`);
+          window.location.assign(`/worker/rdp-session/${active.rdp_resource_id}`);
         }
       }
-      if (!navigated) setError(msg);
+      if (!navigated) {
+        setError(msg);
+        setFailedAttempts((n) => n + 1);
+      }
     } finally {
       if (!navigated) setClaiming(null);
     }
@@ -136,10 +142,14 @@ export default function RdpClaimBoard() {
 
   const canClaim = (m: RDPResource) => {
     if (myActive) return false;
+    // Workers only receive assigned / shifted machines from the API.
+    // Staff see the full fleet and may claim any online_free machine.
     if (m.status === 'online_free') return true;
     if (m.status === 'assigned' && myWorkerId && m.assigned_worker_id === myWorkerId) return true;
     return false;
   };
+
+  const isStaff = ['admin', 'executive', 'super_admin'].includes(session?.authRole ?? '');
 
   return (
     <div className="max-w-6xl">
@@ -168,19 +178,20 @@ export default function RdpClaimBoard() {
       )}
 
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
-      {info && <p className="text-emerald-accent text-sm mb-4">{info}</p>}
 
-      <div className="glass-panel p-4 mb-6">
-        <p className="text-xs font-bold uppercase tracking-widest text-theme-muted mb-3">Machine states</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2">
-          {STATE_LEGEND.map((s) => (
-            <div key={s.status} className="flex items-start gap-2 text-xs">
-              <StatusBadge status={s.status} label={s.label} />
-              <span className="text-theme-muted leading-snug">{s.description}</span>
-            </div>
-          ))}
+      {failedAttempts >= 3 && (
+        <div className="mb-4 flex items-start gap-2.5 p-3 rounded-xl border border-emerald-accent/30 bg-emerald-accent/10 text-sm">
+          <LifeBuoy size={16} className="mt-0.5 shrink-0 text-emerald-accent" />
+          <span className="text-theme-muted">
+            That has failed {failedAttempts} times. If it keeps happening,{' '}
+            <Link href="/worker/chat" className="font-semibold text-emerald-accent hover:underline">
+              message an administrator
+            </Link>{' '}
+            and we will look at the machine.
+          </span>
         </div>
-      </div>
+      )}
+      {info && <p className="text-emerald-accent text-sm mb-4">{info}</p>}
 
       {loading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -190,8 +201,19 @@ export default function RdpClaimBoard() {
         </div>
       ) : machines.length === 0 ? (
         <div className="glass-panel p-8 text-center">
-          <p className="text-theme-muted text-sm mb-2">No RDP machines in the system yet.</p>
-          <p className="text-xs text-theme-muted">Machines added by an admin will appear here for claiming.</p>
+          {isStaff ? (
+            <>
+              <p className="text-theme-muted text-sm mb-2">No RDP machines in the system yet.</p>
+              <p className="text-xs text-theme-muted">Machines added by an admin will appear here for claiming.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-theme-muted text-sm mb-2">No desktops are assigned to you right now.</p>
+              <p className="text-xs text-theme-muted">
+                When an administrator assigns a machine or schedules a shift for you, it will show up here.
+              </p>
+            </>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -226,6 +248,10 @@ export default function RdpClaimBoard() {
                   >
                     {claiming === m.id ? 'Testing connection…' : m.status === 'assigned' ? 'Claim shift machine' : 'Claim'}
                   </button>
+                ) : m.status === 'maintenance' ? (
+                  <p className="text-xs text-center text-theme-muted">
+                    This desktop is being checked by an admin
+                  </p>
                 ) : m.status === 'assigned' || m.status === 'active' || m.status === 'idle' ? (
                   <p className="text-xs text-center text-theme-muted">In use or reserved</p>
                 ) : (

@@ -11,6 +11,7 @@ logger = logging.getLogger(__name__)
 
 _INSECURE_DB_DEFAULT = "122333"
 _INSECURE_GUAC_DEFAULT = "guacadmin"
+_JSON_SECRET = re.compile(r"^[0-9a-fA-F]{32}$")
 
 
 def validate_production_settings() -> None:
@@ -18,8 +19,29 @@ def validate_production_settings() -> None:
     if not settings.DATABASE_URL or _INSECURE_DB_DEFAULT in settings.DATABASE_URL:
         raise RuntimeError("Set a strong DATABASE_URL in production (no default password)")
 
-    if settings.GUACAMOLE_PASSWORD == _INSECURE_GUAC_DEFAULT and settings.is_production:
-        logger.warning("GUACAMOLE_PASSWORD is still the default — change it before launch")
+    if settings.is_production:
+        pwd = (settings.GUACAMOLE_PASSWORD or "").strip()
+        if not pwd or pwd == _INSECURE_GUAC_DEFAULT:
+            raise RuntimeError(
+                "Set a strong GUACAMOLE_PASSWORD (not empty, not the guacadmin default). "
+                "Rotate it in Guacamole and backend .env — assume any old token leaked "
+                "(Phase 1 Safety)."
+            )
+
+        direct_mode = (settings.RDP_DIRECT_GATEWAY_MODE or "off").strip().lower()
+        if direct_mode not in {"off", "pilot", "on"}:
+            raise RuntimeError("RDP_DIRECT_GATEWAY_MODE must be off, pilot, or on")
+        if direct_mode != "off":
+            if not settings.guacamole_public_url.startswith("https://"):
+                raise RuntimeError(
+                    "Set GUACAMOLE_PUBLIC_URL to the HTTPS guac. origin before "
+                    "enabling the direct gateway."
+                )
+            if not _JSON_SECRET.fullmatch((settings.GUACAMOLE_JSON_SECRET_KEY or "").strip()):
+                raise RuntimeError(
+                    "Set GUACAMOLE_JSON_SECRET_KEY to a random 32-hex-character "
+                    "value before enabling the direct gateway."
+                )
 
     if not settings.OTP_PEPPER and not settings.RESEND_API_KEY:
         raise RuntimeError("OTP_PEPPER or RESEND_API_KEY is required in production")

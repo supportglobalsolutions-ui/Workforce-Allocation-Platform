@@ -31,7 +31,6 @@ from services.admin_otp import (
 )
 from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
-from services.rdp_state import resume_active_from_heartbeat
 from services.security_risk import (
     BULK_HARD_MAX,
     BULK_OTP_THRESHOLD,
@@ -72,9 +71,12 @@ def _normalize_session_ids(ids: list[UUID]) -> list[UUID]:
     return unique
 
 
-def _session_response(session: WorkSession) -> SessionResponse:
+def _session_response(session: WorkSession, *, staff: bool = False) -> SessionResponse:
     resp = SessionResponse.model_validate(session)
     resp.evidence_complete = evidence_complete(session)
+    # Workers never see the admin review flag in API payloads.
+    if not staff:
+        resp.suspicious = False
     return resp
 
 
@@ -86,6 +88,10 @@ def _scoped_stmt(current_user: dict, db: Session):
     return stmt
 
 
+def _is_staff(current_user: dict) -> bool:
+    return current_user.get("role") in STAFF_ROLES
+
+
 @router.get("", response_model=list[SessionResponse])
 def list_sessions(
     session_type: Optional[str] = Query(None, alias="type"),
@@ -95,13 +101,15 @@ def list_sessions(
     started_before: Optional[datetime] = Query(None),
     ended_after: Optional[datetime] = Query(None),
     include_images: bool = Query(True),
+    suspicious: Optional[bool] = Query(None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
     stmt = _scoped_stmt(current_user, db)
+    staff = _is_staff(current_user)
     if session_type:
         stmt = stmt.where(WorkSession.session_type == session_type)
-    if worker_id and current_user.get("role") in STAFF_ROLES:
+    if worker_id and staff:
         stmt = stmt.where(WorkSession.worker_id == worker_id)
     if started_before:
         stmt = stmt.where(WorkSession.start_time < started_before)
@@ -109,13 +117,16 @@ def list_sessions(
         stmt = stmt.where(
             or_(WorkSession.end_time.is_(None), WorkSession.end_time > ended_after)
         )
+    # Admin-only filter — workers never receive the flag, so ignore for them.
+    if suspicious is not None and staff:
+        stmt = stmt.where(WorkSession.suspicious.is_(suspicious))
     stmt = stmt.order_by(WorkSession.start_time.desc(), WorkSession.id.desc()).offset(offset).limit(limit)
     sessions = db.exec(stmt).all()
     if not include_images:
         for s in sessions:
             s.start_image_url = None
             s.end_image_url = None
-    return [_session_response(s) for s in sessions]
+    return [_session_response(s, staff=staff) for s in sessions]
 
 
 @router.post("/delete/request-otp")
@@ -219,7 +230,7 @@ def my_session_hours(
     return WorkerHoursTotalsResponse(
         total_minutes=total_minutes,
         total_hours=(Decimal(total_minutes) / Decimal(60)).quantize(Decimal("0.01")),
-        sessions=[_session_response(s) for s in sessions],
+        sessions=[_session_response(s, staff=_is_staff(current_user)) for s in sessions],
     )
 
 
@@ -235,7 +246,7 @@ def incomplete_evidence_sessions(
         .order_by(WorkSession.start_time.desc())
         .limit(100)
     ).all()
-    return [_session_response(s) for s in sessions if not evidence_complete(s)]
+    return [_session_response(s, staff=_is_staff(current_user)) for s in sessions if not evidence_complete(s)]
 
 
 @router.get("/{session_id}", response_model=SessionResponse)
@@ -248,7 +259,7 @@ def get_session(
     session = db.exec(stmt).first()
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
-    return _session_response(session)
+    return _session_response(session, staff=_is_staff(current_user))
 
 
 @router.post("", response_model=SessionResponse, status_code=status.HTTP_201_CREATED)
@@ -274,7 +285,7 @@ def create_session(
     db.add(session)
     db.commit()
     db.refresh(session)
-    return _session_response(session)
+    return _session_response(session, staff=_is_staff(current_user))
 
 
 @router.patch("/{session_id}/evidence", response_model=SessionResponse)
@@ -324,7 +335,7 @@ def submit_session_evidence(
     on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
-    return _session_response(session)
+    return _session_response(session, staff=_is_staff(current_user))
 
 
 @router.patch("/{session_id}", response_model=SessionResponse)
@@ -350,7 +361,7 @@ def update_session(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     if current_user.get("role") not in STAFF_ROLES:
-        restricted = {"payroll_approval_state", "payroll_period_id", "admin_notes"}
+        restricted = {"payroll_approval_state", "payroll_period_id", "admin_notes", "suspicious"}
         if restricted & body.model_dump(exclude_unset=True).keys():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -376,7 +387,7 @@ def update_session(
     on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
-    return _session_response(session)
+    return _session_response(session, staff=_is_staff(current_user))
 
 
 @router.post("/{session_id}/heartbeat", response_model=SessionResponse)
@@ -397,17 +408,14 @@ def heartbeat_session(
     fields["last_heartbeat_at"] = now.isoformat()
     session.type_specific_fields = fields
 
-    rdp_was_idle = False
-    if session.rdp_resource_id and session.end_time is None:
-        rdp = db.get(RDPResource, session.rdp_resource_id)
-        rdp_was_idle = rdp is not None and rdp.status == RdpStatusEnum.idle
-
     db.add(session)
     db.commit()
     db.refresh(session)
 
+    # The heartbeat records that the claim page is open. It deliberately does
+    # NOT pull an `idle` machine back to `active`: ownership follows the
+    # browser ↔ Guacamole tunnel, not this tab (Phase 3 Action 2). A board
+    # left open in a background tab must not hold a desktop whose tunnel is
+    # gone — only a real reconnect cancels the grace timer.
     redis_client.set(f"heartbeat:session:{session_id}", now.isoformat(), ex=3600)
-    if session.end_time is None:
-        if rdp_was_idle and session.rdp_resource_id:
-            resume_active_from_heartbeat(db, session.rdp_resource_id)
-    return _session_response(session)
+    return _session_response(session, staff=_is_staff(current_user))

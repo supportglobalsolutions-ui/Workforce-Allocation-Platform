@@ -34,6 +34,7 @@ const ROUTE_CATALOG: Array<{
   { title: 'RDP Claim Board', href: '/worker/rdp-claim-board', portal: 'worker', description: 'Claim a remote machine to start work.', keywords: ['rdp', 'machine', 'claim'] },
   { title: 'Active Session', href: '/worker/active-session', portal: 'worker', description: 'Live session while you are working.', keywords: ['session', 'live', 'timer'] },
   { title: 'Session History', href: '/worker/session-history', portal: 'worker', description: 'Past sessions and hours logged.', keywords: ['history', 'sessions', 'hours'] },
+  { title: 'Chat with admin', href: '/worker/chat', portal: 'worker', description: 'Message an administrator for help.', keywords: ['chat', 'support', 'admin', 'help', 'contact'] },
   { title: 'My Schedule', href: '/worker/my-schedule', portal: 'worker', description: 'Upcoming and past shifts.', keywords: ['schedule', 'shifts', 'calendar'] },
   { title: 'Training', href: '/worker/training', portal: 'worker', description: 'Assigned training modules.', keywords: ['learning', 'courses'] },
   { title: 'Assessments', href: '/worker/assessments', portal: 'worker', description: 'MCQ tests for quality score.', keywords: ['tests', 'mcq', 'quality'] },

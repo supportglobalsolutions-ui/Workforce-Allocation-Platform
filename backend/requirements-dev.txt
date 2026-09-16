@@ -1,0 +1,9 @@
+# Test-only dependencies (Phase 8 Action 5). Not installed in production.
+#   pip install -r requirements.txt -r requirements-dev.txt
+-r requirements.txt
+
+pytest>=8.0.0
+# In-process Redis. The ownership model leans on Redis for locks, join
+# tickets, the coordinator lease and the sweep's miss counters, so most of the
+# concurrency gates can run with no server at all.
+fakeredis>=2.20.0

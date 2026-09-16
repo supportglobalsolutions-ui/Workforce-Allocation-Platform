@@ -50,6 +50,13 @@ services:
       POSTGRESQL_DATABASE: guacamole_db
       POSTGRESQL_USER: guacamole_user
       POSTGRESQL_PASSWORD: guacamole_pass
+      # Phase 5 — turns on guacamole-auth-json, which lets FastAPI mint a
+      # token scoped to one connection instead of handing out an admin login.
+      # Explicitly install guacamole-auth-json. This must never have a
+      # checked-in fallback: the same random value belongs in backend/.env.
+      JSON_ENABLED: "true"
+      # Generate: python -c "import secrets; print(secrets.token_hex(16))"
+      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:?Set the shared auth-json key}
     ports:
       - "8080:8080"
     networks:

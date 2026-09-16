@@ -164,6 +164,54 @@ def sync_connection(
         ) from exc
 
 
+def connection_parameters_for(
+    redis_client: redis_lib.Redis, resource: RDPResource
+) -> dict[str, str]:
+    """
+    Full RDP parameters for one machine, for embedding in an auth-json blob.
+
+    Preference order is deliberate. The machine row is authoritative when it
+    holds credentials (encrypted at rest here, and rebuildable on a fresh
+    Guacamole); otherwise we read them back from Guacamole, which is the
+    system of record for connections an admin created by hand.
+
+    This runs server-side only — the values go straight into the encrypted
+    blob and are never readable by the browser.
+    """
+    host = (resource.monitor_host or "").strip()
+    if not host:
+        raise GuacamoleProvisionError("This machine has no host/IP configured.")
+
+    guac_params: dict[str, str] = {}
+    if resource.guacamole_connection_id:
+        try:
+            guac_params = GuacamoleClient(redis_client).get_connection_parameters(
+                resource.guacamole_connection_id
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not read Guacamole parameters for %s: %s", resource.nickname, exc
+            )
+            guac_params = {}
+
+    username = resource.rdp_username or guac_params.get("username")
+    password = decrypt_secret(resource.rdp_password_enc) or guac_params.get("password")
+    domain = resource.rdp_domain or guac_params.get("domain")
+
+    if not username or not password:
+        raise GuacamoleProvisionError(
+            "This machine has no saved sign-in. Ask an admin to set its RDP credentials."
+        )
+
+    return _base_parameters(
+        resource,
+        username=username,
+        password=password,
+        domain=domain,
+        existing=guac_params,
+    )
+
+
 def store_credentials(
     resource: RDPResource,
     *,

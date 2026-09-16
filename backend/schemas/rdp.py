@@ -84,3 +84,32 @@ class RdpProvisionResult(SQLModel):
     created:                 bool = False
     provisioned:             bool = False
     error:                   Optional[str] = None
+
+
+class RdpJoinTicket(SQLModel):
+    """
+    Everything the browser needs to open the canvas on `guac.` by itself.
+
+    `mode` is the rollout switch. `proxy` means this caller stays on the
+    legacy FastAPI ws-tunnel and every other field is null — the viewer
+    branches on it rather than treating a disabled gateway as an error.
+
+    `auth_data` is the encrypted guacamole-auth-json blob. It contains the
+    machine's RDP credentials, but only Guacamole holds the key, so handing it
+    to the browser reveals nothing — and it grants exactly one connection.
+    """
+
+    mode:            str  # "direct" | "proxy"
+    ticket:          Optional[str] = None
+    auth_data:       Optional[str] = None
+    guacamole_url:   Optional[str] = None
+    gateway_id:      Optional[str] = None
+    data_source:     Optional[str] = None
+    connection_name: Optional[str] = None
+    generation:      Optional[int] = None
+    expires_in:      Optional[int] = None
+    # Seconds after which the viewer should quietly mint a fresh token. Kept
+    # well inside the blob's own lifetime so a long shift never hits an
+    # expired session and remounts the canvas.
+    refresh_in:      Optional[int] = None
+    reason:          Optional[str] = None

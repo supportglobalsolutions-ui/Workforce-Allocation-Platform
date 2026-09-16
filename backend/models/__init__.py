@@ -5,7 +5,8 @@ from sqlmodel import SQLModel  # noqa: F401 — exposes SQLModel.metadata for Al
 
 from .enums import (  # noqa: F401
     AdminRoleEnum, AccountStatusEnum, WorkerTypeEnum, WorkerStatusEnum,
-    EntityStatusEnum, RdpStatusEnum, ShiftStatusEnum, ReleaseReasonEnum,
+    EntityStatusEnum, RdpStatusEnum, MachineHealthEnum, AllocationLifecycleEnum,
+    TunnelStatusEnum, ShiftStatusEnum, ReleaseReasonEnum,
     SessionTypeEnum, SessionCloseEnum, PayrollSessionEnum, RateTypeEnum,
     PaymentTierUnitEnum, PayrollPeriodStatusEnum, IndicatorInputEnum, TicketStatusEnum,
     TaskResultStatusEnum, ClientContractStatusEnum, ClientOwnerTypeEnum,
@@ -17,6 +18,7 @@ from .worker       import Worker                                                
 from .client       import Client, ClientPeriodEarning, ClientRevenueAgreement                 # noqa: F401
 from .rdp_machine  import RDPResource                                                         # noqa: F401
 from .contact_message import ContactMessage                                                    # noqa: F401
+from .chat import ChatThread, ChatMessage                                                      # noqa: F401
 from .shift        import Shift                                                               # noqa: F401
 from .allocation   import Allocation                                                          # noqa: F401
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary                   # noqa: F401

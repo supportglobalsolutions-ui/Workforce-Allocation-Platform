@@ -62,7 +62,7 @@ The fastest way to answer "what runs where". Each row maps a folder to the techn
 | `frontend/` | Next.js 14, React 18, TypeScript | Implemented | Web application (all three portals) |
 | `frontend/app/` | Next.js App Router | Implemented | **Routing: App Router only** — route groups: `worker/`, `admin/`, `leadership/`, `login/`, `reset-password/`; sitemap at `app/pages/page.tsx` (`/pages`) |
 | `frontend/components/` | React + Tailwind | Implemented | UI: `platform/`, `navigation/`, `shared/`, `theme/`, `auth/`, `landing/`, `layout/` |
-| `frontend/lib/` | TypeScript modules | Implemented | `auth/`, `navigation/`, `theme/`, `supabase.ts`, `mock-data.ts`, `pages-registry.ts` |
+| `frontend/lib/` | TypeScript modules | Implemented | `auth/`, `navigation/`, `theme/`, `supabase.ts`, `api.ts`, `rdp.ts`, `errors.ts`, `pages-registry.ts` |
 | `frontend/lib/supabase.ts` | Supabase JS SDK | Implemented | Supabase client initialization |
 | `frontend/lib/auth/` | Custom + Supabase | Implemented | Live Supabase session auth (`supabase-auth.ts`, `AuthProvider.tsx`, `session-store.ts`) |
 | `frontend/tailwind.config.ts`, `postcss.config.js`, `globals.css` | Tailwind CSS, PostCSS | Implemented | Styling pipeline |

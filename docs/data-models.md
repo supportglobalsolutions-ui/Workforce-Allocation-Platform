@@ -615,7 +615,7 @@ Both GlobalSolutions registered workers and partner workers.
 
 **Check constraint:** `partner_entity_id IS NOT NULL` when `worker_type = 'partner_worker'`.
 
-**Frontend alignment:** Mock workers in `frontend/lib/mock-data.ts` use `type: 'GS Registered' | 'Partner Worker'` and optional `partner` name — maps directly to `worker_type` + `partner_entity_id`.
+**Frontend alignment:** the UI distinguishes `'GS Registered'` from `'Partner Worker'` with an optional partner name — maps directly to `worker_type` + `partner_entity_id`. (Previously illustrated by `frontend/lib/mock-data.ts`, since removed in favour of the live API.)
 
 ---
 
@@ -702,7 +702,7 @@ GlobalSolutions RDP machines managed through the 8-state machine.
 | `admin_locked` | Manually locked by leadership |
 | `maintenance` | Under maintenance |
 
-**Frontend alignment:** `frontend/lib/mock-data.ts` → `machines[]` with `status` values map 1:1 to this enum.
+**Frontend alignment:** the claim board's machine `status` values map 1:1 to this enum (see `frontend/lib/rdp.ts`). (Previously illustrated by `frontend/lib/mock-data.ts`, since removed.)
 
 ---
 
@@ -1253,7 +1253,7 @@ This matrix links the DB roles to the portal layers above.
 ## Implementation notes
 
 1. **Backend models not yet coded** — `backend/` is scaffolded in README; SQLAlchemy models in `backend/models/` are planned but not committed. This document is the build reference.
-2. **Frontend uses mock data** — `frontend/lib/mock-data.ts` reflects the entities above for UI development ahead of API wiring.
+2. ~~**Frontend uses mock data**~~ — no longer true. `frontend/lib/mock-data.ts` has been removed; the UI reads the live API through `frontend/lib/api.ts` and the per-feature clients beside it (`rdp.ts`, `hours.ts`, …).
 3. **Migrations** — Alembic migrations will be generated from these definitions during Phase 1 Week 2.
 4. **Charter amendments included** — Extended worker model, three session types, variable payroll percentages, 50/50 quality weighting, deferred WhatsApp, and Claude AI placeholder are all reflected in schema design.
 5. **Layering is documentation only** — the scope layers above do not change the schema; they describe which portal role primarily needs each table. The canonical schema in Appendix A remains one shared set of tables.

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from 'react';
 import { AlertTriangle, CheckCircle2, ImageIcon, RefreshCw, Search } from 'lucide-react';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import { getSessionImageUrl, uploadSessionImage, validateImageFile } from '@/lib/session-images';
 import ImageInspector from './ImageInspector';
 
@@ -31,6 +32,7 @@ export default function SessionImageUpload({
   const [status, setStatus] = useState<Status>(initialUrl ? 'success' : 'idle');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [inspecting, setInspecting] = useState(false);
+  const [replaceConfirmOpen, setReplaceConfirmOpen] = useState(false);
 
   // The bucket is private: the stored value is an object path, so it has to be
   // exchanged for a short-lived signed URL before it can be rendered.
@@ -47,6 +49,19 @@ export default function SessionImageUpload({
       .catch(() => { if (!cancelled) setUrl(null); });
     return () => { cancelled = true; };
   }, [initialUrl]);
+
+  const openPicker = () => {
+    inputRef.current?.click();
+  };
+
+  const requestReplaceOrUpload = () => {
+    if (readOnly) return;
+    if (url || initialUrl) {
+      setReplaceConfirmOpen(true);
+      return;
+    }
+    openPicker();
+  };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (readOnly) return;
@@ -70,6 +85,8 @@ export default function SessionImageUpload({
     }
   };
 
+  const kindLabel = imageType === 'start' ? 'start' : 'end';
+
   return (
     <>
       <div className="space-y-2">
@@ -91,13 +108,13 @@ export default function SessionImageUpload({
                   tabIndex={0}
                   onClick={(e) => {
                     e.stopPropagation();
-                    inputRef.current?.click();
+                    requestReplaceOrUpload();
                   }}
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' || e.key === ' ') {
                       e.preventDefault();
                       e.stopPropagation();
-                      inputRef.current?.click();
+                      requestReplaceOrUpload();
                     }
                   }}
                   className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-[11px] font-semibold text-white bg-white/20 hover:bg-white/30"
@@ -123,7 +140,7 @@ export default function SessionImageUpload({
           ) : (
             <button
               type="button"
-              onClick={() => inputRef.current?.click()}
+              onClick={requestReplaceOrUpload}
               className="w-full h-40 flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed border-gray-200 bg-gray-50 hover:border-emerald-400 hover:bg-emerald-50/50 transition-colors"
             >
               <ImageIcon size={20} className="text-gray-300" />
@@ -160,7 +177,7 @@ export default function SessionImageUpload({
             <span className="flex-1">{errorMsg}</span>
             <button
               type="button"
-              onClick={() => inputRef.current?.click()}
+              onClick={requestReplaceOrUpload}
               className="shrink-0 underline underline-offset-2 hover:text-red-900 transition-colors"
             >
               Retry
@@ -176,6 +193,20 @@ export default function SessionImageUpload({
       {inspecting && url && (
         <ImageInspector url={url} label={label} onClose={() => setInspecting(false)} />
       )}
+
+      <ConfirmModal
+        open={replaceConfirmOpen}
+        title={`Replace ${kindLabel} image?`}
+        body={`A ${kindLabel} screenshot is already saved for this session. Capturing again will overwrite it.`}
+        confirmLabel="Replace image"
+        tone="danger"
+        onConfirm={() => {
+          setReplaceConfirmOpen(false);
+          // Defer so the modal unmounts before the native file picker opens.
+          window.setTimeout(() => openPicker(), 0);
+        }}
+        onCancel={() => setReplaceConfirmOpen(false)}
+      />
     </>
   );
 }

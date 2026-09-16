@@ -53,6 +53,35 @@ class RdpStatusEnum(str, enum.Enum):
     maintenance  = "maintenance"
 
 
+class MachineHealthEnum(str, enum.Enum):
+    """Reachability only — never frees ownership by itself."""
+    unknown     = "unknown"
+    reachable   = "reachable"
+    unreachable = "unreachable"
+
+
+class AllocationLifecycleEnum(str, enum.Enum):
+    """Durable lock state for an allocation row."""
+    reserved    = "reserved"
+    assigned    = "assigned"
+    ending      = "ending"
+    ended       = "ended"
+    # Closure could not be confirmed within RDP_ENDING_ESCALATE_SECONDS, so the
+    # machine is held out of service instead of being released to the next
+    # worker on top of a tunnel that may still be live. Needs an admin repair
+    # (Phase 8 Action 2) — it is the defined exit from "unknown", not a free.
+    quarantined = "quarantined"
+
+
+class TunnelStatusEnum(str, enum.Enum):
+    """Browser ↔ Guacamole tunnel observation."""
+    none          = "none"
+    connecting    = "connecting"
+    connected     = "connected"
+    reconnecting  = "reconnecting"
+    disconnected  = "disconnected"
+
+
 # ── shifts ─────────────────────────────────────────────────────────────────────
 
 class ShiftStatusEnum(str, enum.Enum):
@@ -181,6 +210,9 @@ WorkerTypeType       = sa.Enum(WorkerTypeEnum,          name="worker_type_enum",
 WorkerStatusType     = sa.Enum(WorkerStatusEnum,        name="worker_status_enum",      create_type=True)
 EntityStatusType     = sa.Enum(EntityStatusEnum,        name="entity_status_enum",      create_type=True)
 RdpStatusType        = sa.Enum(RdpStatusEnum,           name="rdp_status_enum",         create_type=True)
+MachineHealthType    = sa.Enum(MachineHealthEnum,       name="machine_health_enum",     create_type=True)
+AllocationLifecycleType = sa.Enum(AllocationLifecycleEnum, name="allocation_lifecycle_enum", create_type=True)
+TunnelStatusType     = sa.Enum(TunnelStatusEnum,        name="tunnel_status_enum",      create_type=True)
 ShiftStatusType      = sa.Enum(ShiftStatusEnum,         name="shift_status_enum",       create_type=True)
 ReleaseReasonType    = sa.Enum(ReleaseReasonEnum,       name="release_reason_enum",     create_type=True)
 SessionTypeType      = sa.Enum(SessionTypeEnum,         name="session_type_enum",       create_type=True)

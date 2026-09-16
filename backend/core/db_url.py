@@ -43,6 +43,11 @@ def normalize_db_url(url: str) -> tuple[str, bool]:
     is_supabase = "supabase." in (parts.hostname or "")
     if is_supabase and not any(k.lower() == "sslmode" for k, _ in params):
         params.append(("sslmode", "require"))
+    # Fail fast when the DB host is unreachable (common on flaky networks /
+    # wrong direct :5432 routes). Without this, libpq can hang past the Next
+    # proxy timeout and the login UI only sees a blank 500.
+    if not any(k.lower() == "connect_timeout" for k, _ in params):
+        params.append(("connect_timeout", "10"))
 
     pooled = pgbouncer_flag or parts.port == TRANSACTION_POOLER_PORT
 

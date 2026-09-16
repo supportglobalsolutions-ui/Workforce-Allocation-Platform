@@ -1,0 +1,34 @@
+[Unit]
+Description=GlobalSolutions RDP session coordinator
+After=network.target docker.service workforce-backend.service
+Requires=docker.service
+
+[Service]
+Type=simple
+User=deployer
+Group=deployer
+WorkingDirectory=/home/deployer/app/backend
+Environment="PATH=/home/deployer/app/backend/venv/bin:/usr/local/bin:/usr/bin"
+EnvironmentFile=/home/deployer/app/backend/.env
+# Standalone process: set RDP_RUN_COORDINATOR_IN_API=false on the API unit
+# so only this service reconciles grace / closures / Guacamole connections.
+ExecStart=/home/deployer/app/backend/venv/bin/python -m services.rdp_coordinator
+
+# SIGTERM is handled: the process cancels its loop and releases the Redis
+# leader lease before exiting, so a restart hands over in seconds instead of
+# waiting out the lease TTL. Give it room to finish that.
+KillSignal=SIGTERM
+TimeoutStopSec=20s
+
+Restart=always
+RestartSec=5s
+# Do not give up on a crash loop — a coordinator that stays dead silently
+# stops grace expiry fleet-wide. Keep restarting and let the heartbeat at
+# GET /rdp/coordinator surface the problem.
+StartLimitIntervalSec=0
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

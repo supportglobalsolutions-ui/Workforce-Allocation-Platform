@@ -49,17 +49,32 @@ const nextConfig = {
       process.env.API_PROXY_URL ||
       process.env.NEXT_PUBLIC_API_URL ||
       'http://127.0.0.1:8000';
-    const guacamoleUrl = process.env.NEXT_PUBLIC_GUACAMOLE_URL || 'http://localhost:8080/guacamole';
-    return [
+
+    const rules = [
       {
         source: '/api/:path*',
         destination: `${backendUrl}/:path*`,
       },
-      {
+    ];
+
+    // Phase 1 Safety: never proxy Guacamole REST through Vercel in production.
+    // A worker who once obtained a Guacamole token could call
+    // /remote/api/session/data/.../parameters and read every Windows password.
+    // Local optional: set ALLOW_GUACAMOLE_REMOTE_PROXY=true for debugging only.
+    const allowRemoteProxy =
+      process.env.ALLOW_GUACAMOLE_REMOTE_PROXY === 'true' &&
+      process.env.NODE_ENV !== 'production' &&
+      process.env.VERCEL !== '1';
+    if (allowRemoteProxy) {
+      const guacamoleUrl =
+        process.env.NEXT_PUBLIC_GUACAMOLE_URL || 'http://localhost:8080/guacamole';
+      rules.push({
         source: '/remote/:path*',
         destination: `${guacamoleUrl}/:path*`,
-      },
-    ];
+      });
+    }
+
+    return rules;
   },
   async redirects() {
     return [

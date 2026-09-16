@@ -1,0 +1,26 @@
+# Run separately from docker-compose.yml; API and future coordinator use systemd.
+name: workforce
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: workforce-redis
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:6379:6379"
+    networks: [guac_net]
+  uptime-kuma:
+    image: louislam/uptime-kuma:1
+    container_name: workforce-uptime-kuma
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3001:3001"
+    volumes:
+      - uptime_kuma_data:/app/data
+    networks: [guac_net]
+networks:
+  guac_net:
+    driver: bridge
+volumes:
+  uptime_kuma_data:
+    external: true
+    name: infrastructure_uptime_kuma_data

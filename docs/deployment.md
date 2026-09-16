@@ -1,6 +1,10 @@
 # Production Deployment Guide: Hetzner Backend & Vercel Frontend
 ### GlobalSolutions Workforce Allocation Platform
 
+> **Phase 6 split-host deployment:** use [Media migration and capacity acceptance](rdp-media-deployment.md) for separate control/media Compose files, private networking, DNS/TLS, database migration, rollback, and measured sizing. The single-host placement and sizing estimates below are legacy guidance, not measured capacity guarantees.
+>
+> **Phase 7 redundancy:** use [Gateway and control-plane redundancy](rdp-redundancy.md) for multi-gateway sticky placement, drain, dual API upstream, failover plan, and the acceptance scorer (`scripts/rdp_acceptance.py`).
+
 This is the single, complete, step-by-step production deployment manual for the platform. It walks you through deploying the **Backend & Infrastructure** (FastAPI, Redis, Apache Guacamole, Uptime Kuma) on a **Hetzner Cloud VPS**, connecting to **Supabase** for PostgreSQL and Authentication, and hosting the **Frontend** (Next.js 14) on **Vercel**.
 
 ---
@@ -64,7 +68,7 @@ This is the single, complete, step-by-step production deployment manual for the 
                                                                          └─────────────┘
 ```
 
-- **Frontend (Vercel)**: Next.js 14 App Router served at the global edge. Provides fast UI loading, handles authentication sessions via signed cookies, and proxies `/api/*` and `/remote/*` requests.
+- **Frontend (Vercel)**: Next.js 14 App Router served at the global edge. Provides fast UI loading, handles authentication sessions via signed cookies, and proxies `/api/*` to the Hetzner API. It does **not** proxy `/remote/*` to Guacamole in production (Phase 1 Safety — that rewrite could expose Guacamole REST and Windows passwords).
 - **Backend (Hetzner VPS)**: Runs FastAPI with Gunicorn/Uvicorn, handles long-running background tasks (RDP lifecycle timeouts, bulk email dispatch loops, Uptime Kuma webhooks).
 - **Database & Auth (Supabase)**: Managed PostgreSQL with connection pooling and GoTrue JWT authentication.
 - **Microservices (Docker on Hetzner)**:
@@ -398,6 +402,13 @@ SUPABASE_JWKS_URL=https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.jso
 # ── Redis (Runs locally in Docker container) ──────────────────
 REDIS_URL=redis://localhost:6379/0
 
+# ── RDP link safety (current 2 GB VPS) ────────────────────────
+# A lost browser tunnel holds its machine for 5 minutes so a worker can reconnect.
+RDP_DISCONNECT_GRACE_SECONDS=300
+# Conservative cap for the current 2 GB all-in-one host. Increase only after
+# moving/upgrading the media host and measuring representative live sessions.
+RDP_MAX_LIVE_SESSIONS=6
+
 # ── Cookie Security (MUST BE IDENTICAL TO VERCEL CONFIG) ──────
 # Generate with: openssl rand -hex 32
 SESSION_COOKIE_SECRET=paste_long_random_64_character_hex_string_here
@@ -407,6 +418,22 @@ OTP_PEPPER=paste_another_long_random_64_character_hex_string_here
 GUACAMOLE_URL=http://localhost:8080/guacamole
 GUACAMOLE_USERNAME=guacadmin
 GUACAMOLE_PASSWORD=guacadmin
+
+# ── Direct Guacamole media plane (Phase 5) ────────────────────
+# Public origin the browser opens the canvas against. With this set (plus a
+# key below and MODE not "off"), pixels go browser -> Guacamole directly and
+# an API restart no longer kills live desktops.
+GUACAMOLE_PUBLIC_URL=https://guac.yourdomain.com
+
+# Shared 128-bit key for guacamole-auth-json. MUST equal JSON_SECRET_KEY on
+# the Guacamole container. Generate with:
+#   python -c "import secrets; print(secrets.token_hex(16))"
+GUACAMOLE_JSON_SECRET_KEY=paste_32_hex_characters_here
+
+# Rollout: off | pilot | on. Start at "pilot" with a couple of real workers,
+# watch them for a full shift, then move to "on".
+RDP_DIRECT_GATEWAY_MODE=off
+RDP_DIRECT_GATEWAY_PILOT_EMAILS=
 
 # ── Uptime Kuma ───────────────────────────────────────────────
 UPTIME_KUMA_URL=http://localhost:3001
@@ -474,7 +501,36 @@ WantedBy=multi-user.target
 
 Save and exit (`Ctrl+O`, Enter, `Ctrl+X`).
 
-### 6.2 Start the Service
+### 6.2 Optional: RDP coordinator (Phase 4)
+
+Lifecycle grace, Guacamole reconcile, and capacity repair should not run inside
+every Gunicorn worker. Prefer a dedicated unit:
+
+```bash
+sudo cp /home/deployer/app/infrastructure/systemd/workforce-rdp-coordinator.service \
+  /etc/systemd/system/workforce-rdp-coordinator.service
+```
+
+In `/home/deployer/app/backend/.env` set:
+
+```ini
+RDP_RUN_COORDINATOR_IN_API=false
+RDP_DISCONNECT_GRACE_SECONDS=300
+```
+
+Then:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart workforce-backend
+sudo systemctl enable --now workforce-rdp-coordinator
+sudo systemctl status workforce-rdp-coordinator
+```
+
+Until the unit is enabled, leave `RDP_RUN_COORDINATOR_IN_API=true` (default). Redis
+leader election still ensures only one API worker performs coordinator ticks.
+
+### 6.3 Start the API Service
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable workforce-backend
@@ -483,7 +539,7 @@ sudo systemctl status workforce-backend
 ```
 Output should show: `Active: active (running)`.
 
-### 6.3 Test Health Endpoint
+### 6.4 Test Health Endpoint
 ```bash
 curl -i http://127.0.0.1:8000/health
 ```
@@ -575,6 +631,54 @@ server {
 
     client_max_body_size 100M;
 
+    # Phase 1 Safety — block public Guacamole REST that can dump
+    # connection parameters (hostname/username/password) when a token
+    # is presented. FastAPI must use GUACAMOLE_URL=http://127.0.0.1:8080/guacamole
+    # so it bypasses this vhost. See infrastructure/nginx/guacamole-hardening.conf.
+    location ~* ^/api/session/data/[^/]+/connections {
+        return 404;
+    }
+    location ~* ^/api/session/data/[^/]+/activeConnections {
+        return 404;
+    }
+    location ~* ^/api/session/data/[^/]+/users {
+        return 404;
+    }
+    location ~* ^/api/session/data/[^/]+/userGroups {
+        return 404;
+    }
+
+    # Phase 5 — join-ticket gate. A Guacamole token can only be minted by
+    # spending a single-use ticket FastAPI issued for an open claim; the
+    # token that comes back is scoped by guacamole-auth-json to that one
+    # connection. Full annotated version, including the http{}-level
+    # $guac_cors_origin map this needs:
+    #   infrastructure/nginx/guacamole-join-ticket.conf
+    # Omit these two blocks to stay on the proxied ws-tunnel.
+    location = /_rdp_join_check {
+        internal;
+        proxy_pass              http://127.0.0.1:8000/rdp/gateway/verify-ticket;
+        proxy_pass_request_body off;
+        proxy_set_header        Content-Length "";
+        proxy_set_header        X-Original-URI $request_uri;
+        proxy_connect_timeout   3s;
+        proxy_read_timeout      5s;
+    }
+
+    location = /api/tokens {
+        auth_request /_rdp_join_check;
+
+        add_header Access-Control-Allow-Origin $guac_cors_origin always;
+        add_header Vary Origin always;
+
+        proxy_pass         http://127.0.0.1:8080/guacamole/api/tokens;
+        proxy_http_version 1.1;
+        proxy_set_header   Host $host;
+        proxy_set_header   X-Real-IP $remote_addr;
+        proxy_set_header   X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header   X-Forwarded-Proto $scheme;
+    }
+
     location / {
         # Guacamole container runs context under /guacamole/
         proxy_pass http://127.0.0.1:8080/guacamole/;
@@ -596,7 +700,68 @@ server {
 }
 ```
 
+> **After deploy (Phase 1 Safety):** rotate the Guacamole `guacadmin` password in the Guacamole UI **and** set the matching `GUACAMOLE_PASSWORD` in `/home/deployer/app/backend/.env`, then `sudo systemctl restart workforce-backend`. Assume any previously leaked admin token is burned. Keep `GUACAMOLE_URL` pointed at localhost Tomcat, not the public `guac.` hostname.
+
+> **Guacamole admin UI (Phase 5):** the `auth_request` above means the public
+> `guac.` login screen can no longer mint a token. That is intended — nobody
+> should be logging into Guacamole over the internet. Administer it through an
+> SSH tunnel instead:
+> `ssh -L 8080:127.0.0.1:8080 deployer@<vps>`, then open `http://localhost:8080/guacamole`.
+
 Save and exit (`Ctrl+O`, Enter, `Ctrl+X`).
+
+### 7.4 Turn on the direct Guacamole canvas (Phase 5)
+
+Until this is done, pixels are relayed by FastAPI: CPU grows with every live
+desktop and an API restart drops every session. These steps move the canvas to
+`guac.` while the control plane keeps deciding who may sit where.
+
+```bash
+# 1. One shared key for FastAPI and Guacamole.
+python3 -c "import secrets; print(secrets.token_hex(16))"
+```
+
+2. Put that value in **both** places, identically:
+   - `GUACAMOLE_JSON_SECRET_KEY` in `/home/deployer/app/backend/.env`
+   - `GUACAMOLE_JSON_SECRET_KEY` in the infrastructure env file, which the
+   Compose files pass to the container as `JSON_SECRET_KEY`.
+   - Keep `JSON_ENABLED=true` on the Guacamole container. The repository
+     Compose files set this explicitly. Do not add a fallback key to Compose.
+
+3. Set `GUACAMOLE_PUBLIC_URL=https://guac.yourdomain.com` in the backend `.env`.
+
+4. Add the `$guac_cors_origin` map at `http{}` level (see
+   `infrastructure/nginx/guacamole-join-ticket.conf`) listing the origins the
+   app is served from, then apply the two `location` blocks above. If Guacamole
+   runs on the separate media VPS, change `workforce_control_api` in that file
+   to the API VPS's private address before reloading Nginx.
+
+```bash
+sudo nginx -t && sudo systemctl reload nginx
+cd /home/deployer/app/infrastructure && docker compose up -d guacamole
+docker compose logs --tail 100 guacamole
+sudo systemctl restart workforce-backend
+```
+
+The log must not contain an authentication-extension configuration error.
+`docker compose config` must show a non-empty `JSON_SECRET_KEY` and
+`JSON_ENABLED: "true"`; do not print the key in tickets or logs.
+
+5. **Pilot first.** Set `RDP_DIRECT_GATEWAY_MODE=pilot` and
+   `RDP_DIRECT_GATEWAY_PILOT_EMAILS=` with one or two real workers, restart the
+   backend, and watch them for a full shift. Everyone else keeps the proxied
+   tunnel automatically — the two paths run side by side.
+
+6. Verify with a pilot worker, in DevTools:
+   - `POST /rdp/{id}/join-ticket` returns `"mode": "direct"`.
+   - `POST https://guac…/api/tokens?rdp_ticket=…` returns `200`.
+   - The desktop WebSocket is `wss://guac…/websocket-tunnel`, **not**
+     `wss://api…/rdp/{id}/ws-tunnel`.
+   - Replaying the same `rdp_ticket` a second time returns `403`.
+   - `sudo systemctl restart workforce-backend` while the desktop is open: the
+     picture keeps moving. That is the whole point of the phase.
+
+7. When the pilot is clean, set `RDP_DIRECT_GATEWAY_MODE=on` and restart.
 
 ### 7.3 Enable Site and Issue SSL Certificate
 ```bash

@@ -6,7 +6,7 @@ from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
-from .enums import RdpStatusEnum, RdpStatusType
+from .enums import MachineHealthEnum, MachineHealthType, RdpStatusEnum, RdpStatusType
 
 if TYPE_CHECKING:
     from .allocation import Allocation
@@ -32,6 +32,20 @@ class RDPResource(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id"), nullable=True),
     )
     status: RdpStatusEnum = Field(sa_column=Column(RdpStatusType, nullable=False))
+    # Independent of ownership. Health probes update this only.
+    machine_health: MachineHealthEnum = Field(
+        default=MachineHealthEnum.unknown,
+        sa_column=Column(
+            MachineHealthType,
+            nullable=False,
+            server_default=text("'unknown'"),
+        ),
+    )
+    # Optimistic concurrency for status / assignment writes.
+    version: int = Field(
+        default=1,
+        sa_column=Column(Integer, nullable=False, server_default=text("1")),
+    )
     assigned_worker_id: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("workers.id"), nullable=True),

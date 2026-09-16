@@ -36,6 +36,7 @@ function sectionMatch(pathname: string | null, href: string): boolean {
     '/admin/sessions': ['/admin/sessions', '/admin/live-sessions'],
     '/admin/quality': ['/admin/quality', '/admin/assessments', '/admin/training'],
     '/admin/settings': ['/admin/settings', '/admin/audit-logs'],
+    '/worker/active-session': ['/worker/active-session', '/worker/rdp-session'],
   };
   const paths = hubs[href];
   if (!paths) return false;

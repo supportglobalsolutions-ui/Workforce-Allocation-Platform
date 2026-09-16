@@ -22,6 +22,10 @@ redis>=5.0.4
 # Auth utils
 passlib[bcrypt]>=1.7.4
 
+# Secrets at rest (Fernet) and the guacamole-auth-json blob (AES-CBC + HMAC).
+# Arrives transitively with pyjwt[crypto]; pinned here because we use it directly.
+cryptography>=42.0.0
+
 # Utilities
 python-dotenv>=1.0.1
 httpx>=0.27.0

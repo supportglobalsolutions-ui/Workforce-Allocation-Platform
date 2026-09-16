@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { X } from 'lucide-react';
+import { Flag, X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageUpload from './SessionImageUpload';
 import { api } from '@/lib/api';
@@ -23,6 +23,8 @@ interface SessionDetail {
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
   duration_minutes?: number | null;
+  /** Admin-only review flag — never shown to workers. */
+  suspicious?: boolean;
 }
 
 interface Props {
@@ -30,10 +32,13 @@ interface Props {
   onClose: () => void;
   onImageUploaded: (sessionId: string, type: 'start' | 'end', url: string) => void;
   onEvidenceSaved?: (sessionId: string, patch: Partial<SessionDetail>) => void;
+  onSuspiciousChanged?: (sessionId: string, suspicious: boolean) => void;
   workerLabel?: string;
   allowEvidenceEdit?: boolean;
   /** Workers upload; admins inspect only. */
   allowUpload?: boolean;
+  /** Admin-only: show and toggle the suspicious review flag. */
+  allowSuspiciousFlag?: boolean;
 }
 
 function toLocalInput(iso: string | null | undefined): string {
@@ -72,19 +77,24 @@ export default function SessionDetailPanel({
   onClose,
   onImageUploaded,
   onEvidenceSaved,
+  onSuspiciousChanged,
   workerLabel,
   allowEvidenceEdit = true,
   allowUpload = true,
+  allowSuspiciousFlag = false,
 }: Props) {
   const [startAt, setStartAt] = useState(() => toLocalInput(session?.image_start_at));
   const [endAt, setEndAt] = useState(() => toLocalInput(session?.image_end_at));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [suspicious, setSuspicious] = useState(Boolean(session?.suspicious));
+  const [flagBusy, setFlagBusy] = useState(false);
 
   useEffect(() => {
     setStartAt(toLocalInput(session?.image_start_at));
     setEndAt(toLocalInput(session?.image_end_at));
-  }, [session?.id, session?.image_start_at, session?.image_end_at]);
+    setSuspicious(Boolean(session?.suspicious));
+  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.suspicious]);
 
   if (!session) return null;
 
@@ -133,6 +143,22 @@ export default function SessionDetailPanel({
     }
   };
 
+  const toggleSuspicious = async () => {
+    if (!allowSuspiciousFlag || flagBusy) return;
+    const next = !suspicious;
+    setFlagBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/sessions/${session.id}`, { suspicious: next });
+      setSuspicious(next);
+      onSuspiciousChanged?.(session.id, next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to update flag');
+    } finally {
+      setFlagBusy(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xl"
@@ -149,6 +175,12 @@ export default function SessionDetailPanel({
               <p className="text-xs font-medium text-emerald-600 mt-0.5">{workerLabel}</p>
             )}
             <p className="text-xs text-gray-400 mt-0.5">{session.date}</p>
+            {allowSuspiciousFlag && suspicious && (
+              <span className="mt-2 inline-flex items-center gap-1 rounded-md bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-800 border border-amber-200">
+                <Flag size={10} />
+                Suspicious
+              </span>
+            )}
           </div>
           <button
             type="button"
@@ -179,6 +211,31 @@ export default function SessionDetailPanel({
             <StatusBadge status={session.status} />
           </div>
         </div>
+
+        {allowSuspiciousFlag && (
+          <div className="px-4 sm:px-6 py-3 border-b border-gray-100 flex items-center justify-between gap-3">
+            <div className="min-w-0">
+              <p className="text-sm font-semibold text-gray-800">Mark suspicious</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Use when screenshots do not match the claimed times. Workers never see this flag.
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={flagBusy}
+              onClick={() => void toggleSuspicious()}
+              aria-pressed={suspicious}
+              className={`shrink-0 inline-flex items-center gap-1.5 rounded-xl px-3 py-2 text-xs font-semibold border transition-colors disabled:opacity-50 ${
+                suspicious
+                  ? 'bg-amber-100 text-amber-900 border-amber-300 hover:bg-amber-200'
+                  : 'bg-gray-50 text-gray-600 border-gray-200 hover:bg-gray-100'
+              }`}
+            >
+              <Flag size={12} />
+              {flagBusy ? 'Saving…' : suspicious ? 'Flagged' : 'Flag'}
+            </button>
+          </div>
+        )}
 
         <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>

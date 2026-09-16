@@ -2,15 +2,21 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import { Maximize2, Power } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import SessionImageUpload from '@/components/rdp/SessionImageUpload';
 import { api } from '@/lib/api';
-import { reportError, reportWarning } from '@/lib/errors';
-import { endRdpConnection, getMyActiveRdp, openRdpDesktopTab } from '@/lib/rdp';
+import { reportError } from '@/lib/errors';
+import {
+  broadcastRdpSessionEnded,
+  endRdpConnectionSafe,
+  getMyActiveRdp,
+  openRdpDesktopTab,
+  sessionEvidenceUrl,
+} from '@/lib/rdp';
 
 interface RDPResource {
   id: string;
@@ -20,18 +26,15 @@ interface RDPResource {
   status: string;
 }
 
-type EndStep = 'idle' | 'upload-end-image' | 'confirm';
-
 export default function RdpSessionPage({ params }: { params: { rdpId: string } }) {
-  const router = useRouter();
   const rdpId = params.rdpId;
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
   const [ending, setEnding] = useState(false);
-  const [endStep, setEndStep] = useState<EndStep>('idle');
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [seconds, setSeconds] = useState(0);
-  const [startedAt] = useState(() => Date.now());
+  const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,16 +47,34 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
   useEffect(() => {
     if (loading || !machine) return;
     getMyActiveRdp()
-      .then((active) => { if (active?.session_id) setSessionId(active.session_id); })
+      .then((active) => {
+        if (active?.session_id) setSessionId(active.session_id);
+        // Prefer server start time so a refresh does not reset the timer.
+        if (active?.session_id) {
+          api.get<{ start_time?: string }>(`/sessions/${active.session_id}`)
+            .then((s) => {
+              if (s.start_time) {
+                const ms = new Date(s.start_time).getTime();
+                if (Number.isFinite(ms)) setStartedAtMs(ms);
+              }
+            })
+            .catch(() => { /* keep local clock */ });
+        }
+      })
       .catch(() => { /* non-critical */ });
   }, [loading, machine]);
 
   useEffect(() => {
-    const t = setInterval(() => {
-      setSeconds(Math.floor((Date.now() - startedAt) / 1000));
-    }, 1000);
+    if (startedAtMs == null) setStartedAtMs(Date.now());
+  }, [startedAtMs]);
+
+  useEffect(() => {
+    if (startedAtMs == null) return;
+    const tick = () => setSeconds(Math.max(0, Math.floor((Date.now() - startedAtMs) / 1000)));
+    tick();
+    const t = setInterval(tick, 1000);
     return () => clearInterval(t);
-  }, [startedAt]);
+  }, [startedAtMs]);
 
   useEffect(() => {
     if (loading || !machine) return;
@@ -76,19 +97,20 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       ch = new BroadcastChannel('rdp-events');
       ch.onmessage = (e) => {
         if (e.data?.type === 'session-ended' && e.data?.rdpId === rdpId) {
-          const dest = e.data?.evidenceUrl as string | undefined;
-          if (dest) window.location.replace(dest);
+          const dest =
+            (e.data?.evidenceUrl as string | undefined) ||
+            sessionEvidenceUrl(rdpId);
+          window.location.replace(dest);
         }
       };
     } catch { /* ignore */ }
     return () => { try { ch?.close(); } catch { /* ignore */ } };
-  }, [rdpId, router, sessionId]);
+  }, [rdpId]);
 
   const handleEndConnection = useCallback(async () => {
     if (ending) return;
     setEnding(true);
     setError(null);
-    setEndStep('idle');
     let sid = sessionId;
     if (!sid) {
       try {
@@ -97,18 +119,28 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         sid = null;
       }
     }
-    const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
-    if (sid) q.set('session', sid);
-    const dest = `/worker/session-history?${q.toString()}`;
-    const tab = window.open(dest, '_blank');
-    try {
-      const ch = new BroadcastChannel('rdp-events');
-      ch.postMessage({ type: 'session-ended', rdpId, sessionId: sid, evidenceUrl: dest, openedBy: 'control' });
-      ch.close();
-    } catch { /* ignore */ }
-    if (!tab) router.push(dest);
-    void endRdpConnection(rdpId).catch(() => { /* already left session page */ });
-  }, [ending, rdpId, router, sessionId]);
+    const dest = sessionEvidenceUrl(rdpId, sid);
+
+    // Close the desktop tab first so Guacamole release is fast and the
+    // claim board clears immediately — do not wait for the API.
+    broadcastRdpSessionEnded({
+      rdpId,
+      sessionId: sid,
+      evidenceUrl: dest,
+      openedBy: 'control',
+    });
+
+    const result = await endRdpConnectionSafe(rdpId);
+    if (!result.ok) {
+      const msg = reportError('End RDP connection', result.error, { rdpId });
+      setError(msg);
+      setEnding(false);
+      return;
+    }
+
+    setConfirmEnd(false);
+    window.location.assign(dest);
+  }, [ending, rdpId, sessionId]);
 
   const h = Math.floor(seconds / 3600).toString().padStart(2, '0');
   const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0');
@@ -138,15 +170,14 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
           <div className="flex items-center gap-3">
             <StatusBadge status="active" label="Live" />
             <span className="font-mono text-emerald-accent text-sm">{h}:{m}:{s}</span>
-            {/* Always reachable without scrolling — this is the control workers
-                need most and it used to sit below the fold. */}
             <button
               type="button"
-              onClick={() => setEndStep('confirm')}
-              className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-semibold text-red-300 bg-red-500/12 hover:bg-red-500/20 border border-red-500/30 transition-colors"
+              onClick={() => setConfirmEnd(true)}
+              disabled={ending}
+              className="inline-flex items-center gap-1.5 rounded-lg px-3.5 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-500 shadow-md shadow-red-900/40 border border-red-500/80 disabled:opacity-50 transition-colors"
             >
-              <Power size={13} />
-              End session
+              <Power size={14} />
+              {ending ? 'Ending…' : 'End session'}
             </button>
           </div>
         }
@@ -157,7 +188,7 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
       {/* The desktop runs in its own tab so it gets the whole screen. */}
       <div className="glass-panel p-5 space-y-3">
         <p className="text-sm text-theme-muted">
-          Your remote desktop runs in a <strong className="text-white">separate tab</strong> at full
+          Your remote desktop runs in a <strong className="text-theme-heading">separate tab</strong> at full
           screen. Keep this page open — it tracks your session time and is where you end the session.
         </p>
         <button
@@ -185,100 +216,22 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
         </div>
       )}
 
-      {endStep === 'upload-end-image' && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setEndStep('idle')}
-        >
-        <div
-          className="w-full max-w-md rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-white/10"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="h-[3px] bg-gradient-to-r from-blue-800 via-blue-500 to-blue-800" />
-          <div className="bg-[#080d14] px-6 pt-5 pb-6 space-y-4">
-            <p className="text-[15px] font-bold text-white">Upload end session image</p>
-            <p className="text-sm text-white/55">
-              Upload a screenshot taken just before you disconnected. You can skip this step.
-            </p>
-            {sessionId && (
-              <SessionImageUpload
-                sessionId={sessionId}
-                imageType="end"
-                label="End session screenshot"
-              />
-            )}
-            <div className="flex gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => setEndStep('idle')}
-                className="px-4 py-2.5 text-sm rounded-xl font-medium text-white/60 bg-white/6 hover:bg-white/10 hover:text-white border border-white/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={() => setEndStep('confirm')}
-                className="px-4 py-2.5 text-sm rounded-xl font-medium text-white/70 bg-white/8 hover:bg-white/12 border border-white/10 transition-colors"
-              >
-                Skip
-              </button>
-              <button
-                type="button"
-                onClick={() => setEndStep('confirm')}
-                className="px-4 py-2.5 text-sm rounded-xl font-bold text-white bg-blue-600 hover:bg-blue-500 shadow-md shadow-blue-900/60 transition-colors"
-              >
-                Continue
-              </button>
-            </div>
-          </div>
-        </div>
-        </div>
-      )}
-
-      {endStep === 'confirm' && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4"
-          onClick={() => setEndStep('idle')}
-        >
-        <div
-          className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl shadow-black/60 border border-red-900/40"
-          onClick={(e) => e.stopPropagation()}
-        >
-          <div className="h-[3px] bg-gradient-to-r from-red-800 via-red-500 to-red-800" />
-          <div className="bg-[#0f0808] px-6 pt-5 pb-6 space-y-5">
-            <div className="flex items-start gap-4">
-              <div className="shrink-0 mt-0.5 w-10 h-10 rounded-full bg-red-500/10 ring-1 ring-red-500/40 flex items-center justify-center">
-                <Power size={18} className="text-red-500" />
-              </div>
-              <div>
-                <p className="text-[15px] font-bold text-white leading-snug">End this session?</p>
-                <p className="mt-1 text-sm text-white/55 leading-relaxed">
-                  <span className="text-white/80 font-medium">{machine?.nickname}</span>
-                  {' '}will be disconnected and released back to the pool.
-                </p>
-              </div>
-            </div>
-            <div className="flex gap-2.5">
-              <button
-                type="button"
-                onClick={() => setEndStep('idle')}
-                className="flex-1 px-4 py-2.5 text-sm rounded-xl font-medium text-white/60 bg-white/6 hover:bg-white/10 hover:text-white border border-white/10 transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleEndConnection}
-                disabled={ending}
-                className="flex-1 px-4 py-2.5 text-sm rounded-xl font-bold text-white bg-red-600 hover:bg-red-500 shadow-md shadow-red-900/60 disabled:opacity-50 transition-colors"
-              >
-                {ending ? 'Ending…' : 'Yes, end session'}
-              </button>
-            </div>
-          </div>
-        </div>
-        </div>
-      )}
+      <ConfirmModal
+        open={confirmEnd}
+        title="End this session?"
+        body={
+          <>
+            <span className="font-medium text-theme-heading">{machine?.nickname}</span>
+            {' '}will be disconnected and released back to the pool.
+          </>
+        }
+        tone="danger"
+        icon={Power}
+        confirmLabel={ending ? 'Ending…' : 'Yes, end session'}
+        busy={ending}
+        onConfirm={() => { void handleEndConnection(); }}
+        onCancel={() => { if (!ending) setConfirmEnd(false); }}
+      />
 
       <div>
         <Link href="/worker/rdp-claim-board" className="btn-secondary text-sm">

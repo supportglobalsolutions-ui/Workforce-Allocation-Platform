@@ -50,6 +50,37 @@ export class AppError extends Error {
 
 /** Patterns mapped to plain language. First match wins, so order matters. */
 const FRIENDLY_RULES: { test: RegExp; message: string }[] = [
+  // ── RDP-specific, checked first: these must not fall through to the
+  // generic network/conflict rules below. Codes come from Guacamole
+  // (§1.7 of docs/rdp-architecture.md).
+  {
+    test: /\b517\b|resource_conflict|in use by another|already in use/i,
+    message: 'Someone else is connected to this machine right now. Try another, or try again shortly.',
+  },
+  {
+    test: /\b769\b|client_unauthorized|credentials (were )?rejected/i,
+    message: 'The saved sign-in for this machine was rejected. Ask an admin to update it.',
+  },
+  {
+    test: /\b51[45]\b|upstream_not_found|upstream_timeout|did not accept a connection|is offline|port 3389/i,
+    message: 'This machine is not responding. Ask an admin to check it.',
+  },
+  {
+    test: /at capacity|max_live_sessions|too many live sessions|server_busy|\b800\b/i,
+    message: 'All desktops are busy right now. Please try again in a few minutes.',
+  },
+  {
+    test: /not assigned to you|no desktops assigned|not your machine/i,
+    message: 'This machine is not assigned to you. Ask an admin if you need access.',
+  },
+  {
+    test: /being checked by an admin|quarantined|held out of service|pending repair/i,
+    message: 'This desktop is being checked by an admin',
+  },
+  {
+    test: /no open claim|not claimed/i,
+    message: 'Your session for this machine has ended. Claim it again from the board.',
+  },
   {
     test: /failed to fetch|networkerror|cannot reach|load failed|err_network/i,
     message: 'We can’t reach the server right now. Check your connection and try again.',

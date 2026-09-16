@@ -1,550 +1,78 @@
-import asyncio
 import logging
-import urllib.parse
-from datetime import datetime, timezone
-from urllib.parse import unquote
 from uuid import UUID
 
-import httpx
 import redis as redis_lib
-import websockets as ws_lib
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from fastapi.responses import StreamingResponse
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from sqlalchemy.exc import SQLAlchemyError
 from sqlmodel import Session, select
-from starlette.background import BackgroundTask
 
-from core.config import settings
-from core.database import engine, get_db
-from core.supabase_auth import verify_supabase_token
-from core.guacamole import GuacamoleClient, raw_connection_id
+from core.database import get_db
 from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.rate_limit import check_rate_limit
 from core.redis import get_redis
-from models.admin_users import AdminUser
+from services.rdp_degraded import is_datastore_error
 from models.allocation import Allocation
-from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, SessionTypeEnum, WorkerStatusEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
-from models.worker import Worker
-from models.client import Client
-from models.training import TrainingModule
 from schemas.rdp import (
     CREDENTIAL_FIELDS,
     RDPResourceCreate,
     RDPResourceResponse,
-    RDPResourceUpdate,
     RdpForceReleaseBody,
-    RdpProvisionBody,
-    RdpProvisionResult,
+    RdpJoinTicket,
 )
-from services.guacamole_provision import (
-    GuacamoleProvisionError,
-    store_credentials,
-    sync_connection,
+from services import rdp_join_ticket
+from services.rdp_gateway import issue_join_ticket
+from services.rdp_engine import (
+    claim as engine_claim,
+    disconnect as engine_disconnect,
+    force_release as engine_force_release,
 )
-from services.rdp_health import probe_rdp_host
 from services.rdp_state import (
-    transition_rdp_status,
-    validate_worker_may_claim,
+    list_visible_rdp_resources,
+    require_worker_visible_or_staff,
 )
-from services.client_owners import client_owner_name
-from services.audit_service import record_audit
+from services.rdp_support import (
+    close_open_sessions_for_rdp,
+    preflight_rdp,
+    provision_guacamole,
+    record_rdp_login,
+    record_rdp_logout,
+    repair_rdp_state,
+    request_ip,
+    resume_existing_claim,
+    rdp_response,
+    viewer_worker_id,
+)
+from routers.rdp_tunnel import router as rdp_tunnel_router
+from routers.rdp_ops import router as rdp_ops_router
+from routers.rdp_admin import router as rdp_admin_router
 from .deps import get_admin_user, get_worker_for_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
+router.include_router(rdp_tunnel_router)
+router.include_router(rdp_ops_router)
+router.include_router(rdp_admin_router)
 
 
-def _preflight_rdp(resource: RDPResource) -> dict:
-    """Check Guacamole id + TCP reachability before a worker claims."""
-    raw_id = raw_connection_id(resource.guacamole_connection_id)
-    if not raw_id:
-        return {
-            "ok": False,
-            "error": "This machine is not linked to a remote-desktop connection yet. Ask an admin to provision it.",
-            "guacamole_connection_id": None,
-            "host": resource.monitor_host,
-            "port": resource.monitor_port or 3389,
-        }
-    tcp = probe_rdp_host(resource.monitor_host, resource.monitor_port)
-    if not tcp["ok"]:
-        return {
-            "ok": False,
-            "error": tcp["error"],
-            "guacamole_connection_id": raw_id,
-            "host": tcp.get("host"),
-            "port": tcp.get("port"),
-        }
-    return {
-        "ok": True,
-        "error": None,
-        "guacamole_connection_id": raw_id,
-        "host": tcp.get("host"),
-        "port": tcp.get("port"),
-    }
-
-
-def _utc_now() -> datetime:
-    return datetime.now(timezone.utc)
-
-
-def _request_ip(request: Request | None) -> str | None:
-    if request is None:
-        return None
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        return forwarded.split(",")[0].strip()[:45]
-    if request.client:
-        return request.client.host
-    return None
-
-
-def _record_rdp_login(
-    db: Session,
-    *,
-    worker: Worker,
-    resource: RDPResource,
-    session_id: UUID,
-    ip_address: str | None = None,
-) -> None:
-    record_audit(
-        db,
-        action="rdp.logged_in",
-        target_type="rdp_access",
-        target_id=resource.id,
-        new_value={
-            "worker_id": str(worker.id),
-            "worker_name": worker.display_name,
-            "rdp_id": str(resource.id),
-            "rdp_nickname": resource.nickname,
-            "session_id": str(session_id),
-            "at": _utc_now().isoformat(),
-        },
-        ip_address=ip_address,
-    )
-
-
-def _record_rdp_logout(
-    db: Session,
-    *,
-    worker: Worker | None,
-    resource: RDPResource,
-    session_ids: list[str],
-    ip_address: str | None = None,
-    initiated_by: str = "worker",
-    admin_id: UUID | None = None,
-) -> None:
-    if worker is None:
-        return
-    record_audit(
-        db,
-        actor_id=admin_id,
-        action="rdp.logged_out",
-        target_type="rdp_access",
-        target_id=resource.id,
-        new_value={
-            "worker_id": str(worker.id),
-            "worker_name": worker.display_name,
-            "rdp_id": str(resource.id),
-            "rdp_nickname": resource.nickname,
-            "session_ids": session_ids,
-            "initiated_by": initiated_by,
-            "at": _utc_now().isoformat(),
-        },
-        ip_address=ip_address,
-    )
-
-
-def _rdp_response(
-    db: Session,
-    resource: RDPResource,
-    *,
-    viewer: dict | None = None,
-    viewer_worker_id: UUID | None = None,
-) -> RDPResourceResponse:
-    """
-    Serialise a machine for the caller.
-
-    Identities are admin-only: a worker may see that a machine is taken, and
-    that they themselves hold it, but not which colleague is on it. Pass
-    `viewer` to apply that masking — omitting it returns the full record.
-    """
-    resp = RDPResourceResponse.model_validate(resource)
-    is_admin = viewer is None or viewer.get("role") in STAFF_ROLES
-
-    if resource.assigned_worker_id:
-        if is_admin or (
-            viewer_worker_id is not None
-            and resource.assigned_worker_id == viewer_worker_id
-        ):
-            worker = db.get(Worker, resource.assigned_worker_id)
-            resp.assigned_worker_name = worker.display_name if worker else None
-        else:
-            resp.assigned_worker_name = "In use"
-            resp.assigned_worker_id = None
-    if resource.client_id:
-        client = db.get(Client, resource.client_id)
-        if client:
-            resp.client_name = client.name
-            resp.owner_type = client.owner_type.value if client.owner_type else None
-            # The owner is a person (partner/account holder) — admins only.
-            resp.owner_name = client_owner_name(db, client) if is_admin else None
-    return resp
-
-
-def _disconnect_guacamole(redis_client: redis_lib.Redis, resource: RDPResource) -> bool:
-    if not resource.guacamole_connection_id:
-        return False
-    try:
-        guac = GuacamoleClient(redis_client)
-        killed = guac.kill_active_connections(resource.guacamole_connection_id)
-        return killed > 0
-    except Exception as exc:
-        logger.warning("Guacamole disconnect failed for rdp %s: %s", resource.id, exc)
-        return False
-
-
-def _bg_disconnect_guacamole(connection_id: str) -> None:
-    """Best-effort Guacamole kill off the request path so end-connection stays fast."""
-    if not connection_id:
-        return
-    try:
-        from core.redis import get_redis
-
-        guac = GuacamoleClient(get_redis())
-        guac.kill_active_connections(connection_id)
-    except Exception as exc:
-        logger.warning("Background Guacamole disconnect failed for %s: %s", connection_id, exc)
-
-
-def _close_open_sessions_for_rdp(db: Session, rdp_id: UUID) -> list[UUID]:
-    """Close open WorkSessions tied to this RDP. Returns closed session ids."""
-    closed_ids: list[UUID] = []
-    open_sessions = db.exec(
-        select(WorkSession).where(
-            WorkSession.rdp_resource_id == rdp_id,
-            WorkSession.end_time.is_(None),
-        )
-    ).all()
-    now = _utc_now()
-    for work_session in open_sessions:
-        work_session.end_time = now
-        work_session.close_status = SessionCloseEnum.completed
-        if work_session.start_time:
-            start = work_session.start_time
-            if start.tzinfo is None:
-                start = start.replace(tzinfo=timezone.utc)
-            elif start.tzinfo != timezone.utc:
-                start = start.astimezone(timezone.utc)
-            end_utc = now if now.tzinfo else now.replace(tzinfo=timezone.utc)
-            work_session.duration_minutes = max(0, int((end_utc - start).total_seconds() // 60))
-        if work_session.type_specific_fields is None:
-            work_session.type_specific_fields = {}
-        db.add(work_session)
-        closed_ids.append(work_session.id)
-    # Remind workers to add start/end images + on-image times.
-    from services.session_evidence import notify_evidence_incomplete
-    for work_session in open_sessions:
-        notify_evidence_incomplete(db, work_session)
-    return closed_ids
-
-
-def _open_allocation(db: Session, rdp_id: UUID) -> Allocation | None:
-    return db.exec(
-        select(Allocation).where(
-            Allocation.rdp_resource_id == rdp_id,
-            Allocation.released_at.is_(None),
-        )
-    ).first()
-
-
-def _repair_rdp_state(db: Session, resource: RDPResource) -> Allocation | None:
-    """
-    Fix inconsistent RDP rows after a partial claim/release failure.
-
-    Returns the machine's open allocation (or None). Callers need that anyway,
-    and re-querying it costs a full network round-trip against a remote DB.
-    """
-    open_alloc = _open_allocation(db, resource.id)
-    busy_statuses = {
-        RdpStatusEnum.assigned,
-        RdpStatusEnum.active,
-        RdpStatusEnum.idle,
-    }
-    repaired = False
-    now = _utc_now()
-
-    if open_alloc is None and resource.status in busy_statuses:
-        resource.status = RdpStatusEnum.online_free
-        resource.assigned_worker_id = None
-        resource.status_changed_at = now
-        db.add(resource)
-        _close_open_sessions_for_rdp(db, resource.id)
-        repaired = True
-    elif open_alloc is not None:
-        if resource.status == RdpStatusEnum.online_free or resource.assigned_worker_id != open_alloc.worker_id:
-            resource.status = RdpStatusEnum.active
-            resource.assigned_worker_id = open_alloc.worker_id
-            resource.status_changed_at = now
-            db.add(resource)
-            repaired = True
-
-    if repaired:
-        db.commit()
-        db.refresh(resource)
-    return open_alloc
-
-
-def _guacamole_viewer_paths(
-    redis_client: redis_lib.Redis, connection_id: str
-) -> tuple[str | None, str | None, str | None, str | None]:
-    """Returns (url, viewer_path, token, error)."""
-    try:
-        guac = GuacamoleClient(redis_client)
-        token = guac.get_token()
-        url = guac.get_connection_url(connection_id)
-        viewer_path = guac.get_proxied_connection_path(connection_id)
-        return url, viewer_path, token, None
-    except Exception as exc:
-        err = f"{type(exc).__name__}: {exc}"
-        return None, None, None, err
-
-
-def _build_claim_payload(
-    *,
-    allocation: Allocation,
-    work_session: WorkSession | None,
-    resource: RDPResource,
-    worker_id: UUID,
-    guacamole_url: str | None,
-    guacamole_viewer_path: str | None,
-    guacamole_error: str | None,
-    resumed: bool = False,
-) -> dict:
-    return {
-        "allocation_id": str(allocation.id),
-        "session_id": str(work_session.id) if work_session else None,
-        "rdp_resource_id": str(resource.id),
-        "worker_id": str(worker_id),
-        "status": resource.status.value,
-        "guacamole_url": guacamole_url,
-        "guacamole_viewer_path": guacamole_viewer_path,
-        "guacamole_error": guacamole_error,
-        "resumed": resumed,
-    }
-
-
-def _resume_existing_claim(
-    db: Session,
-    redis_client: redis_lib.Redis,
-    *,
-    resource: RDPResource,
-    allocation: Allocation,
-    worker_id: UUID,
-) -> dict:
-    """Return claim payload for an allocation the worker already holds."""
-    if resource.assigned_worker_id != worker_id:
-        resource.assigned_worker_id = worker_id
-    if resource.status == RdpStatusEnum.online_free:
-        resource.status = RdpStatusEnum.active
-    resource.status_changed_at = _utc_now()
-    db.add(resource)
-
-    work_session = db.exec(
-        select(WorkSession).where(
-            WorkSession.allocation_id == allocation.id,
-            WorkSession.end_time.is_(None),
-        )
-    ).first()
-    if not work_session:
-        work_session = db.exec(
-            select(WorkSession).where(
-                WorkSession.rdp_resource_id == resource.id,
-                WorkSession.worker_id == worker_id,
-                WorkSession.end_time.is_(None),
-            )
-        ).first()
-    if not work_session:
-        now = _utc_now()
-        work_session = WorkSession(
-            worker_id=worker_id,
-            session_type=SessionTypeEnum.gs_rdp,
-            allocation_id=allocation.id,
-            rdp_resource_id=resource.id,
-            client_id=resource.client_id,
-            start_time=now,
-            type_specific_fields={},
-        )
-        db.add(work_session)
-
-    db.commit()
-    db.refresh(resource)
-    if work_session:
-        db.refresh(work_session)
-
-    guacamole_url, guacamole_viewer_path, _, guacamole_error = (None, None, None, None)
-    if not resource.guacamole_connection_id:
-        guacamole_error = "Machine has no guacamole_connection_id configured."
-
-    return _build_claim_payload(
-        allocation=allocation,
-        work_session=work_session,
-        resource=resource,
-        worker_id=worker_id,
-        guacamole_url=guacamole_url,
-        guacamole_viewer_path=guacamole_viewer_path,
-        guacamole_error=guacamole_error,
-        resumed=True,
-    )
-
-
-def _end_rdp_connection(
-    db: Session,
-    resource: RDPResource,
-    redis_client: redis_lib.Redis,
-    *,
-    worker_id: UUID | None = None,
-    require_owner: bool = True,
-    release_reason: ReleaseReasonEnum = ReleaseReasonEnum.completed,
-    ip_address: str | None = None,
-    initiated_by: str = "worker",
-    admin_id: UUID | None = None,
-) -> dict:
-    db.refresh(resource)
-    open_allocs = db.exec(
-        select(Allocation).where(
-            Allocation.rdp_resource_id == resource.id,
-            Allocation.released_at.is_(None),
-        )
-    ).all()
-
-    def _logout_worker() -> Worker | None:
-        logout_worker_id = worker_id
-        if logout_worker_id is None and open_allocs:
-            logout_worker_id = open_allocs[0].worker_id
-        if logout_worker_id is None:
-            logout_worker_id = resource.assigned_worker_id
-        return db.get(Worker, logout_worker_id) if logout_worker_id else None
-
-    # Sync status with an open allocation (partial claim/release drift).
-    if open_allocs:
-        owner_id = open_allocs[0].worker_id
-        if resource.assigned_worker_id != owner_id:
-            resource.assigned_worker_id = owner_id
-        if resource.status == RdpStatusEnum.online_free:
-            resource.status = RdpStatusEnum.active
-            resource.status_changed_at = _utc_now()
-            db.add(resource)
-
-    owns_via_alloc = (
-        worker_id is not None and any(a.worker_id == worker_id for a in open_allocs)
-    )
-    owns_via_assignment = (
-        worker_id is not None and resource.assigned_worker_id == worker_id
-    )
-
-    # Orphan: machine marked busy but no open allocation — close stray sessions and reset.
-    if not open_allocs and resource.status != RdpStatusEnum.online_free:
-        if require_owner and worker_id is not None and resource.assigned_worker_id not in (
-            None,
-            worker_id,
-        ):
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have an open claim on this machine",
-            )
-        closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
-        logout_worker = _logout_worker()
-        _record_rdp_logout(
-            db,
-            worker=logout_worker,
-            resource=resource,
-            session_ids=[str(sid) for sid in closed_session_ids],
-            ip_address=ip_address,
-            initiated_by=initiated_by,
-            admin_id=admin_id,
-        )
-        now = _utc_now()
-        resource.status = RdpStatusEnum.online_free
-        resource.assigned_worker_id = None
-        resource.status_changed_at = now
-        db.add(resource)
-        db.commit()
-        db.refresh(resource)
-        return {
-            "rdp_resource_id": str(resource.id),
-            "status": resource.status.value,
-            "released": True,
-            "guacamole_disconnected": False,
-            "closed_session_ids": [str(sid) for sid in closed_session_ids],
-            "repaired_orphan": True,
-        }
-
-    if require_owner and worker_id is not None:
-        if not owns_via_alloc and not owns_via_assignment:
-            if resource.status == RdpStatusEnum.online_free and not open_allocs:
-                return {
-                    "rdp_resource_id": str(resource.id),
-                    "status": resource.status.value,
-                    "released": False,
-                    "guacamole_disconnected": False,
-                    "closed_session_ids": [],
-                    "already_released": True,
-                }
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You do not have an open claim on this machine",
-            )
-
-    guacamole_disconnected = False
-    guac_connection_id = resource.guacamole_connection_id
-
-    now = _utc_now()
-    for alloc in open_allocs:
-        if (
-            worker_id is not None
-            and alloc.worker_id != worker_id
-            and require_owner
-        ):
-            continue
-        alloc.released_at = now
-        alloc.release_reason = release_reason
-        db.add(alloc)
-
-    closed_session_ids = _close_open_sessions_for_rdp(db, resource.id)
-    logout_worker = _logout_worker()
-    _record_rdp_logout(
-        db,
-        worker=logout_worker,
-        resource=resource,
-        session_ids=[str(sid) for sid in closed_session_ids],
-        ip_address=ip_address,
-        initiated_by=initiated_by,
-        admin_id=admin_id,
-    )
-
-    resource.status = RdpStatusEnum.online_free
-    resource.assigned_worker_id = None
-    resource.status_changed_at = now
-    db.add(resource)
-    db.commit()
-    db.refresh(resource)
-
-    return {
-        "rdp_resource_id": str(resource.id),
-        "status": resource.status.value,
-        "released": True,
-        "guacamole_disconnected": guacamole_disconnected,
-        "guacamole_connection_id": str(guac_connection_id) if guac_connection_id else None,
-        "closed_session_ids": [str(sid) for sid in closed_session_ids],
-    }
+def _datastore_retry(operation: str, exc: BaseException) -> None:
+    """Give a worker a safe retry contract during Redis/Postgres outages."""
+    if not is_datastore_error(exc):
+        raise exc
+    logger.warning("RDP %s deferred: datastore unavailable (%s)", operation, type(exc).__name__)
+    raise HTTPException(
+        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+        detail="Remote desktop service is temporarily unavailable. Please try again shortly.",
+        headers={"Retry-After": "5"},
+    ) from exc
 
 
 @router.get("/my-active")
 def get_my_active_rdp(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
     """Worker's currently claimed RDP (open allocation), if any."""
     worker = get_worker_for_user(db, current_user)
@@ -563,7 +91,7 @@ def get_my_active_rdp(
     if not resource:
         return None
 
-    _repair_rdp_state(db, resource)
+    repair_rdp_state(db, resource)
 
     work_session = db.exec(
         select(WorkSession).where(
@@ -591,14 +119,6 @@ def get_my_active_rdp(
     }
 
 
-def _viewer_worker_id(db: Session, current_user: dict) -> UUID | None:
-    """The caller's own worker id, when they have one. None for pure admins."""
-    if current_user.get("role") in STAFF_ROLES:
-        return None
-    try:
-        return get_worker_for_user(db, current_user).id
-    except Exception:
-        return None
 
 
 @router.get("", response_model=list[RDPResourceResponse])
@@ -606,238 +126,24 @@ def list_rdp_resources(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    viewer_worker_id = _viewer_worker_id(db, current_user)
+    # Distinct local name: assigning to `viewer_worker_id` would make the
+    # imported helper a local variable within this function, and the call on
+    # the right-hand side would then read it before assignment.
+    caller_worker_id = viewer_worker_id(db, current_user)
     return [
-        _rdp_response(db, resource, viewer=current_user, viewer_worker_id=viewer_worker_id)
-        for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()
+        rdp_response(db, resource, viewer=current_user, viewer_worker_id=caller_worker_id)
+        for resource in list_visible_rdp_resources(
+            db, viewer=current_user, viewer_worker_id=caller_worker_id
+        )
     ]
-
-
-@router.get("/guacamole/health")
-def guacamole_health(
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-    redis_client: redis_lib.Redis = Depends(get_redis),
-):
-    """
-    End-to-end check of the Guacamole side of the RDP flow:
-    server reachable, API credentials valid, and every machine's stored
-    connection id still resolving to a real connection.
-    """
-    report: dict = {
-        "guacamole_url": settings.GUACAMOLE_URL,
-        "reachable": False,
-        "authenticated": False,
-        "error": None,
-        "connection_count": 0,
-        "machines": [],
-    }
-
-    connections: dict[str, dict] = {}
-    try:
-        guac = GuacamoleClient(redis_client)
-        guac.get_token()
-        report["reachable"] = True
-        report["authenticated"] = True
-        connections = guac.list_connections()
-        report["connection_count"] = len(connections)
-    except Exception as exc:
-        report["error"] = f"{type(exc).__name__}: {exc}"
-
-    for resource in db.exec(select(RDPResource).order_by(RDPResource.nickname)).all():
-        cid = raw_connection_id(resource.guacamole_connection_id)
-        if not cid:
-            state = "missing"
-        elif not report["authenticated"]:
-            state = "unknown"
-        elif cid in {str(k) for k in connections}:
-            state = "ok"
-        else:
-            state = "stale"
-        report["machines"].append(
-            {
-                "id": str(resource.id),
-                "nickname": resource.nickname,
-                "monitor_host": resource.monitor_host,
-                "guacamole_connection_id": cid,
-                "connection_state": state,
-                "ready": state == "ok",
-            }
-        )
-    return report
-
-
-@router.api_route("/tunnel", methods=["GET", "POST"])
-async def proxy_guacamole_tunnel(
-    request: Request,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_user),
-):
-    """
-    Proxy the Guacamole HTTP tunnel for the guacamole-common-js viewer.
-    Streams responses so remote-desktop frames arrive in real time.
-    Auth: Supabase Bearer token (sent by the viewer as an extra tunnel header).
-    """
-    is_admin = current_user.get("role") in STAFF_ROLES
-    if not is_admin:
-        worker = get_worker_for_user(db, current_user)
-        open_alloc = db.exec(
-            select(Allocation).where(
-                Allocation.worker_id == worker.id,
-                Allocation.released_at.is_(None),
-            )
-        ).first()
-        if not open_alloc:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="No open RDP claim — use the authenticated WebSocket tunnel",
-            )
-    guac_base = settings.GUACAMOLE_URL.rstrip("/")
-    query = str(request.url.query)
-    if query:
-        # Guacamole matches the raw query string ("connect", "read:<uuid>", ...).
-        # Proxies (e.g. Next.js rewrites) may percent-encode it or append "=",
-        # so restore the original form before forwarding.
-        query = unquote(query)
-        if query.endswith("=") and "&" not in query and "=" not in query[:-1]:
-            query = query[:-1]
-    target = f"{guac_base}/tunnel"
-    if query:
-        target = f"{target}?{query}"
-
-    fwd_headers = {
-        k: v for k, v in request.headers.items() if k.lower() == "content-type"
-    }
-    body = await request.body()
-
-    client = httpx.AsyncClient(timeout=httpx.Timeout(10.0, read=None, write=None, pool=None))
-    try:
-        upstream_req = client.build_request(
-            request.method, target, content=body, headers=fwd_headers
-        )
-        upstream = await client.send(upstream_req, stream=True)
-    except Exception:
-        await client.aclose()
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="Guacamole tunnel is unreachable",
-        )
-
-    excluded = {"transfer-encoding", "connection", "content-encoding", "content-length"}
-    resp_headers = {
-        k: v for k, v in upstream.headers.items() if k.lower() not in excluded
-    }
-
-    if upstream.status_code >= 400:
-        err_body = await upstream.aread()
-        await upstream.aclose()
-        await client.aclose()
-        logger.warning(
-            "Guacamole tunnel %s -> %s: %s",
-            query or request.method,
-            upstream.status_code,
-            err_body[:500],
-        )
-        return StreamingResponse(
-            iter([err_body]),
-            status_code=upstream.status_code,
-            headers=resp_headers,
-        )
-
-    async def _close() -> None:
-        await upstream.aclose()
-        await client.aclose()
-
-    return StreamingResponse(
-        upstream.aiter_raw(),
-        status_code=upstream.status_code,
-        headers=resp_headers,
-        background=BackgroundTask(_close),
-    )
-
-
-@router.get("/{rdp_id}", response_model=RDPResourceResponse)
-def get_rdp_resource(
-    rdp_id: UUID,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_user),
-):
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    return _rdp_response(
-        db,
-        resource,
-        viewer=current_user,
-        viewer_worker_id=_viewer_worker_id(db, current_user),
-    )
-
-
-def _provision_guacamole(
-    db: Session,
-    resource: RDPResource,
-    redis_client: redis_lib.Redis,
-    creds: RDPResourceCreate | RDPResourceUpdate | RdpProvisionBody,
-    *, strict: bool = False,
-) -> str | None:
-    """
-    Create/update the machine's Guacamole connection and persist the id.
-    Returns an error string instead of raising unless `strict` is set, so an
-    unreachable Guacamole never blocks saving the machine record.
-    """
-    # Re-read before writing. The reconcile loop runs in its own session and
-    # may have just repaired guacamole_connection_id; committing a request's
-    # stale copy of this row would silently revert it to a connection that no
-    # longer exists, and the viewer would fail with 516.
-    try:
-        db.refresh(resource)
-    except Exception:
-        pass
-
-    # Keep the credentials on the machine (password encrypted) so the
-    # connection can be rebuilt on any Guacamole instance without an admin
-    # retyping it — a fresh VPS starts with an empty Guacamole database.
-    if store_credentials(
-        resource,
-        username=creds.rdp_username,
-        password=creds.rdp_password,
-        domain=creds.rdp_domain,
-    ):
-        db.add(resource)
-        db.commit()
-        db.refresh(resource)
-
-    try:
-        result = sync_connection(
-            redis_client,
-            resource,
-            username=creds.rdp_username,
-            password=creds.rdp_password,
-            domain=creds.rdp_domain,
-        )
-    except GuacamoleProvisionError as exc:
-        if strict:
-            raise HTTPException(
-                status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc)
-            ) from exc
-        logger.warning("Guacamole provisioning for %s failed: %s", resource.nickname, exc)
-        return str(exc)
-
-    if resource.guacamole_connection_id != result.connection_id:
-        resource.guacamole_connection_id = result.connection_id
-        db.add(resource)
-        db.commit()
-        db.refresh(resource)
-    return None
 
 
 @router.post("", response_model=RDPResourceResponse, status_code=status.HTTP_201_CREATED)
 def create_rdp_resource(
     body: RDPResourceCreate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
     existing = db.exec(
         select(RDPResource).where(RDPResource.nickname == body.nickname.strip())
@@ -851,11 +157,8 @@ def create_rdp_resource(
     db.add(resource)
     db.commit()
     db.refresh(resource)
-
-    # Auto-register the connection in Guacamole unless the admin pasted an id
-    # or opted out. Failures are reported via health_notes, not a 500.
     if body.auto_provision and not body.guacamole_connection_id and resource.monitor_host:
-        error = _provision_guacamole(db, resource, redis_client, body)
+        error = provision_guacamole(db, resource, redis_client, body)
         if error:
             resource.health_notes = (
                 f"{resource.health_notes}\n{error}" if resource.health_notes else error
@@ -863,88 +166,31 @@ def create_rdp_resource(
             db.add(resource)
             db.commit()
             db.refresh(resource)
-    return _rdp_response(db, resource)
+    return rdp_response(db, resource)
 
 
-@router.patch("/{rdp_id}", response_model=RDPResourceResponse)
-def update_rdp_resource(
+@router.get("/{rdp_id}", response_model=RDPResourceResponse)
+def get_rdp_resource(
     rdp_id: UUID,
-    body: RDPResourceUpdate,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    current_user: dict = Depends(require_user),
 ):
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+    # See list_rdp_resources: must not shadow the imported helper.
+    caller_worker_id = viewer_worker_id(db, current_user)
     if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-
-    if body.nickname is not None:
-        nickname = body.nickname.strip()
-        if nickname != resource.nickname:
-            taken = db.exec(
-                select(RDPResource).where(RDPResource.nickname == nickname)
-            ).first()
-            if taken:
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"An RDP machine with nickname '{nickname}' already exists",
-                )
-
-    set_fields = set(body.model_dump(exclude_unset=True))
-    # Credentials are write-only pass-throughs to Guacamole — never columns.
-    for field, value in body.model_dump(
-        exclude_unset=True, exclude=CREDENTIAL_FIELDS
-    ).items():
-        setattr(resource, field, value)
-    db.add(resource)
-    db.commit()
-    db.refresh(resource)
-
-    # Keep Guacamole in sync when connection-relevant fields or credentials change.
-    connection_fields = {"nickname", "monitor_host", "monitor_port"}
-    creds_supplied = bool(set_fields & {"rdp_username", "rdp_password", "rdp_domain"})
-    should_sync = body.auto_provision and resource.monitor_host and (
-        creds_supplied
-        or not resource.guacamole_connection_id
-        or bool(set_fields & connection_fields)
-    )
-    if should_sync:
-        error = _provision_guacamole(db, resource, redis_client, body, strict=creds_supplied)
-        if error:
-            logger.warning("RDP %s saved but Guacamole sync failed: %s", resource.nickname, error)
-    return _rdp_response(db, resource)
-
-
-@router.post("/{rdp_id}/provision", response_model=RdpProvisionResult)
-def provision_rdp_connection(
-    rdp_id: UUID,
-    body: RdpProvisionBody,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-    redis_client: redis_lib.Redis = Depends(get_redis),
-):
-    """
-    Create or repair this machine's Guacamole connection on demand.
-    Idempotent: adopts an existing connection with the same nickname, otherwise
-    creates one, then stores the identifier on the machine.
-    """
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    if not resource.monitor_host:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Set the machine's host/IP first",
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="This desktop is no longer available. Return to your desktops.",
         )
-
-    before = resource.guacamole_connection_id
-    _provision_guacamole(db, resource, redis_client, body, strict=True)
-    return RdpProvisionResult(
-        rdp_resource_id=str(resource.id),
-        guacamole_connection_id=resource.guacamole_connection_id,
-        created=before != resource.guacamole_connection_id,
-        provisioned=True,
+    require_worker_visible_or_staff(
+        db, resource, viewer=current_user, viewer_worker_id=caller_worker_id
+    )
+    return rdp_response(
+        db,
+        resource,
+        viewer=current_user,
+        viewer_worker_id=caller_worker_id,
     )
 
 
@@ -956,149 +202,41 @@ def claim_rdp_resource(
     shift_id: UUID | None = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
-    """
-    Claim an online-free RDP machine.
-    Creates allocation + work session; returns proxied viewer path for in-app embed.
-    """
-    check_rate_limit(request, scope="rdp-claim", limit=20, window_seconds=3600)
-    worker = get_worker_for_user(db, current_user)
-    # Only enforce work_ready when an active compulsory training module exists.
-    has_mandatory_training = db.exec(
-        select(TrainingModule.id).where(
-            TrainingModule.is_active.is_(True),
-            TrainingModule.is_mandatory_for_new_workers.is_(True),
-        ).limit(1)
-    ).first() is not None
-    if has_mandatory_training and not worker.work_ready:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Complete your onboarding training first — an admin must clear you to start work.",
-        )
-    if worker.status != WorkerStatusEnum.active:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Your worker status is {worker.status.value} — you cannot claim machines until an admin sets you to active.",
-        )
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-
-    # Reuses the allocation the repair pass already loaded.
-    open_on_this = _repair_rdp_state(db, resource)
-    if open_on_this:
-        if open_on_this.worker_id == worker.id:
-            return _resume_existing_claim(
-                db, redis_client, resource=resource, allocation=open_on_this, worker_id=worker.id
-            )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="This machine is in use by another worker",
-        )
-
-    other_open = db.exec(
-        select(Allocation).where(
-            Allocation.worker_id == worker.id,
-            Allocation.released_at.is_(None),
-        )
-    ).first()
-    if other_open:
-        other_resource = db.get(RDPResource, other_open.rdp_resource_id)
-        name = other_resource.nickname if other_resource else str(other_open.rdp_resource_id)
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"You already have an open session on {name}. End that connection first.",
-        )
-
-    approved_shift = validate_worker_may_claim(
-        db, resource, worker.id, shift_id=shift_id
-    )
-    if approved_shift:
-        shift_id = approved_shift.id
-
-    preflight = _preflight_rdp(resource)
-    if not preflight["ok"]:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail=preflight["error"],
-        )
-    if resource.guacamole_connection_id != preflight["guacamole_connection_id"]:
-        resource.guacamole_connection_id = preflight["guacamole_connection_id"]
-        db.add(resource)
-        db.commit()
-        db.refresh(resource)
-
-    lock_key = f"lock:rdp:{rdp_id}"
-    acquired = redis_client.set(lock_key, "1", ex=30, nx=True)
-    if not acquired:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="RDP resource is currently being claimed — try again in a moment",
-        )
-
+    """Claim an online-free RDP machine (sequence owned by rdp_engine)."""
     try:
-        guacamole_url: str | None = None
-        guacamole_viewer_path: str | None = None
-        guacamole_token: str | None = None
-        guacamole_error: str | None = None
-
-        # Skip eager Guacamole URL/token fetches on claim — the in-app RdpViewer
-        # opens the tunnel on the session page. That keeps claim fast.
-        if not resource.guacamole_connection_id:
-            guacamole_error = "Machine has no guacamole_connection_id configured."
-
-        now = _utc_now()
-        allocation = Allocation(
-            worker_id=worker.id,
-            rdp_resource_id=resource.id,
-            shift_id=shift_id,
-            guacamole_token=guacamole_token,
-        )
-        resource.status = RdpStatusEnum.active
-        resource.assigned_worker_id = worker.id
-        resource.status_changed_at = now
-
-        work_session = WorkSession(
-            worker_id=worker.id,
-            session_type=SessionTypeEnum.gs_rdp,
-            allocation_id=None,
-            rdp_resource_id=resource.id,
-            client_id=resource.client_id,
-            start_time=now,
-            type_specific_fields={},
-        )
-
-        db.add(allocation)
-        db.add(resource)
-        db.flush()
-        work_session.allocation_id = allocation.id
-        db.add(work_session)
-        db.flush()
-        _record_rdp_login(
+        check_rate_limit(request, scope="rdp-claim", limit=20, window_seconds=3600)
+        worker = get_worker_for_user(db, current_user)
+        resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
+        if not resource:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="This desktop is no longer available. Return to your desktops.",
+            )
+        require_worker_visible_or_staff(
             db,
+            resource,
+            viewer=current_user,
+            viewer_worker_id=worker.id if current_user.get("role") not in STAFF_ROLES else None,
+        )
+        outcome = engine_claim(
+            db,
+            redis_client,
             worker=worker,
             resource=resource,
-            session_id=work_session.id,
-            ip_address=_request_ip(request),
+            shift_id=shift_id,
+            repair_fn=repair_rdp_state,
+            preflight_fn=preflight_rdp,
+            resume_fn=resume_existing_claim,
+            record_login_fn=record_rdp_login,
+            request_ip=request_ip(request),
         )
-        db.commit()
-        db.refresh(allocation)
-        db.refresh(work_session)
-
-
-        return _build_claim_payload(
-            allocation=allocation,
-            work_session=work_session,
-            resource=resource,
-            worker_id=worker.id,
-            guacamole_url=guacamole_url,
-            guacamole_viewer_path=guacamole_viewer_path,
-            guacamole_error=guacamole_error,
-            resumed=False,
-        )
-    finally:
-        redis_client.delete(lock_key)
+        return outcome.raise_if_error()
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, redis_lib.RedisError) as exc:
+        _datastore_retry("claim", exc)
 
 
 @router.post("/{rdp_id}/end-connection")
@@ -1108,7 +246,9 @@ def end_rdp_connection(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
+    allocation_id: UUID | None = None,
+    connection_generation: int | None = None,
 ):
     """Release DB claim, close work session, and disconnect live Guacamole session."""
     try:
@@ -1121,29 +261,28 @@ def end_rdp_connection(
         admin_id = None
         if is_admin:
             admin_id = get_admin_user(db, current_user).id
-        result = _end_rdp_connection(
+        outcome = engine_disconnect(
             db,
             resource,
             redis_client,
             worker_id=worker.id,
             require_owner=not is_admin,
-            ip_address=_request_ip(request),
+            ip_address=request_ip(request),
             initiated_by="admin" if is_admin else "worker",
             admin_id=admin_id,
+            allocation_id=allocation_id,
+            connection_generation=connection_generation,
+            close_sessions_fn=close_open_sessions_for_rdp,
+            record_logout_fn=record_rdp_logout,
         )
-        guac_id = result.pop("guacamole_connection_id", None) or resource.guacamole_connection_id
-        if guac_id:
-            background_tasks.add_task(_bg_disconnect_guacamole, str(guac_id))
-
-        return result
+        return outcome.raise_if_error()
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("end-connection failed for rdp %s: %s", rdp_id, exc)
-        db.rollback()
+        logger.exception("end-connection failed for %s: %s", rdp_id, exc)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to end connection: {type(exc).__name__}",
+            detail="Something went wrong ending the session. Please try again.",
         ) from exc
 
 
@@ -1154,63 +293,10 @@ def release_rdp_resource(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
     """Alias for end-connection (backward compatible)."""
     return end_rdp_connection(rdp_id, request, background_tasks, db, current_user, redis_client)
-
-
-@router.post("/{rdp_id}/lock")
-def lock_rdp_resource(
-    rdp_id: UUID,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    """Leadership/admin lock — blocks new claims."""
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    transition_rdp_status(db, resource, RdpStatusEnum.admin_locked)
-    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
-
-
-@router.post("/{rdp_id}/unlock")
-def unlock_rdp_resource(
-    rdp_id: UUID,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    """Clear admin lock; return to online_free or assigned if worker reserved."""
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    if resource.status != RdpStatusEnum.admin_locked:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Machine is not locked (status={resource.status.value})",
-        )
-    new_status = (
-        RdpStatusEnum.assigned if resource.assigned_worker_id else RdpStatusEnum.online_free
-    )
-    transition_rdp_status(db, resource, new_status)
-    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
-
-
-@router.post("/{rdp_id}/maintenance")
-def maintenance_rdp_resource(
-    rdp_id: UUID,
-    background_tasks: BackgroundTasks,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
-):
-    """Place machine in maintenance mode."""
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    transition_rdp_status(db, resource, RdpStatusEnum.maintenance)
-    return {"rdp_resource_id": str(resource.id), "status": resource.status.value}
 
 
 @router.post("/{rdp_id}/force-release")
@@ -1221,7 +307,7 @@ def force_release_rdp_resource(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
     """Admin force-release with mandatory reason."""
     if not body.reason.strip():
@@ -1234,276 +320,101 @@ def force_release_rdp_resource(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
 
     admin = get_admin_user(db, current_user)
-    result = _end_rdp_connection(
+    outcome = engine_force_release(
         db,
         resource,
         redis_client,
-        worker_id=None,
-        require_owner=False,
-        release_reason=ReleaseReasonEnum.force_released,
-        ip_address=_request_ip(request),
-        initiated_by="admin",
         admin_id=admin.id,
+        ip_address=request_ip(request),
+        close_sessions_fn=close_open_sessions_for_rdp,
+        record_logout_fn=record_rdp_logout,
     )
-    guac_id = result.pop("guacamole_connection_id", None) or resource.guacamole_connection_id
-    if guac_id:
-        background_tasks.add_task(_bg_disconnect_guacamole, str(guac_id))
+    result = outcome.raise_if_error()
     db.refresh(resource)
     note = f"Force release: {body.reason.strip()}"
     resource.health_notes = f"{resource.health_notes}\n{note}" if resource.health_notes else note
     db.add(resource)
     db.commit()
 
-
     return {**result, "reason": body.reason.strip()}
 
 
-@router.get("/{rdp_id}/preflight")
-def preflight_rdp_resource(
+@router.post("/{rdp_id}/join-ticket", response_model=RdpJoinTicket)
+def create_rdp_join_ticket(
     rdp_id: UUID,
-    db: Session = Depends(get_db),
-    _: dict = Depends(require_user),
-):
-    """TCP + Guacamole-id check so the claim board can fail before opening a desktop."""
-    resource = db.get(RDPResource, rdp_id)
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-    return _preflight_rdp(resource)
-
-
-@router.get("/{rdp_id}/tunnel-info")
-def get_rdp_tunnel_info(
-    rdp_id: UUID,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
-    redis_client: redis_lib.Redis = Depends(get_redis),
+    redis_client=Depends(get_redis),
 ):
-    """Return tunnel connect params for guacamole-common-js custom viewer."""
-    worker = get_worker_for_user(db, current_user)
-    resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
-    if not resource:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
-
-    open_alloc = db.exec(
-        select(Allocation).where(
-            Allocation.rdp_resource_id == rdp_id,
-            Allocation.worker_id == worker.id,
-            Allocation.released_at.is_(None),
-        )
-    ).first()
-    is_admin = current_user.get("role") in STAFF_ROLES
-    if not open_alloc and not is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="You do not have an open claim on this machine",
-        )
-    if not resource.guacamole_connection_id:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Machine has no guacamole_connection_id configured",
-        )
-
-    guac = GuacamoleClient(redis_client)
-    info = guac.get_tunnel_connect_info(resource.guacamole_connection_id)
-    return {
-        "tunnel_url": "/api/rdp/tunnel",
-        "token": info["token"],
-        "data_source": info["data_source"],
-        "connection_id": info["connection_id"],
-    }
-
-
-@router.websocket("/{rdp_id}/ws-tunnel")
-async def rdp_ws_tunnel(websocket: WebSocket, rdp_id: UUID):
     """
-    WebSocket proxy for guacamole-common-js WebSocketTunnel.
-    The Guacamole auth token never leaves the server — the browser only sends its
-    Supabase access token (as ?accessToken=...) plus display hint params.
+    Short-lived, single-use pass to open this desktop directly on `guac.`
+    (Phase 5 Action 1).
 
-    Flow:
-      1. Verify the access token from the query param (or DEV bypass).
-      2. Confirm the worker has an open allocation for this RDP.
-      3. Fetch Guacamole auth token server-side.
-      4. Open a WebSocket to Guacamole and relay frames bidirectionally.
+    Bound to worker + allocation + machine + connection + generation, so it
+    cannot be used for another machine, by another worker, or after the
+    session it belongs to has ended.
+
+    A caller outside the rollout cohort gets `mode: "proxy"` and a 200 — not
+    an error — and the viewer keeps using the FastAPI ws-tunnel.
     """
-    params = websocket.query_params
-    access_token = params.get("accessToken")
-
-    # --- 1. Authenticate ---
-    if access_token:
-        try:
-            decoded = verify_supabase_token(access_token)
-            uid: str = decoded["uid"]
-            role: str = decoded.get("role", "user")
-        except Exception:
-            await websocket.close(code=4001, reason="Invalid auth token")
-            return
-    else:
-        await websocket.close(code=4001, reason="Missing auth token")
-        return
-
-    # --- 2. Extract display hints (forwarded from guacamole-common-js connect data) ---
-    width = params.get("GUAC_WIDTH", "1024")
-    height = params.get("GUAC_HEIGHT", "768")
-    dpi = params.get("GUAC_DPI", "96")
-    images: list[str] = params.getlist("GUAC_IMAGE") or ["image/png", "image/jpeg"]
-
-    # --- 3. Verify DB state and ownership ---
-    with Session(engine) as db:
+    try:
+        worker = get_worker_for_user(db, current_user)
+        # Keyed per worker, not per IP. `check_rate_limit` keys on IP by default,
+        # which would make a whole office behind one NAT share a single budget —
+        # and the viewer spends up to 6 tickets on one flaky connect (jittered
+        # retries, Phase 8 Action 4) plus a silent refresh every few minutes. Ten
+        # workers on one address would trip the limit during a gateway blip, i.e.
+        # exactly when they are trying to reconnect.
+        check_rate_limit(
+            request,
+            scope="rdp-join-ticket",
+            limit=120,
+            window_seconds=3600,
+            key_suffix=str(worker.id),
+            detail=(
+                "Too many reconnect attempts in the last hour. "
+                "Wait a moment and reopen the desktop."
+            ),
+        )
         resource = db.get(RDPResource, rdp_id)
         if not resource:
-            await websocket.close(code=4004, reason="RDP resource not found")
-            return
-        if not resource.guacamole_connection_id:
-            await websocket.close(code=4002, reason="Machine has no Guacamole connection configured")
-            return
-
-        is_admin = role in STAFF_ROLES
-
-        if not is_admin:
-            admin_user = db.exec(
-                select(AdminUser).where(AdminUser.auth_user_id == uid)
-            ).first()
-            worker = (
-                db.exec(select(Worker).where(Worker.admin_user_id == admin_user.id)).first()
-                if admin_user else None
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="This desktop is no longer available. Return to your desktops.",
             )
-            if not worker:
-                await websocket.close(code=4003, reason="Worker profile not found")
-                return
+        require_worker_visible_or_staff(
+            db,
+            resource,
+            viewer=current_user,
+            viewer_worker_id=worker.id if current_user.get("role") not in STAFF_ROLES else None,
+        )
 
-            open_alloc = db.exec(
-                select(Allocation).where(
-                    Allocation.rdp_resource_id == rdp_id,
-                    Allocation.worker_id == worker.id,
-                    Allocation.released_at.is_(None),
-                )
-            ).first()
-            if not open_alloc:
-                await websocket.close(code=4003, reason="No open claim on this machine")
-                return
-
-        connection_id = raw_connection_id(resource.guacamole_connection_id)
-        if resource.guacamole_connection_id != connection_id:
-            resource.guacamole_connection_id = connection_id
-            db.add(resource)
-            db.commit()
-
-        # A stored id that no longer exists in Guacamole yields 516 and a
-        # viewer stuck on "Connecting…". Rebuild it here rather than making
-        # the worker wait for the next reconcile pass.
-        try:
-            if not GuacamoleClient(get_redis()).get_connection(connection_id):
-                logger.warning(
-                    "Connection %s missing in Guacamole for %s — rebuilding",
-                    connection_id, resource.nickname,
-                )
-                repaired = sync_connection(get_redis(), resource)
-                connection_id = repaired.connection_id
-                resource.guacamole_connection_id = connection_id
-                db.add(resource)
-                db.commit()
-        except GuacamoleProvisionError as exc:
-            logger.warning("Could not rebuild connection for %s: %s", resource.nickname, exc)
-        except Exception as exc:
-            logger.warning("Connection existence check failed for %s: %s", resource.nickname, exc)
-
-    # --- 4. Fetch Guacamole token server-side ---
-    redis_client = get_redis()
-    guac = GuacamoleClient(redis_client)
-    try:
-        info = guac.get_tunnel_connect_info(connection_id)
-        guac_token = info["token"]
-        data_source = info["data_source"]
-    except Exception as exc:
-        logger.warning("Failed to get Guacamole token for rdp %s: %s", rdp_id, exc)
-        await websocket.close(code=1011, reason="Cannot reach Guacamole server")
-        return
-    # Drop a tunnel left behind by a timed-out tab. All workers share the
-    # platform Guacamole user, so a stale session is rejected as in-use.
-    guac.kill_active_connections(connection_id)
-
-    # --- 5. Build Guacamole WebSocket URL ---
-    guac_base = settings.GUACAMOLE_URL.rstrip("/")
-    guac_ws_base = guac_base.replace("http://", "ws://").replace("https://", "wss://")
-    guac_qs = urllib.parse.urlencode(
-        [
-            ("token", guac_token),
-            ("GUAC_DATA_SOURCE", data_source),
-            # /websocket-tunnel takes the RAW connection identifier. The
-            # base64 "<id>\0c\0<datasource>" form belongs to the browser URL
-            # (#/client/...) and the HTTP tunnel; sending it here is rejected
-            # with 516 RESOURCE_NOT_FOUND, which surfaces as a black screen.
-            # Verified against this Guacamole: raw -> frames, encoded -> 516.
-            ("GUAC_ID", connection_id),
-            ("GUAC_TYPE", "c"),
-            ("GUAC_WIDTH", width),
-            ("GUAC_HEIGHT", height),
-            ("GUAC_DPI", dpi),
-        ]
-        + [("GUAC_IMAGE", img) for img in images]
-    )
-    guac_ws_url = f"{guac_ws_base}/websocket-tunnel?{guac_qs}"
-
-    # --- 6. Accept the browser WebSocket ---
-    await websocket.accept(subprotocol="guacamole")
-
-    # --- 7. Open upstream connection to Guacamole and relay ---
-    # Both directions must keep flowing: guacd drops the session with
-    # "User is not responding" if the client's sync acknowledgements stop
-    # reaching it, which shows up in the browser as a black screen.
-    async def relay_client_to_guac(guac_ws: ws_lib.ClientConnection) -> None:
-        try:
-            while True:
-                message = await websocket.receive()
-                msg_type = message.get("type")
-                if msg_type == "websocket.disconnect":
-                    return
-                # guacamole-common-js sends text, but binary frames appear for
-                # clipboard and file transfers. iter_text() silently yielded
-                # None for those and killed the tunnel.
-                data = message.get("text")
-                if data is None:
-                    data = message.get("bytes")
-                if data is None:
-                    continue
-                await guac_ws.send(data)
-        except WebSocketDisconnect:
-            return
-        except Exception as exc:
-            logger.warning(
-                "WS tunnel client->guac relay stopped for rdp %s: %s: %s",
-                rdp_id, type(exc).__name__, exc,
+        outcome = issue_join_ticket(
+            db,
+            redis_client,
+            worker=worker,
+            email=current_user.get("email"),
+            resource=resource,
+        )
+        if not outcome.ok:
+            # Admission control refusals carry a wait hint so the fleet spreads
+            # itself instead of every viewer retrying on the same tick (Phase 8
+            # Action 4). Retry-After is seconds per RFC 9110; the millisecond
+            # value in the body is what the viewer actually schedules on.
+            retry_after_ms = int(outcome.data.get("retry_after_ms") or 0)
+            headers = (
+                {"Retry-After": str(max(1, round(retry_after_ms / 1000)))}
+                if retry_after_ms
+                else None
             )
-
-    async def relay_guac_to_client(guac_ws: ws_lib.ClientConnection) -> None:
-        try:
-            async for msg in guac_ws:
-                if isinstance(msg, str):
-                    await websocket.send_text(msg)
-                else:
-                    await websocket.send_bytes(msg)
-        except Exception as exc:
-            logger.warning(
-                "WS tunnel guac->client relay stopped for rdp %s: %s: %s",
-                rdp_id, type(exc).__name__, exc,
+            raise HTTPException(
+                status_code=outcome.http_status,
+                detail=outcome.friendly,
+                headers=headers,
             )
-
-    try:
-        async with ws_lib.connect(guac_ws_url, subprotocols=["guacamole"]) as guac_ws:
-            c2g = asyncio.create_task(relay_client_to_guac(guac_ws))
-            g2c = asyncio.create_task(relay_guac_to_client(guac_ws))
-            _done, pending = await asyncio.wait([c2g, g2c], return_when=asyncio.FIRST_COMPLETED)
-            for task in pending:
-                task.cancel()
-    except Exception as exc:
-        logger.warning("WS tunnel error for rdp %s: %s", rdp_id, exc)
-        try:
-            await websocket.close(code=1011, reason="Cannot open remote desktop")
-        except Exception:
-            pass
-        return
-    try:
-        await websocket.close(code=1000)
-    except Exception:
-        pass
+        return RdpJoinTicket(**outcome.data)
+    except HTTPException:
+        raise
+    except (SQLAlchemyError, redis_lib.RedisError) as exc:
+        _datastore_retry("join-ticket", exc)

@@ -15,6 +15,9 @@ engine_options = {
     # LOG_LEVEL=DEBUG when you actually want to see the SQL.
     "echo": settings.LOG_LEVEL.upper() == "DEBUG",
     "pool_pre_ping": True,
+    # Mirror connect_timeout on the DSN. psycopg2 accepts either; setting both
+    # keeps local and pooled URLs from hanging the request thread.
+    "connect_args": {"connect_timeout": 10},
 }
 
 DATABASE_URL, _url_is_pooled = normalize_db_url(settings.DATABASE_URL)

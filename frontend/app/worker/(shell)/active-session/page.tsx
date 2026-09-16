@@ -1,13 +1,19 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
-import { Wifi, Heart, Monitor } from 'lucide-react';
+import ConfirmModal from '@/components/platform/ConfirmModal';
+import { Wifi, Heart, Monitor, Power } from 'lucide-react';
 import { api } from '@/lib/api';
-import { endRdpConnection } from '@/lib/rdp';
+import { reportError } from '@/lib/errors';
+import {
+  broadcastRdpSessionEnded,
+  endRdpConnectionSafe,
+  getMyActiveRdp,
+  sessionEvidenceUrl,
+} from '@/lib/rdp';
 
 interface WorkSession {
   id: string;
@@ -32,34 +38,60 @@ const TYPE_LABELS: Record<string, string> = {
 };
 
 export default function ActiveSessionPage() {
-  const router = useRouter();
   const [session, setSession] = useState<WorkSession | null>(null);
   const [machine, setMachine] = useState<RDPResource | null>(null);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [ending, setEnding] = useState(false);
+  const [confirmEnd, setConfirmEnd] = useState(false);
   const [seconds, setSeconds] = useState(0);
 
   useEffect(() => {
-    api.get<WorkSession[]>('/sessions?limit=50')
-      .then(async (sessions) => {
-        const active = sessions.find((s) => !s.end_time) ?? null;
-        setSession(active);
+    // Prefer the dedicated control page when an RDP claim is live.
+    getMyActiveRdp()
+      .then((active) => {
         if (active?.rdp_resource_id) {
-          try {
-            const rdp = await api.get<RDPResource>(`/rdp/${active.rdp_resource_id}`);
-            setMachine(rdp);
-          } catch {
-            setMachine(null);
+          window.location.replace(`/worker/rdp-session/${active.rdp_resource_id}`);
+          return;
+        }
+        return api.get<WorkSession[]>('/sessions?limit=50').then(async (sessions) => {
+          const activeSession = sessions.find((s) => !s.end_time) ?? null;
+          setSession(activeSession);
+          if (activeSession?.rdp_resource_id) {
+            window.location.replace(`/worker/rdp-session/${activeSession.rdp_resource_id}`);
+            return;
           }
-        }
-        if (active) {
-          const elapsed = Math.floor((Date.now() - new Date(active.start_time).getTime()) / 1000);
-          setSeconds(Math.max(0, elapsed));
-        }
+          if (activeSession) {
+            try {
+              if (activeSession.rdp_resource_id) {
+                const rdp = await api.get<RDPResource>(`/rdp/${activeSession.rdp_resource_id}`);
+                setMachine(rdp);
+              }
+            } catch {
+              setMachine(null);
+            }
+            const elapsed = Math.floor((Date.now() - new Date(activeSession.start_time).getTime()) / 1000);
+            setSeconds(Math.max(0, elapsed));
+          }
+        });
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load session'))
+      .catch((e) => setLoadError(e instanceof Error ? e.message : 'Failed to load session'))
       .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    let ch: BroadcastChannel | null = null;
+    try {
+      ch = new BroadcastChannel('rdp-events');
+      ch.onmessage = (e) => {
+        if (e.data?.type === 'session-ended') {
+          const dest = (e.data?.evidenceUrl as string | undefined) || '/worker/session-history';
+          window.location.replace(dest);
+        }
+      };
+    } catch { /* ignore */ }
+    return () => { try { ch?.close(); } catch { /* ignore */ } };
   }, []);
 
   useEffect(() => {
@@ -74,24 +106,38 @@ export default function ActiveSessionPage() {
 
   const heartbeat = session?.type_specific_fields?.last_heartbeat_at ? 'Active' : '—';
 
-  const handleEndSession = () => {
+  const handleEndSession = useCallback(async () => {
     if (!session?.rdp_resource_id || ending) return;
     setEnding(true);
     setError(null);
     const rdpId = session.rdp_resource_id;
-    router.push('/worker/rdp-claim-board');
-    void endRdpConnection(rdpId).catch(() => { /* already navigated */ });
-  };
+    const dest = sessionEvidenceUrl(rdpId, session.id);
+
+    broadcastRdpSessionEnded({
+      rdpId,
+      sessionId: session.id,
+      evidenceUrl: dest,
+      openedBy: 'control',
+    });
+
+    const result = await endRdpConnectionSafe(rdpId);
+    if (!result.ok) {
+      setError(reportError('End RDP connection', result.error, { rdpId }));
+      setEnding(false);
+      return;
+    }
+
+    setConfirmEnd(false);
+    window.location.assign(dest);
+  }, [ending, session]);
 
   if (loading) return <p className="text-theme-muted text-sm mt-4">Loading session...</p>;
-  if (error) return <p className="text-danger text-sm mt-4">{error}</p>;
+  if (loadError) return <p className="text-danger text-sm mt-4">{loadError}</p>;
 
   if (!session) {
     return (
       <div className="max-w-3xl">
-        <PageHeader
-          title="Active session"
-        />
+        <PageHeader title="Active session" />
         <div className="glass-panel p-8 text-center">
           <p className="text-brand-on-surface-variant mb-4">You don&apos;t have an active session.</p>
           <Link href="/worker/rdp-claim-board" className="btn-primary text-sm">Claim an RDP machine</Link>
@@ -110,32 +156,23 @@ export default function ActiveSessionPage() {
         <div className="glass-panel p-8 text-center">
           <p className="text-xs font-bold uppercase tracking-wider text-brand-on-surface-variant mb-4">Session Timer</p>
           <p className="text-5xl md:text-6xl font-black font-mono text-emerald-accent text-glow-emerald">{h}:{m}:{s}</p>
-          {session.rdp_resource_id ? (
+          {session.rdp_resource_id && (
             <div className="mt-8 space-y-2 max-w-xs mx-auto">
               <Link
                 href={`/worker/rdp-session/${session.rdp_resource_id}`}
                 className="btn-primary w-full text-sm block text-center"
               >
-                Open remote desktop
+                Open session controls
               </Link>
               <button
                 type="button"
-                onClick={handleEndSession}
+                onClick={() => setConfirmEnd(true)}
                 disabled={ending}
                 className="btn-secondary w-full border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-50"
               >
                 {ending ? 'Ending…' : 'End Session'}
               </button>
             </div>
-          ) : (
-            <button
-              type="button"
-              onClick={handleEndSession}
-              disabled={ending || !session.rdp_resource_id}
-              className="btn-secondary mt-8 w-full max-w-xs mx-auto border-danger/30 text-danger hover:bg-danger/10 disabled:opacity-50"
-            >
-              {ending ? 'Ending…' : 'End Session'}
-            </button>
           )}
         </div>
         <div className="space-y-4">
@@ -163,9 +200,27 @@ export default function ActiveSessionPage() {
           </div>
         </div>
       </div>
-      <p className="text-xs text-brand-on-surface-variant mt-6 text-center">
-        RDP credentials are managed server-side via Apache Guacamole and never exposed to your browser.
-      </p>
+      <ConfirmModal
+        open={confirmEnd}
+        title="End this session?"
+        body={
+          <>
+            <span className="font-medium text-theme-heading">{machine?.nickname ?? 'This desktop'}</span>
+            {' '}will be disconnected and released back to the pool. You can add
+            your screenshots next.
+          </>
+        }
+        tone="danger"
+        icon={Power}
+        confirmLabel={ending ? 'Ending…' : 'Yes, end session'}
+        busy={ending}
+        onConfirm={() => { void handleEndSession(); }}
+        onCancel={() => { if (!ending) setConfirmEnd(false); }}
+      />
+
+      {error && (
+        <p className="text-danger text-sm mt-4 text-center">{error}</p>
+      )}
     </div>
   );
 }

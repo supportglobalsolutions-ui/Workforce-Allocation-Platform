@@ -152,6 +152,15 @@ def validate_worker_may_claim(
     """
     Raise HTTPException if worker cannot claim. Returns matched shift when assigned flow.
     """
+    if resource.status == RdpStatusEnum.maintenance:
+        # Quarantine / unconfirmed-close hold — never leak status enum names.
+        from services.rdp_quarantine import WORKER_CHECKED_MESSAGE
+
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=WORKER_CHECKED_MESSAGE,
+        )
+
     if resource.status in UNCLAIMABLE_STATUSES:
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
@@ -183,8 +192,65 @@ def validate_worker_may_claim(
     )
 
 
-def resume_active_from_heartbeat(db: Session, rdp_id: UUID, *, commit: bool = True) -> None:
-    """If machine was idle, mark active again when heartbeat arrives."""
-    resource = db.get(RDPResource, rdp_id)
-    if resource and resource.status == RdpStatusEnum.idle:
-        transition_rdp_status(db, resource, RdpStatusEnum.active, commit=commit)
+def worker_may_see_resource(
+    db: Session,
+    resource: RDPResource,
+    worker_id: UUID,
+) -> bool:
+    """Visibility (Phase 2): workers only see machines assigned to them."""
+    if resource.assigned_worker_id == worker_id:
+        return True
+    open_alloc = db.exec(
+        select(Allocation).where(
+            Allocation.rdp_resource_id == resource.id,
+            Allocation.worker_id == worker_id,
+            Allocation.released_at.is_(None),
+        )
+    ).first()
+    if open_alloc:
+        return True
+    shift = db.exec(
+        select(Shift.id).where(
+            Shift.worker_id == worker_id,
+            Shift.rdp_resource_id == resource.id,
+            Shift.status == ShiftStatusEnum.approved,
+        ).limit(1)
+    ).first()
+    return shift is not None
+
+
+def list_visible_rdp_resources(
+    db: Session,
+    *,
+    viewer: dict,
+    viewer_worker_id: UUID | None,
+) -> list[RDPResource]:
+    """Staff see every machine; workers see only assigned / held / scheduled."""
+    from core.permissions import STAFF_ROLES
+
+    all_rows = db.exec(select(RDPResource).order_by(RDPResource.nickname)).all()
+    if viewer.get("role") in STAFF_ROLES:
+        return list(all_rows)
+    if not viewer_worker_id:
+        return []
+    return [r for r in all_rows if worker_may_see_resource(db, r, viewer_worker_id)]
+
+
+def require_worker_visible_or_staff(
+    db: Session,
+    resource: RDPResource,
+    *,
+    viewer: dict,
+    viewer_worker_id: UUID | None,
+) -> None:
+    """Non-disclosing 404 when a worker probes a machine they cannot see."""
+    from core.permissions import STAFF_ROLES
+
+    if viewer.get("role") in STAFF_ROLES:
+        return
+    if viewer_worker_id and worker_may_see_resource(db, resource, viewer_worker_id):
+        return
+    raise HTTPException(
+        status_code=status.HTTP_404_NOT_FOUND,
+        detail="This desktop is no longer available. Return to your desktops.",
+    )

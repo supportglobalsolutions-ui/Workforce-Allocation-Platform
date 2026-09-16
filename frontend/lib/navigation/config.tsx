@@ -2,7 +2,7 @@ import {
   LayoutDashboard, Users, Monitor, Settings, Trophy, Landmark,
   Bell, DollarSign, BarChart3, Activity, BookOpen, Briefcase,
   Zap, History, Home, Lock, Shield, CalendarDays, CalendarRange, UserCircle,
-  Wallet, GraduationCap, Building2, Mail, ShieldCheck,
+  Wallet, GraduationCap, Building2, Mail, ShieldCheck, MessageSquare,
 } from 'lucide-react';
 
 export type PortalRole = 'worker' | 'admin' | 'leadership';
@@ -27,6 +27,7 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <BookOpen size={18} />, label: 'Assessments', href: '/worker/assessments' },
     { icon: <Wallet size={18} />, label: 'Wallet & Payments', href: '/worker/wallet', shortLabel: 'Wallet' },
     { icon: <Bell size={18} />, label: 'Notifications', href: '/worker/notifications' },
+    { icon: <MessageSquare size={18} />, label: 'Chat with admin', href: '/worker/chat', shortLabel: 'Chat' },
     { icon: <UserCircle size={18} />, label: 'My Profile', href: '/worker/profile', shortLabel: 'Profile' },
   ],
   admin: [

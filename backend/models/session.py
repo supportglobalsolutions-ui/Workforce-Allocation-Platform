@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -85,6 +85,12 @@ class Session(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True),
     )
     admin_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Admin-only review flag — not shown to workers. Used when screenshots
+    # do not match the claimed session times / work.
+    suspicious: bool = Field(
+        default=False,
+        sa_column=Column(Boolean(), nullable=False, server_default=text("false")),
+    )
     start_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     end_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # Times as shown on the worker's start/end screenshots (evidence hours).

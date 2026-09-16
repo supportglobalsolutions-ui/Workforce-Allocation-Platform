@@ -3,10 +3,11 @@
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
-import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, LifeBuoy, ShieldCheck } from 'lucide-react';
+import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
 import GlobalSolutionsLogo from './GlobalSolutionsLogo';
 import { AuthGlassCard } from './AuthPageShell';
 import SpinningDots from '@/components/shared/SpinningDots';
+import ErrorToast from '@/components/shared/ErrorToast';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
@@ -34,6 +35,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   // After a few wrong attempts the problem is usually not the typing —
   // offer the contact form, which works without an account.
   const [failedAttempts, setFailedAttempts] = useState(0);
+  const [helpToast, setHelpToast] = useState(false);
   const [loading, setLoading] = useState(false);
   const [otpChallenge, setOtpChallenge] = useState<LoginOtpChallenge | null>(null);
   const [otpCode, setOtpCode] = useState('');
@@ -48,6 +50,14 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
     }
   }, [session, router, onSuccess, otpChallenge, pendingLoginOtp]);
 
+  function noteFailedLogin() {
+    setFailedAttempts((n) => {
+      const next = n + 1;
+      if (next >= 3) setHelpToast(true);
+      return next;
+    });
+  }
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
@@ -58,7 +68,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       const result = await login(email, password);
       if (!result.ok) {
         setError(result.error ?? 'Login failed. Please check credentials.');
-        setFailedAttempts((n) => n + 1);
+        noteFailedLogin();
       } else if (result.otpRequired) {
         setFailedAttempts(0);
         setOtpChallenge(result.challenge);
@@ -68,7 +78,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       }
     } catch (err: unknown) {
       setError(getAuthErrorMessage(err));
-      setFailedAttempts((n) => n + 1);
+      noteFailedLogin();
     } finally {
       setLoading(false);
     }
@@ -216,6 +226,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   }
 
   return (
+    <>
     <AuthGlassCard className={className}>
       <div className="flex flex-col items-center text-center mb-6">
         <GlobalSolutionsLogo size="lg" showOperations={false} />
@@ -291,19 +302,6 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           </div>
         )}
 
-        {failedAttempts >= 2 && (
-          <div className="flex items-start gap-2 p-3 rounded-xl bg-[#0df5c4]/10 border border-[#0df5c4]/30 text-[#bfece0] text-xs">
-            <LifeBuoy size={15} className="shrink-0 mt-0.5 text-[#0df5c4]" />
-            <span>
-              Still locked out after {failedAttempts} attempts?{' '}
-              <Link href="/contact" className="font-semibold text-[#0df5c4] hover:underline">
-                Message an administrator
-              </Link>{' '}
-              — no account needed, and we reply by email.
-            </span>
-          </div>
-        )}
-
         <button
           type="submit"
           disabled={loading || isLoading}
@@ -327,5 +325,16 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
         </Link>
       </p>
     </AuthGlassCard>
+      {helpToast && (
+        <ErrorToast
+          title="Having trouble logging in?"
+          message="Contact an administrator for help. You do not need an account, and we reply by email."
+          onDismiss={() => setHelpToast(false)}
+          showRetry={false}
+          linkHref="/contact"
+          linkLabel="Contact admin"
+        />
+      )}
+    </>
   );
 }
