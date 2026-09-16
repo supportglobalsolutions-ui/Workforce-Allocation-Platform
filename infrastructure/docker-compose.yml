@@ -1,4 +1,7 @@
 # Workforce Allocation Platform — local infra (RDP Guacamole, Redis, monitoring)
+#
+# Copy infrastructure/.env.example → infrastructure/.env and fill passwords.
+# Never commit real values. Compose refuses to start if they are missing.
 name: workforce
 
 services:
@@ -29,7 +32,7 @@ services:
     environment:
       POSTGRES_DB: guacamole_db
       POSTGRES_USER: guacamole_user
-      POSTGRES_PASSWORD: guacamole_pass
+      POSTGRES_PASSWORD: ${GUAC_DB_PASSWORD:?Set GUAC_DB_PASSWORD in infrastructure/.env}
     volumes:
       - guac_db_data:/var/lib/postgresql/data
       - ./guacamole_initdb.sql:/docker-entrypoint-initdb.d/initdb.sql:ro
@@ -49,14 +52,14 @@ services:
       POSTGRESQL_HOSTNAME: guac_db
       POSTGRESQL_DATABASE: guacamole_db
       POSTGRESQL_USER: guacamole_user
-      POSTGRESQL_PASSWORD: guacamole_pass
+      POSTGRESQL_PASSWORD: ${GUAC_DB_PASSWORD:?Set GUAC_DB_PASSWORD in infrastructure/.env}
       # Phase 5 — turns on guacamole-auth-json, which lets FastAPI mint a
       # token scoped to one connection instead of handing out an admin login.
       # Explicitly install guacamole-auth-json. This must never have a
       # checked-in fallback: the same random value belongs in backend/.env.
       JSON_ENABLED: "true"
       # Generate: python -c "import secrets; print(secrets.token_hex(16))"
-      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:?Set the shared auth-json key}
+      JSON_SECRET_KEY: ${GUACAMOLE_JSON_SECRET_KEY:?Set GUACAMOLE_JSON_SECRET_KEY in infrastructure/.env}
     ports:
       - "8080:8080"
     networks:

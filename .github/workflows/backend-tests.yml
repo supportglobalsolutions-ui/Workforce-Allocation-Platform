@@ -29,11 +29,13 @@ jobs:
       DATABASE_URL: postgresql://postgres:postgres@localhost:5432/workforce_test
       DATABASE_URL_TEST: postgresql://postgres:postgres@localhost:5432/workforce_test
       ENVIRONMENT: test
-      GUACAMOLE_JSON_SECRET_KEY: 4c0b569e4c96df157eee1b65dd0e4d41
       GUACAMOLE_PUBLIC_URL: https://guac.test.invalid
       RDP_DIRECT_GATEWAY_MODE: "on"
     steps:
       - uses: actions/checkout@v4
+      # Ephemeral test key only — never a production secret, never committed.
+      - name: Mint throwaway Guacamole JSON test key
+        run: echo "GUACAMOLE_JSON_SECRET_KEY=$(openssl rand -hex 16)" >> "$GITHUB_ENV"
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
