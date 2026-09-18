@@ -234,8 +234,11 @@ def claim(
     resume_fn,
     record_login_fn,
     request_ip: str | None = None,
+    viewer_role: str | None = None,
 ) -> RdpOutcome:
     """Eligibility → preflight → capacity → Redis lock → allocation + session."""
+    from core.permissions import STAFF_ROLES
+
     has_mandatory_training = (
         db.exec(
             select(TrainingModule.id)
@@ -247,7 +250,10 @@ def claim(
         ).first()
         is not None
     )
-    if has_mandatory_training and not worker.work_ready:
+    # Staff claim for support / ops — training gate is for real workers only.
+    staff_claim = viewer_role in STAFF_ROLES
+
+    if has_mandatory_training and not worker.work_ready and not staff_claim:
         return RdpOutcome(
             ok=False,
             code="not_work_ready",
@@ -351,14 +357,11 @@ def claim(
         )
 
     try:
-        # Count seats, not just open allocations. A machine held after an
-        # unconfirmed close has an *ended* allocation but may still be running a
-        # tunnel on the gateway — that RAM is spent whether or not our records
-        # say so, and admitting against it is how a capped box still OOMs.
-        from services.rdp_capacity import occupied_seats
+        # Optional numeric seat cap (RDP_MAX_LIVE_SESSIONS>0). Counts open
+        # allocations plus held machines — not raw open rows alone.
+        from services.rdp_capacity import at_capacity
 
-        live_count = occupied_seats(db)
-        if live_count >= settings.RDP_MAX_LIVE_SESSIONS:
+        if at_capacity(db):
             return RdpOutcome(
                 ok=False,
                 code="at_capacity",
@@ -818,41 +821,35 @@ def prepare_connect(
         )
 
     alloc: Allocation | None = None
-    if role not in staff_roles:
-        admin_user = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
-        worker = (
-            db.exec(select(Worker).where(Worker.admin_user_id == admin_user.id)).first()
-            if admin_user
-            else None
+    # Everyone — including staff — must claim first. Staff used to skip this and
+    # could open a tunnel with no allocation (no lock / no audit claim).
+    admin_user = db.exec(select(AdminUser).where(AdminUser.auth_user_id == uid)).first()
+    worker = (
+        db.exec(select(Worker).where(Worker.admin_user_id == admin_user.id)).first()
+        if admin_user
+        else None
+    )
+    if not worker:
+        return RdpOutcome(
+            ok=False,
+            code="no_claim",
+            friendly="Claim this machine first, then open the desktop.",
+            http_status=403,
         )
-        if not worker:
-            return RdpOutcome(
-                ok=False,
-                code="no_claim",
-                friendly="No open claim on this machine",
-                http_status=403,
-            )
-        alloc = db.exec(
-            select(Allocation).where(
-                Allocation.rdp_resource_id == rdp_id,
-                Allocation.worker_id == worker.id,
-                Allocation.released_at.is_(None),
-            ).with_for_update()
-        ).first()
-        if not alloc:
-            return RdpOutcome(
-                ok=False,
-                code="no_claim",
-                friendly="No open claim on this machine",
-                http_status=403,
-            )
-    else:
-        alloc = db.exec(
-            select(Allocation).where(
-                Allocation.rdp_resource_id == rdp_id,
-                Allocation.released_at.is_(None),
-            ).with_for_update()
-        ).first()
+    alloc = db.exec(
+        select(Allocation).where(
+            Allocation.rdp_resource_id == rdp_id,
+            Allocation.worker_id == worker.id,
+            Allocation.released_at.is_(None),
+        ).with_for_update()
+    ).first()
+    if not alloc:
+        return RdpOutcome(
+            ok=False,
+            code="no_claim",
+            friendly="Claim this machine first, then open the desktop.",
+            http_status=403,
+        )
 
     connection_id = raw_connection_id(resource.guacamole_connection_id)
     redis_client = get_redis()

@@ -231,6 +231,7 @@ def claim_rdp_resource(
             resume_fn=resume_existing_claim,
             record_login_fn=record_rdp_login,
             request_ip=request_ip(request),
+            viewer_role=current_user.get("role"),
         )
         return outcome.raise_if_error()
     except HTTPException:

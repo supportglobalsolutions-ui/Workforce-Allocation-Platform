@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { Mail, Lock, Eye, EyeOff, ArrowRight, AlertCircle, ShieldCheck } from 'lucide-react';
@@ -22,9 +22,10 @@ interface LoginCardProps {
 
 const DEFAULT_SUPER_ADMIN_EMAIL = '';
 const DEFAULT_SUPER_ADMIN_PASSWORD = '';
+const SUBMIT_WATCHDOG_MS = 20_000;
 
 export default function LoginCard({ onSuccess, className = '' }: LoginCardProps) {
-  const { login, verifyOtp, resendOtp, cancelOtp, session, isLoading, pendingLoginOtp } = useAuth();
+  const { login, verifyOtp, resendOtp, cancelOtp, session, pendingLoginOtp } = useAuth();
   const isDark = true;
   const router = useRouter();
 
@@ -39,6 +40,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   const [loading, setLoading] = useState(false);
   const [otpChallenge, setOtpChallenge] = useState<LoginOtpChallenge | null>(null);
   const [otpCode, setOtpCode] = useState('');
+  const submitLock = useRef(false);
 
   useEffect(() => {
     if (!session || pendingLoginOtp || otpChallenge) return;
@@ -58,14 +60,33 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
     });
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (loading) return;
+  const handleSubmit = async (e?: React.FormEvent | React.MouseEvent) => {
+    e?.preventDefault?.();
+    if (submitLock.current || loading) return;
+
+    const trimmedEmail = email.trim();
+    if (!trimmedEmail) {
+      setError('Enter your username or email.');
+      return;
+    }
+    if (password.length < 8) {
+      setError('Password must be at least 8 characters.');
+      return;
+    }
+
+    submitLock.current = true;
     setError('');
     setLoading(true);
 
+    const watchdog = window.setTimeout(() => {
+      submitLock.current = false;
+      setLoading(false);
+      setError('Sign-in is taking too long. Please check your connection and try again.');
+      noteFailedLogin();
+    }, SUBMIT_WATCHDOG_MS);
+
     try {
-      const result = await login(email, password);
+      const result = await login(trimmedEmail, password);
       if (!result.ok) {
         setError(result.error ?? 'Login failed. Please check credentials.');
         noteFailedLogin();
@@ -76,10 +97,13 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       } else if (onSuccess) {
         onSuccess();
       }
+      // Successful non-OTP login: AuthProvider navigates via finishLogin.
     } catch (err: unknown) {
       setError(getAuthErrorMessage(err));
       noteFailedLogin();
     } finally {
+      window.clearTimeout(watchdog);
+      submitLock.current = false;
       setLoading(false);
     }
   };
@@ -164,7 +188,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
           </p>
         </div>
 
-        <form onSubmit={handleVerifyOtp} className="space-y-4">
+        <form onSubmit={handleVerifyOtp} className="space-y-4" noValidate>
           <div>
             <label className={labelClass}>Verification code</label>
             <input
@@ -232,7 +256,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
         <GlobalSolutionsLogo size="lg" showOperations={false} />
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-4">
+      <form onSubmit={handleSubmit} className="space-y-4" noValidate>
         <div>
           <label className={labelClass}>Username or email</label>
           <div className="relative">
@@ -241,7 +265,6 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
                 browser would reject a username before submit. */}
             <input
               type="text"
-              required
               maxLength={254}
               autoComplete="username"
               value={email}
@@ -263,8 +286,6 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
             />
             <input
               type={showPassword ? 'text' : 'password'}
-              required
-              minLength={8}
               maxLength={128}
               value={password}
               onChange={(e) => {
@@ -304,7 +325,8 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
 
         <button
           type="submit"
-          disabled={loading || isLoading}
+          onClick={handleSubmit}
+          disabled={loading}
           className="w-full mt-2 group relative flex items-center justify-center gap-2 py-3.5 px-6 rounded-xl font-bold text-sm text-[#01241c] bg-[#0df5c4] hover:bg-[#34f8cf] active:scale-[0.99] transition-all shadow-[0_0_28px_rgba(13,245,196,0.35)] disabled:opacity-60"
         >
           {loading ? (

@@ -228,6 +228,13 @@ def _merge_app_metadata(uid: str, updates: dict[str, Any]) -> dict:
     return _admin_request("PUT", f"/users/{uid}", json={"app_metadata": merged}) or {}
 
 
+def merge_user_metadata(uid: str, updates: dict[str, Any]) -> dict:
+    """Patch user_metadata without clobbering keys we are not setting."""
+    current = _admin_request("GET", f"/users/{uid}") or {}
+    merged = {**(current.get("user_metadata") or {}), **updates}
+    return _admin_request("PUT", f"/users/{uid}", json={"user_metadata": merged}) or {}
+
+
 # ── user administration ──────────────────────────────────────────────────
 
 def set_user_role(uid: str, role: str, *, partner_entity_id: str | None = None) -> None:

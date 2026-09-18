@@ -610,6 +610,7 @@ sudo systemctl start globalsolutions-api
 | Machine shows **connection … no longer exists** | The connection was deleted in Guacamole — click **Sync Guacamole** to rebuild it |
 | Viewer opens but auth fails on the Windows login screen | Wrong RDP username/password — edit the machine, retype the password, save |
 | Guacamole tab opens but screen is black | Windows Firewall on the remote PC is blocking port 3389 |
+| No sound in the browser desktop | Platform had audio off by default; it is now on (`disable-audio=false`). On **Admin → RDP**, click **Sync Guacamole** for each machine, reconnect, and click once in the desktop (browsers block sound until a click). Windows “Play on this PC” in mstsc does not apply to Guacamole. |
 | `venv\Scripts\activate` not found | Run `python -m venv venv` then `pip install -r requirements.txt` |
 | Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v`, regenerate `guacamole_initdb.sql`, then `docker compose up -d` |
 | `ModuleNotFoundError` | Virtual environment not activated — run `venv\Scripts\activate` |

@@ -18,6 +18,7 @@ import {
 } from './supabase-auth';
 import { clearAuthRoleCookie } from './cookies';
 import { getAuthErrorMessage } from './errors';
+import { LoginOtpRequiredError, SessionCookieSyncError } from './session-cookie';
 import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 import { logoutBlockReason } from '@/lib/logout-guard';
@@ -111,12 +112,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const pendingAccessTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
-    // If cookie sync / role lookup hangs (e.g. API DB timeout), stop the
-    // portal loading gate so pages are not stuck on a blank brand background.
-    // A late auth callback can still populate the session afterwards.
+    // Auth bootstrap must never leave public pages with a dead Sign In button.
+    // LoginCard no longer disables on isLoading; this fail-safe still unlocks
+    // PortalGuard for already-signed-in visits.
     const failSafe = window.setTimeout(() => {
       setIsLoading(false);
-    }, 12_000);
+    }, 2_500);
 
     const unsub = subscribeAuthState(
       (s) => {
@@ -173,7 +174,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         pendingAccessTokenRef.current = accessToken;
 
         if (!isPrivilegedLoginRole(provisional.authRole)) {
-          return finishLogin(accessToken);
+          try {
+            return await withTimeout(finishLogin(accessToken), 10000);
+          } catch (finishErr: unknown) {
+            // JWT may omit role while the DB still requires admin OTP.
+            if (!(finishErr instanceof LoginOtpRequiredError)) throw finishErr;
+          }
         }
 
         setPendingLoginOtp({
@@ -183,10 +189,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           resendsRemaining: 5,
         });
 
-        const challenge = await requestLoginOtp(false);
+        const challenge = await withTimeout(requestLoginOtp(false), 10000);
         if (!challenge.required) {
           setPendingLoginOtp(null);
-          return finishLogin(accessToken);
+          return withTimeout(finishLogin(accessToken), 10000);
         }
 
         setPendingLoginOtp({
@@ -225,6 +231,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         }
 
         void signOut();
+        if (err instanceof SessionCookieSyncError) {
+          return { ok: false, error: err.message };
+        }
         const { reportError } = await import('@/lib/errors');
         return { ok: false, error: reportError('Sign in', err) };
       }

@@ -7,6 +7,7 @@ from fastapi import APIRouter, BackgroundTasks, Body, Depends, HTTPException, Re
 from pydantic import BaseModel, EmailStr, Field, field_validator
 from sqlmodel import Session, select
 
+from core.phone_codes import normalize_e164
 from core.auth_errors import http_error_from_auth
 from core.config import settings
 from core.database import get_db
@@ -146,7 +147,7 @@ _NAME_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ '\-]){1,39}$", re.UNICODE)
 _COUNTRY_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[ .,'()\-]){1,55}$", re.UNICODE)
 _RESIDENCE_RE = re.compile(r"^[^\W\d_](?:[^\W\d_]|[0-9 .,'\-]){1,79}$", re.UNICODE)
 _USERNAME_RE = re.compile(r"^[A-Za-z][A-Za-z0-9_]{2,31}$")
-_PHONE_RE = re.compile(r"^\+?[0-9]{8,15}$")
+_PHONE_RE = re.compile(r"^\+[0-9]{8,15}$")
 
 
 class RegisterRequest(BaseModel):
@@ -154,7 +155,7 @@ class RegisterRequest(BaseModel):
     password: str = Field(min_length=8, max_length=10)
     firstName: str = Field(min_length=2, max_length=40)
     lastName: str = Field(min_length=2, max_length=40)
-    phone: str = Field(min_length=8, max_length=16)
+    phone: str = Field(min_length=1, max_length=16)
     country: str = Field(min_length=2, max_length=56)
     residence: str = Field(min_length=2, max_length=80)
     username: str = Field(min_length=3, max_length=32)
@@ -171,10 +172,7 @@ class RegisterRequest(BaseModel):
     @field_validator("phone", mode="before")
     @classmethod
     def clean_phone(cls, value: object) -> str:
-        compact = re.sub(r"[\s\-().]", "", str(value or "").strip())
-        if not _PHONE_RE.match(compact):
-            raise ValueError("Use 8–15 digits. A leading + is allowed. Letters are not allowed.")
-        return compact
+        return normalize_e164(value)
 
     @field_validator("country", mode="before")
     @classmethod

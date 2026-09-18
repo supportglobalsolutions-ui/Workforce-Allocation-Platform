@@ -5,9 +5,10 @@ type Role = 'user' | 'partner' | 'admin' | 'executive' | 'super_admin';
 // Must mirror ROLE_ALLOWED_PORTALS in lib/auth/config.ts. This is the guard
 // that actually blocks a URL typed into the address bar.
 const PORTAL_ROLES: Record<string, Role[]> = {
-  '/worker': ['user', 'partner', 'super_admin'],
+  // Staff claim/connect desktops via the worker RDP board (docs §1.3).
+  '/worker': ['user', 'partner', 'admin', 'executive', 'super_admin'],
   '/admin': ['admin', 'super_admin'],
-  // Executives live here and nowhere else.
+  // Executives live here and nowhere else (except worker RDP above).
   '/leadership': ['executive', 'super_admin'],
 };
 

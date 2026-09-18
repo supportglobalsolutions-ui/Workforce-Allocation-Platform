@@ -1,13 +1,15 @@
 """
-Seat accounting for the live-session cap (Phase 3 Action 5).
+Seat accounting for the optional live-session cap (Phase 3 Action 5).
 
-`RDP_MAX_LIVE_SESSIONS` exists to stop a small box being asked to run more
-desktops than its RAM allows — each live desktop is ~30–50 MB in guacd plus
-CPU. The cap is only as good as the count behind it, and "how many desktops are
-really running" is not the same question as "how many allocations are open".
+`RDP_MAX_LIVE_SESSIONS` can refuse new claims when too many desktops are already
+running on a small box. **Ops policy:** we do **not** intend to enforce a
+numeric session ceiling — set `RDP_MAX_LIVE_SESSIONS=0` (default) for unlimited.
+A positive value re-enables a hard cap if needed later.
+
+When a cap is enabled, the count behind it has to reflect what is actually
+running — not what our records find convenient.
 
 Two things occupy a seat:
-
 **Open allocations.** Including ones inside their 5-minute disconnect grace:
 the allocation is not released, the seat is being held *for* the returning
 worker, and freeing it would let someone else take the chair they are coming
@@ -17,8 +19,7 @@ back to (§1.6).
 confirmed (Phase 3 Action 3) has an *ended* allocation — the worker left — but
 the whole reason it is held is that a tunnel **may still be live** on the
 gateway, consuming the same RAM. Counting only open allocations would declare
-that seat free and admit someone onto a box that is already full. On a 6-seat
-cap, a couple of held machines is the difference between fitting and an OOM.
+that seat free and admit someone onto a box that is already full.
 """
 from __future__ import annotations
 
@@ -33,6 +34,18 @@ from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
 
 logger = logging.getLogger(__name__)
+
+
+def configured_cap() -> int | None:
+    """
+    Effective numeric ceiling, or ``None`` when unlimited.
+
+    ``RDP_MAX_LIVE_SESSIONS <= 0`` means no numeric session limit.
+    """
+    raw = int(settings.RDP_MAX_LIVE_SESSIONS)
+    if raw <= 0:
+        return None
+    return raw
 
 
 def open_allocation_count(db: Session) -> int:
@@ -82,15 +95,18 @@ def occupied_seats(db: Session) -> int:
 
 
 def at_capacity(db: Session) -> bool:
-    return occupied_seats(db) >= max(int(settings.RDP_MAX_LIVE_SESSIONS), 1)
+    cap = configured_cap()
+    if cap is None:
+        return False
+    return occupied_seats(db) >= cap
 
 
 def capacity_snapshot(db: Session) -> dict:
     """
-    Operator view of the cap. Makes the number observable, which is what a
-    measured load test needs — you cannot size a limit you cannot see.
+    Operator view of seat use. When unlimited, ``cap`` is null and
+    ``at_capacity`` is always false.
     """
-    cap = max(int(settings.RDP_MAX_LIVE_SESSIONS), 1)
+    cap = configured_cap()
     open_count = open_allocation_count(db)
     held = held_machine_ids(db)
     occupied = occupied_seats(db)
@@ -105,17 +121,23 @@ def capacity_snapshot(db: Session) -> dict:
         if resource is not None and resource.status == RdpStatusEnum.idle:
             grace_count += 1
 
+    unlimited = cap is None
     return {
         "cap": cap,
+        "unlimited": unlimited,
         "occupied": occupied,
-        "available": max(cap - occupied, 0),
-        "at_capacity": occupied >= cap,
+        "available": None if unlimited else max(cap - occupied, 0),
+        "at_capacity": False if unlimited else occupied >= cap,
         "open_allocations": open_count,
         "in_grace": grace_count,
         "held_machines": len(held),
         "held_machine_ids": [str(i) for i in sorted(held, key=str)],
         "note": (
-            "Held machines occupy a seat: their closure was never confirmed, so a "
-            "tunnel may still be running on the gateway."
+            "No numeric session cap (RDP_MAX_LIVE_SESSIONS=0)."
+            if unlimited
+            else (
+                "Held machines occupy a seat: their closure was never confirmed, so a "
+                "tunnel may still be running on the gateway."
+            )
         ),
     }

@@ -119,6 +119,8 @@ def get_worker_for_user(db: Session, current_user: dict) -> Worker:
         pay_tier="unassigned",
         status=WorkerStatusEnum.active,
         start_date=date.today(),
+        # Staff JIT profiles must be able to claim for support without training.
+        work_ready=current_user.get("role") in STAFF_ROLES,
     )
     db.add(worker)
     db.commit()

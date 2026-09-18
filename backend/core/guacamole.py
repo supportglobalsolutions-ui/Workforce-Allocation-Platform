@@ -168,9 +168,14 @@ class GuacamoleClient:
 
     def find_connection_by_name(self, name: str) -> dict | None:
         """Guacamole enforces unique names per group — find one by its name."""
+        target = (name or "").strip().casefold()
+        if not target:
+            return None
         for identifier, meta in self.list_connections().items():
-            if isinstance(meta, dict) and meta.get("name") == name:
-                return {**meta, "identifier": meta.get("identifier") or identifier}
+            if not isinstance(meta, dict):
+                continue
+            if (meta.get("name") or "").strip().casefold() == target:
+                return {**meta, "identifier": str(meta.get("identifier") or identifier)}
         return None
 
     def get_connection(self, connection_id: str) -> dict | None:

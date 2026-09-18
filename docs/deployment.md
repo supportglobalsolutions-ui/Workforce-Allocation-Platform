@@ -1,9 +1,9 @@
 # Production Deployment Guide: Hetzner Backend & Vercel Frontend
 ### GlobalSolutions Workforce Allocation Platform
 
-> **Phase 6 split-host deployment:** use [Media migration and capacity acceptance](rdp-media-deployment.md) for separate control/media Compose files, private networking, DNS/TLS, database migration, rollback, and measured sizing. The single-host placement and sizing estimates below are legacy guidance, not measured capacity guarantees.
+> **Topology:** production runs on **one Hetzner VPS** (API + Redis + Guacamole + coordinator + Kuma). A separate media host is **not** planned. **No numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`). [rdp-media-deployment.md](rdp-media-deployment.md) §1–4 live work is cancelled.
 >
-> **Phase 7 redundancy:** use [Gateway and control-plane redundancy](rdp-redundancy.md) for multi-gateway sticky placement, drain, dual API upstream, failover plan, and the acceptance scorer (`scripts/rdp_acceptance.py`).
+> **Phase 7 multi-host redundancy** templates remain in [rdp-redundancy.md](rdp-redundancy.md) / `scripts/rdp_acceptance.py` for optional future use; live ops stay single-host.
 
 This is the single, complete, step-by-step production deployment manual for the platform. It walks you through deploying the **Backend & Infrastructure** (FastAPI, Redis, Apache Guacamole, Uptime Kuma) on a **Hetzner Cloud VPS**, connecting to **Supabase** for PostgreSQL and Authentication, and hosting the **Frontend** (Next.js 14) on **Vercel**.
 
@@ -732,9 +732,9 @@ python3 -c "import secrets; print(secrets.token_hex(16))"
 
 4. Add the `$guac_cors_origin` map at `http{}` level (see
    `infrastructure/nginx/guacamole-join-ticket.conf`) listing the origins the
-   app is served from, then apply the two `location` blocks above. If Guacamole
-   runs on the separate media VPS, change `workforce_control_api` in that file
-   to the API VPS's private address before reloading Nginx.
+   app is served from, then apply the two `location` blocks above. (On the single-VPS
+   topology, `workforce_control_api` stays on localhost / the local upstream — do not
+   retarget it to a second host.)
 
 ```bash
 sudo nginx -t && sudo systemctl reload nginx

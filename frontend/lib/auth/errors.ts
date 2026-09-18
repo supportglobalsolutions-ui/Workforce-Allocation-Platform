@@ -71,6 +71,14 @@ export function getAuthErrorMessage(err: unknown): string {
     return 'Your account is pending admin approval. You can sign in after an administrator approves it.';
   }
 
+  if (lower.includes('login_otp_required')) {
+    return 'Admin sign-in needs email verification. Please try again.';
+  }
+
+  if (lower.includes('workspace session') || lower.includes('sign-in is taking too long')) {
+    return raw;
+  }
+
   if (lower.includes('too many failed sign-in') || lower.includes('resend the verification code')) {
     return raw;
   }

@@ -1,3 +1,9 @@
+import {
+  validateE164Phone,
+  composeE164,
+  filterNationalNumber,
+} from '@/lib/phone-country-codes';
+
 export const NAME_MAX = 40;
 export const PHONE_MAX_DIGITS = 15;
 export const RESIDENCE_MAX = 80;
@@ -32,6 +38,8 @@ export function filterPhone(value: string): string {
   return plus ? `+${digits}` : digits;
 }
 
+export { validateE164Phone, composeE164, filterNationalNumber };
+
 export function filterResidence(value: string): string {
   return value.replace(/[^\p{L}\p{N} .,'\-]/gu, '').slice(0, RESIDENCE_MAX);
 }
@@ -62,11 +70,7 @@ export function validateName(value: string, label: string): string {
 }
 
 export function validatePhone(value: string): string {
-  const compact = value.replace(/[^\d+]/g, '');
-  if (!/^\+?[0-9]{8,15}$/.test(compact)) {
-    return 'Use 8–15 digits. A leading + is allowed. Letters are not allowed.';
-  }
-  return '';
+  return validateE164Phone(value);
 }
 
 export function validateCountry(value: string, options: string[]): string {

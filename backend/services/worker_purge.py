@@ -7,12 +7,13 @@ from uuid import UUID
 from sqlalchemy import delete, update as sa_update
 from sqlmodel import Session, select
 
-from core.supabase_auth import ban_auth_user
+from core.supabase_auth import delete_auth_user
+from models.admin_users import AdminUser
 from models.allocation import Allocation
 from models.client import Client
 from models.email_job import EmailJobItem
 from models.email_log import EmailLog
-from models.enums import RdpStatusEnum
+from models.enums import AccountStatusEnum, RdpStatusEnum
 from models.mcq import McqResult, McqResultAnswer
 from models.notification import Notification
 from models.payroll import PayrollLineItem, PayrollWorkerSummary
@@ -35,8 +36,9 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
     """
     Permanently remove workers and dependent operational data.
 
-    Order matters for FKs. Supabase accounts linked to the worker are banned
-    (login disabled). The admin_users login row is kept but unlinked.
+    Linked Supabase login accounts are deleted (not banned), so they do not
+    remain visible on the Accounts page. The admin_users row is deactivated
+    and unlinked so history FKs stay valid where needed.
     """
     unique_ids = list(dict.fromkeys(worker_ids))
     workers = db.exec(select(Worker).where(Worker.id.in_(unique_ids))).all()
@@ -64,28 +66,39 @@ def purge_workers(db: Session, worker_ids: list[UUID]) -> dict:
                 resource.status = RdpStatusEnum.online_free
             db.add(resource)
 
-        # Ban auth login if linked
+        # Fully remove the login from Auth (Accounts list) — do not leave banned ghosts.
         auth_user_id = None
-        if worker.admin_user is not None:
-            auth_user_id = worker.admin_user.auth_user_id
-        elif worker.admin_user_id:
-            from models.admin_users import AdminUser
-            admin = db.get(AdminUser, worker.admin_user_id)
-            auth_user_id = admin.auth_user_id if admin else None
-        if auth_user_id:
-            admin_row = worker.admin_user
-            if admin_row is None and worker.admin_user_id:
-                from models.admin_users import AdminUser
-                admin_row = db.get(AdminUser, worker.admin_user_id)
+        admin_row = worker.admin_user
+        if admin_row is None and worker.admin_user_id:
+            admin_row = db.get(AdminUser, worker.admin_user_id)
+        if admin_row:
+            auth_user_id = admin_row.auth_user_id
+
+        if auth_user_id and not str(auth_user_id).startswith("deleted:"):
             if admin_row and (
                 admin_row.is_protected or is_protected_email(admin_row.email)
             ):
-                logger.warning("Skip ban of protected Super Admin linked to worker %s", wid)
+                logger.warning("Skip delete of protected Super Admin linked to worker %s", wid)
             else:
                 try:
-                    ban_auth_user(auth_user_id)
+                    delete_auth_user(auth_user_id)
                 except Exception as exc:  # noqa: BLE001
-                    logger.warning("Could not ban Supabase user for worker %s: %s", wid, exc)
+                    msg = str(exc).lower()
+                    if "404" in msg or "not found" in msg:
+                        logger.info("Auth user for worker %s already absent", wid)
+                    else:
+                        logger.warning(
+                            "Could not delete Supabase user for worker %s: %s", wid, exc
+                        )
+
+        if admin_row and not (
+            admin_row.is_protected or is_protected_email(admin_row.email)
+        ):
+            admin_row.auth_user_id = f"deleted:{admin_row.id}"
+            admin_row.email = f"deleted.{admin_row.id}@invalid.local"
+            admin_row.username = None
+            admin_row.status = AccountStatusEnum.deactivated
+            db.add(admin_row)
 
         # Sessions (including active)
         session_ids = list(db.exec(select(WorkSession.id).where(WorkSession.worker_id == wid)).all())

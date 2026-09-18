@@ -1,7 +1,7 @@
 """
-Seat accounting for the live-session cap (Phase 3 Action 5).
+Seat accounting for the optional live-session cap (Phase 3 Action 5).
 
-The cap protects a box that cannot run more desktops than its RAM allows, so
+Default is unlimited (`RDP_MAX_LIVE_SESSIONS=0`). When a positive cap is set,
 the count behind it has to reflect what is actually running — not what our
 records find convenient. Two cases are easy to get wrong:
 
@@ -162,15 +162,17 @@ def test_held_machine_can_push_a_box_to_capacity(monkeypatch):
     )
 
 
-def test_cap_of_zero_is_treated_as_one(monkeypatch):
-    """A misconfigured 0 must not mean 'unlimited'."""
+def test_cap_of_zero_means_unlimited(monkeypatch):
+    """Ops policy: 0 disables the numeric session ceiling."""
     monkeypatch.setattr(settings, "RDP_MAX_LIVE_SESSIONS", 0, raising=False)
-    db = FakeDb(open_ids=[A], resources=active(A))
-    assert rdp_capacity.at_capacity(db) is True
+    db = FakeDb(open_ids=[A, B, C], resources=active(A, B, C))
+    assert rdp_capacity.configured_cap() is None
+    assert rdp_capacity.at_capacity(db) is False
 
 
-def test_default_cap_is_the_documented_six():
-    assert settings.RDP_MAX_LIVE_SESSIONS == 6
+def test_default_cap_is_unlimited():
+    assert settings.RDP_MAX_LIVE_SESSIONS == 0
+    assert rdp_capacity.configured_cap() is None
 
 
 # ── Operator visibility ─────────────────────────────────────────────────
@@ -189,12 +191,24 @@ def test_snapshot_breaks_the_number_down(monkeypatch):
     )
     snap = rdp_capacity.capacity_snapshot(db)
     assert snap["cap"] == 6
+    assert snap["unlimited"] is False
     assert snap["occupied"] == 3
     assert snap["available"] == 3
     assert snap["at_capacity"] is False
     assert snap["in_grace"] == 1, "the idle one is inside its grace window"
     assert snap["held_machines"] == 1
     assert str(C) in snap["held_machine_ids"]
+
+
+def test_snapshot_unlimited_when_cap_is_zero(monkeypatch):
+    monkeypatch.setattr(settings, "RDP_MAX_LIVE_SESSIONS", 0, raising=False)
+    db = FakeDb(open_ids=[A, B], resources=active(A, B))
+    snap = rdp_capacity.capacity_snapshot(db)
+    assert snap["cap"] is None
+    assert snap["unlimited"] is True
+    assert snap["available"] is None
+    assert snap["at_capacity"] is False
+    assert snap["occupied"] == 2
 
 
 def test_snapshot_never_reports_negative_availability(monkeypatch):
@@ -212,7 +226,7 @@ def test_claim_uses_seat_accounting_not_a_raw_allocation_count():
     from services import rdp_engine
 
     source = inspect.getsource(rdp_engine.claim)
-    assert "occupied_seats" in source, "claim must count seats, including held machines"
+    assert "at_capacity" in source, "claim must use seat accounting (incl. held machines)"
 
 
 def test_capacity_endpoint_is_admin_only():

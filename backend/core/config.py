@@ -2,7 +2,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Empty KEY= in .env must not crash int/bool parsing — treat as unset.
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore", env_ignore_empty=True)
 
     # ── App ───────────────────────────────────────────────────
     ENVIRONMENT: str = "development"
@@ -61,9 +62,10 @@ class Settings(BaseSettings):
     # standalone workforce-rdp-coordinator systemd unit instead (Phase 4).
     # Default true keeps a single-box deploy working via Redis leader election.
     RDP_RUN_COORDINATOR_IN_API: bool = True
-    # Conservative default for the current 2 GB all-in-one VPS. Tune from
-    # measured load after moving the media plane to larger hardware.
-    RDP_MAX_LIVE_SESSIONS: int = 6
+    # Numeric live-session ceiling. 0 (default) = unlimited — we do not intend
+    # to enforce a fixed max-session count. Set a positive value only if ops
+    # later chooses to hard-cap claims on this host.
+    RDP_MAX_LIVE_SESSIONS: int = 0
     # Per-gateway seat cap when RDP_GATEWAYS lists multiple media nodes.
     RDP_GATEWAY_CAPACITY: int = 50
     # JSON array of gateway nodes (Phase 7). Empty → single GUACAMOLE_PUBLIC_URL.

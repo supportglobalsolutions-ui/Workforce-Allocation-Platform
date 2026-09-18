@@ -167,7 +167,7 @@ export const PAGES: PageEntry[] = [
     href: '/admin/rdp',
     portal: 'admin',
     purpose: 'Control all RDP machines — status, maintenance, lock, force release, health.',
-    features: ['Machine inventory', 'Maintenance mode', 'Lock machine', 'Force release', 'Health monitoring'],
+    features: ['Machine inventory', 'Maintenance mode', 'Lock machine', 'Force release', 'Health monitoring', 'Claim board subpage'],
     status: 'live',
     roles: ['Handler', 'Operations Lead'],
   },

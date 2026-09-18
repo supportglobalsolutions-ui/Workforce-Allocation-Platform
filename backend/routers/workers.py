@@ -6,12 +6,25 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.supabase_auth import ban_auth_user, unban_auth_user, get_auth_user
+from core.phone_codes import (
+    PHONE_UPDATE_MESSAGE,
+    PHONE_UPDATE_TITLE,
+    normalize_e164,
+    phone_needs_country_code_update,
+)
+from core.supabase_auth import (
+    ban_auth_user,
+    unban_auth_user,
+    get_auth_user,
+    list_auth_users,
+    merge_user_metadata,
+    user_to_dict,
+)
 from core.auth_errors import http_error_from_auth
 from core.permissions import STAFF_ROLES, require_admin, require_user
-from core.security import get_current_user
 from models.admin_users import AdminUser
 from models.enums import RdpStatusEnum, WorkerTypeEnum
+from models.notification import Notification
 from models.partner import PartnerEntity
 from models.rdp_machine import RDPResource
 from models.worker import Worker
@@ -57,15 +70,61 @@ def _normalize_worker_ids(ids: list[UUID]) -> list[UUID]:
     return unique
 
 
-def _enrich_worker(db: Session, worker: Worker) -> WorkerResponse:
+def _auth_profile_map() -> dict[str, dict]:
+    try:
+        return {u["uid"]: u for u in list_auth_users() if u.get("uid")}
+    except Exception:
+        return {}
+
+
+def _apply_auth_profile(updates: dict, auth: dict | None) -> None:
+    if not auth:
+        return
+    phone = (auth.get("phone") or "").strip() or None
+    residence = (auth.get("residence") or "").strip() or None
+    first = (auth.get("firstName") or "").strip() or None
+    last = (auth.get("lastName") or "").strip() or None
+    if phone:
+        updates["phone"] = phone
+    if residence:
+        updates["residence"] = residence
+    if first:
+        updates["first_name"] = first
+    if last:
+        updates["last_name"] = last
+    updates["account_banned"] = bool(auth.get("banned"))
+    status_val = auth.get("status")
+    if status_val:
+        updates["account_status"] = status_val
+
+
+def _enrich_worker(
+    db: Session,
+    worker: Worker,
+    *,
+    auth_by_uid: dict[str, dict] | None = None,
+) -> WorkerResponse:
     resp = WorkerResponse.model_validate(worker)
     updates: dict = {}
+    auth_uid: str | None = None
     if worker.admin_user:
         updates["email"] = worker.admin_user.email
+        auth_uid = worker.admin_user.auth_user_id
     elif worker.admin_user_id:
         admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
         if admin:
             updates["email"] = admin.email
+            auth_uid = admin.auth_user_id
+    if auth_uid:
+        auth = None
+        if auth_by_uid is not None:
+            auth = auth_by_uid.get(auth_uid)
+        else:
+            try:
+                auth = user_to_dict(get_auth_user(auth_uid))
+            except Exception:
+                auth = None
+        _apply_auth_profile(updates, auth)
     if worker.partner_entity_id:
         entity = worker.partner_entity
         if entity is None:
@@ -84,6 +143,36 @@ def _enrich_worker(db: Session, worker: Worker) -> WorkerResponse:
     if updates:
         resp = resp.model_copy(update=updates)
     return resp
+
+
+def _sync_auth_profile_fields(
+    db: Session,
+    worker: Worker,
+    *,
+    phone: str | None = None,
+    residence: str | None = None,
+    country: str | None = None,
+) -> None:
+    """Write phone/residence/country into Supabase user_metadata when linked."""
+    meta: dict = {}
+    if phone is not None:
+        meta["phone"] = phone
+    if residence is not None:
+        meta["residence"] = residence
+    if country is not None:
+        meta["country"] = country
+    if not meta:
+        return
+    admin = worker.admin_user
+    if admin is None and worker.admin_user_id:
+        admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
+    if not admin or not admin.auth_user_id:
+        return
+    try:
+        merge_user_metadata(admin.auth_user_id, meta)
+    except Exception:
+        # Profile fields still saved on worker where applicable; metadata sync is best-effort.
+        pass
 
 
 def _assign_rdp(db: Session, worker_id: UUID, rdp_id: UUID | None) -> None:
@@ -130,10 +219,27 @@ def update_my_worker(
     current_user: dict = Depends(require_user),
 ):
     worker = get_worker_for_user(db, current_user)
-    apply_update(worker, body)
+    payload = body.model_dump(exclude_unset=True)
+    phone_raw = payload.pop("phone", None)
+    residence_raw = payload.pop("residence", None)
+    phone_norm: str | None = None
+    if phone_raw is not None:
+        try:
+            phone_norm = normalize_e164(phone_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+    # phone/residence live in auth metadata, not workers columns
+    apply_update(worker, WorkerUpdate(**{k: v for k, v in payload.items() if k in {"username", "display_name", "country"}}))
     db.add(worker)
     db.commit()
     db.refresh(worker)
+    _sync_auth_profile_fields(
+        db,
+        worker,
+        phone=phone_norm,
+        residence=(residence_raw.strip() if isinstance(residence_raw, str) else None),
+        country=payload.get("country"),
+    )
     return _enrich_worker(db, worker)
 
 
@@ -147,7 +253,66 @@ def list_workers(
         .options(selectinload(Worker.admin_user), selectinload(Worker.partner_entity))
         .order_by(Worker.display_name)
     ).all()
-    return [_enrich_worker(db, w) for w in workers]
+    auth_map = _auth_profile_map()
+    return [_enrich_worker(db, w, auth_by_uid=auth_map) for w in workers]
+
+
+@router.post("/phone-format-nudge")
+def nudge_phone_format(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Send in-app notifications to workers whose phone lacks a valid country code."""
+    sender = get_admin_user(db, current_user)
+    workers = db.exec(
+        select(Worker).options(selectinload(Worker.admin_user)).order_by(Worker.display_name)
+    ).all()
+    auth_map = _auth_profile_map()
+
+    existing = db.exec(
+        select(Notification).where(
+            Notification.title == PHONE_UPDATE_TITLE,
+            Notification.is_read == False,  # noqa: E712
+            Notification.target_type == "specific",
+        )
+    ).all()
+    already: set[UUID] = {n.target_worker_id for n in existing if n.target_worker_id}
+
+    created = 0
+    skipped_ok = 0
+    skipped_dup = 0
+    for worker in workers:
+        auth_uid = None
+        if worker.admin_user:
+            auth_uid = worker.admin_user.auth_user_id
+        elif worker.admin_user_id:
+            admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
+            auth_uid = admin.auth_user_id if admin else None
+        phone = (auth_map.get(auth_uid or "") or {}).get("phone") or ""
+        if not phone_needs_country_code_update(phone):
+            skipped_ok += 1
+            continue
+        if worker.id in already:
+            skipped_dup += 1
+            continue
+        db.add(
+            Notification(
+                sender_admin_id=sender.id,
+                title=PHONE_UPDATE_TITLE,
+                message=PHONE_UPDATE_MESSAGE,
+                category="general",
+                target_type="specific",
+                target_worker_id=worker.id,
+            )
+        )
+        created += 1
+    if created:
+        db.commit()
+    return {
+        "notified": created,
+        "already_valid": skipped_ok,
+        "already_notified": skipped_dup,
+    }
 
 
 # ── Bulk delete (registered before /{worker_id}) ────────────────────────────────
@@ -281,6 +446,14 @@ def update_worker(
 
     data = body.model_dump(exclude_unset=True)
     assigned_rdp_id = data.pop("assigned_rdp_id", ...)
+    phone_raw = data.pop("phone", None)
+    residence_raw = data.pop("residence", None)
+    phone_norm: str | None = None
+    if phone_raw is not None:
+        try:
+            phone_norm = normalize_e164(phone_raw)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     for key, value in data.items():
         setattr(worker, key, value)
 
@@ -298,6 +471,13 @@ def update_worker(
     db.add(worker)
     db.commit()
     db.refresh(worker)
+    _sync_auth_profile_fields(
+        db,
+        worker,
+        phone=phone_norm,
+        residence=(residence_raw.strip() if isinstance(residence_raw, str) else None),
+        country=data.get("country"),
+    )
     return _enrich_worker(db, worker)
 
 def _get_worker_auth_user_id(worker_id: UUID, db: Session, current_user: dict) -> tuple[Worker, str]:

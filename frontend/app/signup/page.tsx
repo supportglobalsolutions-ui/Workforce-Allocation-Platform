@@ -18,10 +18,10 @@ import {
   RESIDENCE_MAX,
   USERNAME_MAX,
   filterName,
-  filterPhone,
+  filterNationalNumber,
   filterResidence,
   filterUsername,
-  normalizePhone,
+  composeE164,
   validateConfirmPassword,
   validateCountry,
   validateEmail,
@@ -32,6 +32,10 @@ import {
   passwordRuleErrors,
   type SignupField,
 } from '@/lib/auth/signup-fields';
+import {
+  PHONE_DIAL_CODES,
+  dialCodeForCountryName,
+} from '@/lib/phone-country-codes';
 
 type Step = 'email' | 'code' | 'password' | 'done';
 
@@ -53,7 +57,7 @@ function countryNameList(): string[] {
 }
 
 export default function SignupPage() {
-  const { session, isLoading } = useAuth();
+  const { session } = useAuth();
   // Signup always uses the dark auth shell, independent of dashboard theme.
   const isDark = true;
   const router = useRouter();
@@ -72,7 +76,8 @@ export default function SignupPage() {
   const [confirmPassword, setConfirmPassword] = useState('');
   const [firstName, setFirstName] = useState('');
   const [lastName, setLastName] = useState('');
-  const [phone, setPhone] = useState('');
+  const [phoneDial, setPhoneDial] = useState('254');
+  const [phoneNational, setPhoneNational] = useState('');
   const [country, setCountry] = useState('');
   const [residence, setResidence] = useState('');
   const [username, setUsername] = useState('');
@@ -166,11 +171,15 @@ export default function SignupPage() {
   const handleCreate = async (e: React.FormEvent) => {
     e.preventDefault();
     if (loading) return;
+    const fullPhone = composeE164(phoneDial, phoneNational);
     const passwordBroken = passwordRuleErrors(password);
+    const phoneError = !phoneNational.trim()
+      ? 'Phone number is required.'
+      : validatePhone(fullPhone);
     const nextErrors: Partial<Record<SignupField, string>> = {
       firstName: validateName(firstName, 'First name'),
       lastName: validateName(lastName, 'Last name'),
-      phone: validatePhone(phone),
+      phone: phoneError,
       country: validateCountry(country, countries),
       residence: validateResidence(residence),
       username: validateUsername(username),
@@ -192,7 +201,7 @@ export default function SignupPage() {
         password,
         firstName: firstName.trim().replace(/\s+/g, ' '),
         lastName: lastName.trim().replace(/\s+/g, ' '),
-        phone: normalizePhone(phone),
+        phone: fullPhone,
         country: country.trim(),
         residence: residence.trim().replace(/\s+/g, ' '),
         username: username.trim() || undefined,
@@ -206,14 +215,9 @@ export default function SignupPage() {
     }
   };
 
-  if (isLoading) {
-    return (
-      <AuthPageShell>
-        <SpinningDots size="lg" className="text-[#0df5c4]" />
-      </AuthPageShell>
-    );
-  }
-
+  // Do not gate the form on auth bootstrap. A hung cookie sync / dead API
+  // used to leave this page on SpinningDots forever; login already paints
+  // immediately and only redirects once a session exists.
   if (step === 'done') {
     return (
       <AuthPageShell>
@@ -387,17 +391,36 @@ export default function SignupPage() {
                 {fieldErrors.lastName && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.lastName}</p>}
               </div>
               <div>
-                <label className={labelClass}>Phone number</label>
-                <input
-                  required
-                  inputMode="tel"
-                  autoComplete="tel"
-                  maxLength={16}
-                  value={phone}
-                  onChange={(e) => { setPhone(filterPhone(e.target.value)); clearField('phone'); }}
-                  placeholder="+254700000000"
-                  className={fieldInput('phone')}
-                />
+                <label className={labelClass}>
+                  Phone number <span className="text-red-400" aria-hidden>*</span>
+                </label>
+                <div className="flex gap-2">
+                  <select
+                    required
+                    value={phoneDial}
+                    onChange={(e) => { setPhoneDial(e.target.value); clearField('phone'); }}
+                    className={`${fieldInput('phone')} w-[9.5rem] shrink-0`}
+                    aria-label="Country calling code (required)"
+                  >
+                    {PHONE_DIAL_CODES.map((c) => (
+                      <option key={`${c.iso}-${c.dial}`} value={c.dial}>
+                        {c.name} (+{c.dial})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    required
+                    inputMode="tel"
+                    autoComplete="tel-national"
+                    maxLength={12}
+                    value={phoneNational}
+                    onChange={(e) => { setPhoneNational(filterNationalNumber(e.target.value)); clearField('phone'); }}
+                    placeholder="714516132"
+                    className={`${fieldInput('phone')} flex-1`}
+                    aria-required="true"
+                  />
+                </div>
+                <p className="mt-1 text-[10px] text-theme-muted">Required. Example Kenya: +254 714516132</p>
                 {fieldErrors.phone && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.phone}</p>}
               </div>
               <div>
@@ -405,7 +428,13 @@ export default function SignupPage() {
                 <select
                   required
                   value={country}
-                  onChange={(e) => { setCountry(e.target.value); clearField('country'); }}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setCountry(next);
+                    setPhoneDial(dialCodeForCountryName(next));
+                    clearField('country');
+                    clearField('phone');
+                  }}
                   className={fieldInput('country')}
                 >
                   <option value="">Select country</option>

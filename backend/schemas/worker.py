@@ -33,6 +33,8 @@ class WorkerUpdate(SQLModel):
     username:     Optional[str] = None
     display_name: Optional[str] = None
     country:      Optional[str] = None
+    phone:        Optional[str] = None
+    residence:    Optional[str] = None
 
 
 class WorkerAdminUpdate(SQLModel):
@@ -40,6 +42,8 @@ class WorkerAdminUpdate(SQLModel):
     display_name:      Optional[str]              = None
     username:          Optional[str]              = None
     country:           Optional[str]              = None
+    phone:             Optional[str]              = None
+    residence:         Optional[str]              = None
     pay_tier:          Optional[str]              = None
     pay_amount:        Optional[Decimal]          = None
     pay_frequency:     Optional[str]              = None
@@ -68,6 +72,12 @@ class WorkerResponse(WorkerBase):
     created_at: datetime
     updated_at: datetime
     email:      Optional[str] = None
+    phone:      Optional[str] = None
+    residence:  Optional[str] = None
+    first_name: Optional[str] = None
+    last_name:  Optional[str] = None
+    account_banned: bool = False
+    account_status: Optional[str] = None
     partner_entity_name: Optional[str] = None
     partner_entity_is_self: Optional[bool] = None
     assigned_rdp_id: Optional[UUID] = None

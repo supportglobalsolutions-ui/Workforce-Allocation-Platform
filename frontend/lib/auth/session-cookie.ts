@@ -5,7 +5,7 @@ const VALID_ROLES = new Set<Role>(['user', 'partner', 'admin', 'executive', 'sup
 
 // Supabase can emit INITIAL_SESSION and TOKEN_REFRESHED close together. Keep
 // those duplicate events from issuing several identical cookie requests.
-let cookieSyncInFlight: Promise<Role | null> | null = null;
+let cookieSyncInFlight: Promise<Role> | null = null;
 let lastSyncedToken: string | null = null;
 let lastSyncedRole: Role | null = null;
 let lastSyncedAt = 0;
@@ -61,9 +61,16 @@ export class LoginOtpRequiredError extends Error {
   }
 }
 
-export async function syncSessionCookie(idToken: string): Promise<Role | null> {
+export class SessionCookieSyncError extends Error {
+  constructor(message = 'Could not start your workspace session. Please try again.') {
+    super(message);
+    this.name = 'SessionCookieSyncError';
+  }
+}
+
+export async function syncSessionCookie(idToken: string): Promise<Role> {
   const now = Date.now();
-  if (idToken === lastSyncedToken && now - lastSyncedAt < COOKIE_SYNC_REUSE_MS) {
+  if (idToken === lastSyncedToken && lastSyncedRole && now - lastSyncedAt < COOKIE_SYNC_REUSE_MS) {
     return lastSyncedRole;
   }
   if (cookieSyncInFlight) return cookieSyncInFlight;
@@ -76,37 +83,64 @@ export async function syncSessionCookie(idToken: string): Promise<Role | null> {
   // app/api/auth/session/route.ts still wins for its own path because
   // filesystem routes take precedence over afterFiles rewrites.
   cookieSyncInFlight = (async () => {
-    const res = await fetch('/api/auth/session-token', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id_token: idToken }),
-    });
-    if (!res.ok) {
-      let detail = '';
-      try {
-        const body = (await res.json()) as { detail?: string };
-        detail = body.detail ?? '';
-      } catch {
-        /* ignore */
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 8_000);
+    try {
+      const res = await fetch('/api/auth/session-token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ id_token: idToken }),
+        signal: controller.signal,
+      });
+      if (!res.ok) {
+        let detail = '';
+        try {
+          const body = (await res.json()) as { detail?: string };
+          detail = body.detail ?? '';
+        } catch {
+          /* ignore */
+        }
+        if (res.status === 403 && detail === 'login_otp_required') {
+          throw new LoginOtpRequiredError();
+        }
+        throw new SessionCookieSyncError(
+          res.status >= 500
+            ? 'We’re having trouble connecting right now. Please wait a moment and try again.'
+            : 'Could not start your workspace session. Please try again.',
+        );
       }
-      if (res.status === 403 && detail === 'login_otp_required') {
-        throw new LoginOtpRequiredError();
+      const data = (await res.json()) as { token?: string; role?: Role };
+      if (!data.token || !data.role) {
+        throw new SessionCookieSyncError();
       }
-      return null;
+
+      const cookieRes = await fetch('/api/auth/session', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: data.token }),
+        signal: controller.signal,
+      });
+      if (!cookieRes.ok) {
+        throw new SessionCookieSyncError();
+      }
+
+      lastSyncedToken = idToken;
+      lastSyncedRole = data.role;
+      lastSyncedAt = Date.now();
+      return data.role;
+    } catch (err) {
+      if (err instanceof LoginOtpRequiredError || err instanceof SessionCookieSyncError) throw err;
+      if (err instanceof DOMException && err.name === 'AbortError') {
+        throw new SessionCookieSyncError(
+          'Sign-in is taking too long. Please check your connection and try again.',
+        );
+      }
+      throw new SessionCookieSyncError(
+        'We’re having trouble connecting right now. Please wait a moment and try again.',
+      );
+    } finally {
+      clearTimeout(timer);
     }
-    const data = (await res.json()) as { token?: string; role?: Role };
-    if (!data.token || !data.role) return null;
-
-    await fetch('/api/auth/session', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ token: data.token }),
-    });
-
-    lastSyncedToken = idToken;
-    lastSyncedRole = data.role;
-    lastSyncedAt = Date.now();
-    return data.role;
   })();
 
   try {

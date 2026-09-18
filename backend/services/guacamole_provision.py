@@ -17,7 +17,7 @@ from dataclasses import dataclass
 import redis as redis_lib
 
 from core.crypto import decrypt_secret, encrypt_secret, encryption_available
-from core.guacamole import GuacamoleClient
+from core.guacamole import GuacamoleClient, raw_connection_id
 from models.rdp_machine import RDPResource
 
 logger = logging.getLogger(__name__)
@@ -31,12 +31,15 @@ DEFAULT_ATTRIBUTES: dict[str, str] = {
 }
 
 # Sane defaults for Windows RDP over guacd.
+# Audio is on: Guacamole remotes sound over the tunnel. Windows "play sound on
+# this computer" only applies to native mstsc — Guacamole ignores that toggle
+# unless disable-audio is false here.
 DEFAULT_PARAMETERS: dict[str, str] = {
     "security": "any",
     "ignore-cert": "true",
     "resize-method": "display-update",
     "enable-drive": "false",
-    "disable-audio": "true",
+    "disable-audio": "false",
     # The RDP Graphics Pipeline requires 32 bpp; guacd logged a warning and
     # overrode anything lower anyway.
     "color-depth": "32",
@@ -91,9 +94,14 @@ def sync_connection(
     Create or update the Guacamole connection backing `resource`.
 
     Resolution order:
-      1. `resource.guacamole_connection_id` if it still exists in Guacamole.
-      2. An existing connection whose name matches the nickname (adopt it).
+      1. An existing connection whose name matches the nickname (adopt it).
+      2. `resource.guacamole_connection_id` if it still exists and can take
+         this nickname without colliding with another connection.
       3. Create a new connection.
+
+    Name-first matters: a stale stored id (e.g. pointing at ``rdp1`` while
+    ``Test-Desktop-181`` already exists under another id) must not try to
+    rename into a duplicate and fail with "already exists".
 
     Returns the identifier to store on the resource. Raises
     GuacamoleProvisionError on any failure (caller decides how loud to be).
@@ -120,23 +128,43 @@ def sync_connection(
     try:
         existing_id: str | None = None
         existing_params: dict[str, str] = {}
+        parent_identifier = "ROOT"
 
-        if resource.guacamole_connection_id:
-            found = guac.get_connection(resource.guacamole_connection_id)
-            if found:
-                existing_id = str(resource.guacamole_connection_id)
+        by_name = guac.find_connection_by_name(name)
+        if by_name:
+            existing_id = str(by_name.get("identifier") or "")
+            if existing_id:
                 existing_params = guac.get_connection_parameters(existing_id)
-
-        if existing_id is None:
-            by_name = guac.find_connection_by_name(name)
-            if by_name:
-                existing_id = str(by_name["identifier"])
-                existing_params = guac.get_connection_parameters(existing_id)
+                parent_identifier = str(by_name.get("parentIdentifier") or "ROOT")
                 logger.info(
-                    "Adopting existing Guacamole connection %s for RDP %s",
+                    "Adopting Guacamole connection %s by name for RDP %s",
                     existing_id,
                     name,
                 )
+
+        stored = raw_connection_id(resource.guacamole_connection_id)
+        if existing_id is None and stored:
+            found = guac.get_connection(stored)
+            if found:
+                # Only reuse the stored id when renaming to `name` is safe
+                # (same connection already has that name, or the name is free).
+                current_name = (found.get("name") or "").strip()
+                conflict = guac.find_connection_by_name(name)
+                if current_name == name or conflict is None:
+                    existing_id = str(found.get("identifier") or stored)
+                    existing_params = guac.get_connection_parameters(existing_id)
+                    parent_identifier = str(found.get("parentIdentifier") or "ROOT")
+                else:
+                    logger.warning(
+                        "Stored Guacamole id %s is %r; nickname %r belongs to %s — adopting by name",
+                        stored,
+                        current_name,
+                        name,
+                        conflict.get("identifier"),
+                    )
+                    existing_id = str(conflict.get("identifier") or "")
+                    existing_params = guac.get_connection_parameters(existing_id)
+                    parent_identifier = str(conflict.get("parentIdentifier") or "ROOT")
 
         params = _base_parameters(
             resource,
@@ -147,13 +175,132 @@ def sync_connection(
         )
 
         if existing_id:
-            guac.update_connection(existing_id, name=name, parameters=params,
-                                   attributes=DEFAULT_ATTRIBUTES)
+            try:
+                guac.update_connection(
+                    existing_id,
+                    name=name,
+                    parameters=params,
+                    attributes=DEFAULT_ATTRIBUTES,
+                    parent_identifier=parent_identifier,
+                )
+                return ProvisionResult(connection_id=existing_id, created=False, name=name)
+            except Exception as upd_exc:
+                # Stale stored id renamed into a nickname that already exists
+                # elsewhere — adopt the connection that already owns the name.
+                # Guacamole also sometimes rejects an update when the nickname
+                # already belongs to *this* same id ("already exists"); that is
+                # not a failure — the connection is already live and linked.
+                detail = (
+                    getattr(getattr(upd_exc, "response", None), "text", "") or str(upd_exc)
+                )
+                if "already exists" not in detail.lower():
+                    raise
+                adopted = guac.find_connection_by_name(name)
+                adopted_id = str((adopted or {}).get("identifier") or "")
+                if adopted_id and adopted_id == str(existing_id):
+                    logger.info(
+                        "Guacamole connection %s already owns %r; sync is a no-op success",
+                        existing_id,
+                        name,
+                    )
+                    return ProvisionResult(
+                        connection_id=existing_id, created=False, name=name
+                    )
+                if not adopted_id:
+                    # List missed the name but Guacamole said it exists — if our
+                    # id is still live, the machine is already linked.
+                    if existing_id and guac.get_connection(str(existing_id)):
+                        logger.info(
+                            "Guacamole reported %r already exists; keeping live id %s",
+                            name,
+                            existing_id,
+                        )
+                        return ProvisionResult(
+                            connection_id=str(existing_id), created=False, name=name
+                        )
+                    raise
+                logger.warning(
+                    "Update of Guacamole id %s collided on name %r; switching to %s",
+                    existing_id,
+                    name,
+                    adopted_id,
+                )
+                existing_id = adopted_id
+                parent_identifier = str(adopted.get("parentIdentifier") or "ROOT")
+                existing_params = guac.get_connection_parameters(existing_id)
+                params = _base_parameters(
+                    resource,
+                    username=username,
+                    password=password,
+                    domain=domain,
+                    existing=existing_params,
+                )
+                try:
+                    guac.update_connection(
+                        existing_id,
+                        name=name,
+                        parameters=params,
+                        attributes=DEFAULT_ATTRIBUTES,
+                        parent_identifier=parent_identifier,
+                    )
+                except Exception as retry_exc:
+                    retry_detail = (
+                        getattr(getattr(retry_exc, "response", None), "text", "")
+                        or str(retry_exc)
+                    )
+                    if "already exists" not in retry_detail.lower():
+                        raise
+                    # Adopted id already has this name — linked and ready.
+                    logger.info(
+                        "Adopted Guacamole connection %s already named %r; sync ok",
+                        existing_id,
+                        name,
+                    )
+                return ProvisionResult(connection_id=existing_id, created=False, name=name)
+
+        try:
+            new_id = guac.create_connection(
+                name=name, parameters=params, attributes=DEFAULT_ATTRIBUTES
+            )
+        except Exception as create_exc:
+            # Race or stale list: name appeared between lookup and create.
+            detail = getattr(getattr(create_exc, "response", None), "text", "") or str(create_exc)
+            if "already exists" not in detail.lower():
+                raise
+            adopted = guac.find_connection_by_name(name)
+            if not adopted:
+                raise
+            existing_id = str(adopted.get("identifier") or "")
+            parent_identifier = str(adopted.get("parentIdentifier") or "ROOT")
+            existing_params = guac.get_connection_parameters(existing_id)
+            params = _base_parameters(
+                resource,
+                username=username,
+                password=password,
+                domain=domain,
+                existing=existing_params,
+            )
+            try:
+                guac.update_connection(
+                    existing_id,
+                    name=name,
+                    parameters=params,
+                    attributes=DEFAULT_ATTRIBUTES,
+                    parent_identifier=parent_identifier,
+                )
+            except Exception as upd_exc:
+                upd_detail = (
+                    getattr(getattr(upd_exc, "response", None), "text", "") or str(upd_exc)
+                )
+                if "already exists" not in upd_detail.lower():
+                    raise
+                logger.info(
+                    "Guacamole connection %s already owns %r after create race; sync ok",
+                    existing_id,
+                    name,
+                )
             return ProvisionResult(connection_id=existing_id, created=False, name=name)
 
-        new_id = guac.create_connection(
-            name=name, parameters=params, attributes=DEFAULT_ATTRIBUTES
-        )
         return ProvisionResult(connection_id=new_id, created=True, name=name)
     except GuacamoleProvisionError:
         raise

@@ -75,7 +75,10 @@ def parse_gateways(raw: str | None = None) -> list[GatewayNode]:
                 id="default",
                 public_url=public or private,
                 private_url=private or public,
-                capacity=int(settings.RDP_GATEWAY_CAPACITY or settings.RDP_MAX_LIVE_SESSIONS),
+                capacity=int(
+                    settings.RDP_GATEWAY_CAPACITY
+                    or (settings.RDP_MAX_LIVE_SESSIONS if settings.RDP_MAX_LIVE_SESSIONS > 0 else 50)
+                ),
                 draining=False,
             )
         ]

@@ -5,12 +5,25 @@ import Link from 'next/link';
 import { Pencil, X, Check, LayoutDashboard, Star } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/AuthProvider';
+import {
+  PHONE_DIAL_CODES,
+  composeE164,
+  dialCodeForCountryName,
+  filterNationalNumber,
+  parseE164,
+  validateE164Phone,
+} from '@/lib/phone-country-codes';
+import { filterResidence, validateResidence, RESIDENCE_MAX } from '@/lib/auth/signup-fields';
 
 interface Worker {
   id: string;
   username: string | null;
   display_name: string;
   country: string;
+  phone?: string | null;
+  residence?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
   pay_tier: string;
   status: string;
   worker_type: string;
@@ -52,13 +65,26 @@ export default function ProfilePage() {
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const [form, setForm] = useState({ username: '', country: '' });
+  const [form, setForm] = useState({
+    username: '',
+    country: '',
+    phoneDial: '254',
+    phoneNational: '',
+    residence: '',
+  });
 
   useEffect(() => {
     api.get<Worker>('/workers/me')
       .then((w) => {
         setWorker(w);
-        setForm({ username: w.username ?? '', country: w.country });
+        const parsed = parseE164(w.phone || '');
+        setForm({
+          username: w.username ?? '',
+          country: w.country,
+          phoneDial: parsed?.dial || dialCodeForCountryName(w.country || 'Kenya'),
+          phoneNational: parsed?.national || '',
+          residence: w.residence || '',
+        });
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load profile'))
       .finally(() => setLoading(false));
@@ -68,7 +94,14 @@ export default function ProfilePage() {
 
   const handleEdit = () => {
     if (!worker) return;
-    setForm({ username: worker.username ?? '', country: worker.country });
+    const parsed = parseE164(worker.phone || '');
+    setForm({
+      username: worker.username ?? '',
+      country: worker.country,
+      phoneDial: parsed?.dial || dialCodeForCountryName(worker.country || 'Kenya'),
+      phoneNational: parsed?.national || '',
+      residence: worker.residence || '',
+    });
     setSaveError(null);
     setEditing(true);
   };
@@ -81,14 +114,22 @@ export default function ProfilePage() {
   const handleSave = async () => {
     if (!worker) return;
     const username = form.username.trim().toLowerCase();
+    const fullPhone = composeE164(form.phoneDial, form.phoneNational);
+    const phoneErr = validateE164Phone(fullPhone);
+    const residenceErr = form.residence.trim() ? validateResidence(form.residence) : '';
+    if (phoneErr || residenceErr) {
+      setSaveError(phoneErr || residenceErr);
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
       const updated = await api.patch<Worker>('/workers/me', {
         username: username || undefined,
-        // one name only — the username is also the display name
         display_name: username || undefined,
         country: form.country.trim() || undefined,
+        phone: fullPhone,
+        residence: form.residence.trim().replace(/\s+/g, ' ') || undefined,
       });
       setWorker(updated);
       setEditing(false);
@@ -122,19 +163,17 @@ export default function ProfilePage() {
   const memberSince = new Date(worker.created_at).toLocaleDateString(undefined, {
     year: 'numeric', month: 'long', day: 'numeric',
   });
+  const legalName = [worker.first_name, worker.last_name].filter(Boolean).join(' ');
 
   return (
     <div className="max-w-4xl mx-auto pb-10">
-      {/* Hero banner — deep emerald with gold glow, like the reference's colored header */}
       <div className="relative h-44 md:h-52 rounded-2xl overflow-hidden bg-gradient-to-br from-[#032F25] via-[#0A4D3A] to-[#032F25]">
         <div className="absolute inset-0 bg-[radial-gradient(600px_200px_at_80%_0%,rgba(212,175,55,0.18),transparent_65%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(500px_220px_at_15%_100%,rgba(63,199,160,0.2),transparent_60%)]" />
       </div>
 
-      {/* Profile card — overlaps the banner, avatar overlaps the card */}
       <div className="relative -mt-24 md:-mt-28 px-4 md:px-10">
         <div className="glass-panel relative pt-16 pb-8 px-6">
-          {/* Avatar */}
           <div
             className="absolute -top-12 left-1/2 -translate-x-1/2 w-24 h-24 rounded-full bg-gradient-to-br from-emerald-accent to-[#0A4D3A] flex items-center justify-center text-white text-3xl font-black shadow-xl"
             style={{ border: '4px solid var(--card-bg)' }}
@@ -145,7 +184,6 @@ export default function ProfilePage() {
             </span>
           </div>
 
-          {/* Corner links */}
           <Link
             href="/worker/dashboard"
             className="absolute top-5 left-6 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.15em] text-emerald-accent hover:opacity-80 transition-opacity"
@@ -185,7 +223,6 @@ export default function ProfilePage() {
             </div>
           )}
 
-          {/* Identity — centered */}
           <div className="text-center mt-2">
             <h1 className="font-display text-3xl md:text-4xl font-bold text-theme-heading tracking-tight">
               {displayName}
@@ -198,7 +235,6 @@ export default function ProfilePage() {
 
           <div className="border-t border-theme mt-7 mb-6 mx-2 md:mx-10" />
 
-          {/* Stats row */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
             <Stat value={worker.pay_tier} label="Pay Tier" />
             <Stat
@@ -214,7 +250,6 @@ export default function ProfilePage() {
         </div>
       </div>
 
-      {/* Highlight strip — employment summary, gold accent */}
       <div className="glass-panel mt-8 px-6 py-5 flex flex-wrap items-center gap-4">
         <span className="w-10 h-10 rounded-full bg-gold-accent/10 text-gold-accent flex items-center justify-center shrink-0">
           <Star size={18} />
@@ -229,7 +264,6 @@ export default function ProfilePage() {
         <p className="text-sm text-theme-muted ml-auto">Member since {memberSince}.</p>
       </div>
 
-      {/* Details section */}
       <div className="mt-10 flex items-end justify-between">
         <div>
           <h2 className="font-display text-2xl font-bold text-theme-heading tracking-tight">Profile details</h2>
@@ -271,7 +305,51 @@ export default function ProfilePage() {
                 <input
                   type="text"
                   value={form.country}
-                  onChange={(e) => setForm((f) => ({ ...f, country: e.target.value }))}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    setForm((f) => ({
+                      ...f,
+                      country: next,
+                      phoneDial: dialCodeForCountryName(next) || f.phoneDial,
+                    }));
+                  }}
+                  className="input-field"
+                />
+              </div>
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Phone number</label>
+                <div className="flex gap-2">
+                  <select
+                    value={form.phoneDial}
+                    onChange={(e) => setForm((f) => ({ ...f, phoneDial: e.target.value }))}
+                    className="input-field w-[11rem] shrink-0"
+                    aria-label="Country calling code"
+                  >
+                    {PHONE_DIAL_CODES.map((c) => (
+                      <option key={`${c.iso}-${c.dial}`} value={c.dial}>
+                        {c.name} (+{c.dial})
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    inputMode="tel"
+                    value={form.phoneNational}
+                    onChange={(e) => setForm((f) => ({ ...f, phoneNational: filterNationalNumber(e.target.value) }))}
+                    placeholder="714516132"
+                    className="input-field flex-1"
+                  />
+                </div>
+                <p className="text-[11px] text-theme-muted">Include country code. Kenya example: +254714516132</p>
+              </div>
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Place of residence</label>
+                <input
+                  type="text"
+                  maxLength={RESIDENCE_MAX}
+                  value={form.residence}
+                  onChange={(e) => setForm((f) => ({ ...f, residence: filterResidence(e.target.value) }))}
+                  placeholder="City or town"
                   className="input-field"
                 />
               </div>
@@ -279,7 +357,10 @@ export default function ProfilePage() {
           ) : (
             <>
               <Field label="Username" value={worker.username ? `@${worker.username}` : <span className="text-theme-muted italic">Not set</span>} />
+              <Field label="Legal name" value={legalName || '—'} />
               <Field label="Country" value={worker.country} />
+              <Field label="Phone" value={worker.phone || <span className="text-theme-muted italic">Not set</span>} />
+              <Field label="Place of residence" value={worker.residence || <span className="text-theme-muted italic">Not set</span>} />
             </>
           )}
           <Field

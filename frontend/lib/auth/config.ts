@@ -31,8 +31,9 @@ export const ROLE_TO_PORTAL: Record<AuthRole, PortalRole> = {
 export const ROLE_ALLOWED_PORTALS: Record<AuthRole, PortalRole[]> = {
   user: ['worker'],
   partner: ['worker'],
-  admin: ['admin'],
-  executive: ['leadership'],
+  // Staff may open the worker portal to claim/connect desktops (docs §1.3).
+  admin: ['admin', 'worker'],
+  executive: ['leadership', 'worker'],
   super_admin: ['leadership', 'admin', 'worker'],
 };
 

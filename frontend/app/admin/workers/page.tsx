@@ -20,6 +20,15 @@ import {
   apiGetAccountStatus,
   apiUnbanWorker,
 } from '@/lib/auth/supabase-auth';
+import {
+  PHONE_DIAL_CODES,
+  composeE164,
+  dialCodeForCountryName,
+  filterNationalNumber,
+  parseE164,
+  validateE164Phone,
+} from '@/lib/phone-country-codes';
+import { RESIDENCE_MAX, filterResidence, validateResidence } from '@/lib/auth/signup-fields';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -41,6 +50,12 @@ interface Worker {
   created_at: string;
   updated_at: string;
   email: string | null;
+  phone?: string | null;
+  residence?: string | null;
+  first_name?: string | null;
+  last_name?: string | null;
+  account_banned?: boolean;
+  account_status?: string | null;
   assigned_rdp_id?: string | null;
   assigned_rdp_nickname?: string | null;
 }
@@ -139,6 +154,9 @@ interface WorkerAdminForm {
   display_name: string;
   username: string;
   country: string;
+  phoneDial: string;
+  phoneNational: string;
+  residence: string;
   pay_tier: string;
   pay_amount: string;
   pay_frequency: '' | 'per_month' | 'per_task';
@@ -149,10 +167,14 @@ interface WorkerAdminForm {
 }
 
 function adminFormFromWorker(w: Worker): WorkerAdminForm {
+  const parsedPhone = parseE164(w.phone ?? '');
   return {
     display_name: w.display_name ?? '',
     username: w.username ?? '',
     country: w.country ?? '',
+    phoneDial: parsedPhone?.dial || dialCodeForCountryName(w.country ?? ''),
+    phoneNational: parsedPhone?.national ?? '',
+    residence: w.residence ?? '',
     pay_tier: w.pay_tier ?? '',
     pay_amount: w.pay_amount != null ? String(w.pay_amount) : '',
     pay_frequency: (w.pay_frequency === 'per_month' || w.pay_frequency === 'per_task')
@@ -165,14 +187,26 @@ function adminFormFromWorker(w: Worker): WorkerAdminForm {
   };
 }
 
-function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onClose: () => void; onUpdated: (w: Worker) => void }) {
+function WorkerDetailModal({
+  worker,
+  onClose,
+  onUpdated,
+  onRequestDelete,
+}: {
+  worker: Worker;
+  onClose: () => void;
+  onUpdated: (w: Worker) => void;
+  onRequestDelete: (w: Worker) => void;
+}) {
   const [tab, setTab] = useState<WorkerModalTab>('profile');
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [sessionsLoading, setSessionsLoading] = useState(false);
   const [sessionsError, setSessionsError] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
-  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | 'unknown' | null>(null);
+  const [banStatus, setBanStatus] = useState<AccountStatus | 'not_found' | 'unknown' | null>(
+    worker.account_banned ? 'banned' : null,
+  );
   const [banLoading, setBanLoading] = useState(false);
   const [banError, setBanError] = useState<string | null>(null);
 
@@ -188,10 +222,21 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
   async function handleSaveEdit() {
     setEditSaving(true); setEditError(null);
     try {
+      const phone = editForm.phoneNational.trim()
+        ? composeE164(editForm.phoneDial, editForm.phoneNational)
+        : '';
+      const residence = editForm.residence.trim();
+      const fieldError = (phone && validateE164Phone(phone))
+        || (residence && validateResidence(residence))
+        || '';
+      if (fieldError) { setEditError(fieldError); return; }
       const body = {
         display_name: editForm.display_name.trim(),
         username: editForm.username.trim() || null,
         country: editForm.country.trim() || 'Unassigned',
+        // Left blank means "leave as is" — the API rejects an empty phone.
+        ...(phone ? { phone } : {}),
+        ...(residence ? { residence } : {}),
         pay_tier: editForm.pay_tier.trim() || 'unassigned',
         pay_amount: editForm.pay_amount === '' ? null : Number(editForm.pay_amount),
         pay_frequency: editForm.pay_frequency || null,
@@ -342,11 +387,31 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                   <SectionLabel>Identity</SectionLabel>
                   <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
                     <DetailField label="Display Name" value={worker.display_name} />
+                    <DetailField
+                      label="Legal name"
+                      value={
+                        [worker.first_name, worker.last_name].filter(Boolean).join(' ')
+                          || '—'
+                      }
+                    />
                     <DetailField label="Username" value={worker.username || '—'} />
+                    <DetailField label="Email" value={worker.email || '—'} />
+                    <DetailField label="Phone" value={worker.phone || '—'} />
                     <DetailField label="Country" value={worker.country || '—'} />
+                    <DetailField label="Place of residence" value={worker.residence || '—'} />
                     <DetailField label="Worker Type" value={<WorkerTypeBadge worker={worker} />} />
                     <DetailField label="Status" value={<StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />} />
                     <DetailField label="Work Ready" value={<WorkReadyBadge ready={worker.work_ready} />} />
+                    {(worker.account_banned || banStatus === 'banned') && (
+                      <DetailField
+                        label="Account"
+                        value={
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-red-500/20 text-red-400 border border-red-500/30">
+                            Banned / locked
+                          </span>
+                        }
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -381,17 +446,52 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                         <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin block" />
                         Processing…
                       </div>
-                    ) : banStatus === 'banned' ? (
-                      <button type="button" onClick={handleUnban}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-accent/15 hover:bg-emerald-accent/25 text-emerald-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-emerald-accent/25">
-                        <ShieldOff size={13} /> Unban Account
-                      </button>
                     ) : (
-                      <button type="button" onClick={handleBan}
-                        className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/15 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/25">
-                        <Ban size={13} /> Lock / Ban Account
-                      </button>
+                      <div className="flex flex-col sm:flex-row gap-2">
+                        {banStatus === 'banned' ? (
+                          <button type="button" onClick={handleUnban}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-accent/15 hover:bg-emerald-accent/25 text-emerald-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-emerald-accent/25">
+                            <ShieldOff size={13} /> Unban Account
+                          </button>
+                        ) : (
+                          <button type="button" onClick={handleBan}
+                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/15 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/25">
+                            <Ban size={13} /> Lock / Ban Account
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => onRequestDelete(worker)}
+                          className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                        >
+                          <Trash2 size={13} /> Delete
+                        </button>
+                      </div>
                     )}
+                  </div>
+                )}
+                {worker.admin_user_id && (banStatus === null || banStatus === 'not_found') && (
+                  <div className="border-t border-white/[0.06] pt-4">
+                    <SectionLabel>Account Access</SectionLabel>
+                    <button
+                      type="button"
+                      onClick={() => onRequestDelete(worker)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                    >
+                      <Trash2 size={13} /> Delete Worker
+                    </button>
+                  </div>
+                )}
+                {!worker.admin_user_id && (
+                  <div className="border-t border-white/[0.06] pt-4">
+                    <SectionLabel>Danger zone</SectionLabel>
+                    <button
+                      type="button"
+                      onClick={() => onRequestDelete(worker)}
+                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                    >
+                      <Trash2 size={13} /> Delete Worker
+                    </button>
                   </div>
                 )}
               </div>
@@ -416,8 +516,57 @@ function WorkerDetailModal({ worker, onClose, onUpdated }: { worker: Worker; onC
                   <div>
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Country</label>
                     <input value={editForm.country}
-                      onChange={(e) => setEditForm((f) => ({ ...f, country: e.target.value }))}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        setEditForm((f) => ({
+                          ...f,
+                          country: next,
+                          // Only pre-fill the dial code while no number has been entered,
+                          // so fixing a country never rewrites a known-good phone.
+                          phoneDial: f.phoneNational.trim()
+                            ? f.phoneDial
+                            : dialCodeForCountryName(next) || f.phoneDial,
+                        }));
+                      }}
                       className="input-field" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Phone</label>
+                    <div className="flex gap-2">
+                      <select
+                        value={editForm.phoneDial}
+                        onChange={(e) => setEditForm((f) => ({ ...f, phoneDial: e.target.value }))}
+                        className="input-field w-[11rem] shrink-0"
+                        aria-label="Country calling code"
+                      >
+                        {PHONE_DIAL_CODES.map((c) => (
+                          <option key={`${c.iso}-${c.dial}`} value={c.dial}>
+                            {c.name} (+{c.dial})
+                          </option>
+                        ))}
+                      </select>
+                      <input
+                        type="tel"
+                        inputMode="tel"
+                        value={editForm.phoneNational}
+                        onChange={(e) => setEditForm((f) => ({ ...f, phoneNational: filterNationalNumber(e.target.value) }))}
+                        placeholder="714516132"
+                        className="input-field flex-1" />
+                    </div>
+                    <p className="text-[11px] text-theme-muted mt-1">Include the country code. Kenya example: +254714516132</p>
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Place of residence</label>
+                    <input value={editForm.residence}
+                      maxLength={RESIDENCE_MAX}
+                      onChange={(e) => setEditForm((f) => ({ ...f, residence: filterResidence(e.target.value) }))}
+                      placeholder="City or town"
+                      className="input-field" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Email</label>
+                    <p className="text-[13px] font-medium text-white leading-snug break-words">{worker.email || '—'}</p>
+                    <p className="text-[11px] text-theme-muted mt-1">Sign-in email — read only. Changing it is not supported here.</p>
                   </div>
                 </div>
 
@@ -609,9 +758,11 @@ export default function WorkersPage() {
   const [workerSearch, setWorkerSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
+  const [accountFilter, setAccountFilter] = useState<'all' | 'active' | 'banned'>('all');
   const [selectedWorker, setSelectedWorker] = useState<Worker | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [actionNote, setActionNote] = useState<string | null>(null);
 
   async function loadWorkers() {
@@ -628,34 +779,56 @@ export default function WorkersPage() {
 
   useEffect(() => { loadWorkers(); }, []);
 
+  useEffect(() => {
+    // One-shot nudge: notify workers whose phones lack a country code.
+    api.post<{ notified: number }>('/workers/phone-format-nudge', {})
+      .then((r) => {
+        if (r.notified > 0) {
+          setActionNote(`Sent phone-format update prompts to ${r.notified} worker${r.notified === 1 ? '' : 's'}.`);
+        }
+      })
+      .catch(() => { /* non-blocking */ });
+  }, []);
+
   const filteredWorkers = useMemo(() => {
     const q = workerSearch.trim().toLowerCase();
     return workers.filter((w) => {
       if (typeFilter && (WORKER_TYPE_LABELS[w.worker_type] ?? w.worker_type) !== typeFilter) return false;
       if (statusFilter && w.status !== statusFilter.toLowerCase()) return false;
+      if (accountFilter === 'banned' && !w.account_banned) return false;
+      if (accountFilter === 'active' && w.account_banned) return false;
       if (!q) return true;
       return (
         w.display_name.toLowerCase().includes(q) ||
         w.country.toLowerCase().includes(q) ||
-        w.pay_tier.toLowerCase().includes(q)
+        w.pay_tier.toLowerCase().includes(q) ||
+        (w.email || '').toLowerCase().includes(q) ||
+        (w.phone || '').toLowerCase().includes(q) ||
+        (w.residence || '').toLowerCase().includes(q) ||
+        `${w.first_name || ''} ${w.last_name || ''}`.toLowerCase().includes(q)
       );
     });
-  }, [workers, workerSearch, typeFilter, statusFilter]);
+  }, [workers, workerSearch, typeFilter, statusFilter, accountFilter]);
 
   const workerRows = filteredWorkers.map((w) => ({
     id: w.id,
     name: w.display_name,
+    email: w.email || '—',
+    phone: w.phone || '—',
     country: w.country,
     type: WORKER_TYPE_LABELS[w.worker_type] ?? w.worker_type,
     work_ready: w.work_ready,
     pay_tier: w.pay_tier,
     start_date: new Date(w.start_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
     status: w.status,
+    account_banned: Boolean(w.account_banned),
     _worker: w,
   }));
 
   const allVisibleSelected = filteredWorkers.length > 0 && filteredWorkers.every((w) => selectedIds.has(w.id));
-  const selectedWorkers = workers.filter((w) => selectedIds.has(w.id));
+  const deleteTargets = deleteIds.length
+    ? workers.filter((w) => deleteIds.includes(w.id))
+    : workers.filter((w) => selectedIds.has(w.id));
 
   function toggleRow(id: string) {
     setSelectedIds((prev) => {
@@ -680,6 +853,16 @@ export default function WorkersPage() {
     setSelectedWorker((prev) => (prev && prev.id === updated.id ? updated : prev));
   }
 
+  function openBulkDelete() {
+    setDeleteIds(Array.from(selectedIds));
+    setDeleteOpen(true);
+  }
+
+  function openSingleDelete(w: Worker) {
+    setDeleteIds([w.id]);
+    setDeleteOpen(true);
+  }
+
   return (
     <div>
       <PageHeader
@@ -689,7 +872,7 @@ export default function WorkersPage() {
             {selectedIds.size > 0 && (
               <button
                 type="button"
-                onClick={() => setDeleteOpen(true)}
+                onClick={openBulkDelete}
                 className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5 text-danger border-danger/30 hover:bg-danger/10"
               >
                 <Trash2 size={13} /> Delete ({selectedIds.size})
@@ -715,10 +898,10 @@ export default function WorkersPage() {
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant" />
           <input
             type="text"
-            placeholder="Search name, country, pay tier…"
+            placeholder="Search name, email, phone, country…"
             value={workerSearch}
             onChange={(e) => setWorkerSearch(e.target.value)}
-            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-full sm:w-56"
+            className="pl-9 pr-4 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white placeholder:text-theme-muted/60 focus:outline-none focus:border-emerald-accent/40 transition-colors w-full sm:w-64"
           />
           {workerSearch && (
             <button type="button" onClick={() => setWorkerSearch('')}
@@ -737,6 +920,15 @@ export default function WorkersPage() {
             {options.map((o) => <option key={o} value={o} className="capitalize">{o}</option>)}
           </select>
         ))}
+        <select
+          value={accountFilter}
+          onChange={(e) => setAccountFilter(e.target.value as 'all' | 'active' | 'banned')}
+          className="px-3 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 w-full sm:w-auto"
+        >
+          <option value="all">Account: All</option>
+          <option value="active">Account: Active</option>
+          <option value="banned">Account: Banned / deleted</option>
+        </select>
         <span className="text-xs text-theme-muted ml-1">{filteredWorkers.length} worker{filteredWorkers.length !== 1 ? 's' : ''}</span>
         {selectedIds.size > 0 && (
           <span className="text-xs text-theme-muted">· {selectedIds.size} selected</span>
@@ -780,6 +972,8 @@ export default function WorkersPage() {
               ),
             },
             { key: 'name', header: 'Name' },
+            { key: 'email', header: 'Email' },
+            { key: 'phone', header: 'Phone' },
             { key: 'country', header: 'Country' },
             {
               key: 'type', header: 'Type',
@@ -790,10 +984,18 @@ export default function WorkersPage() {
               render: (r) => <WorkReadyBadge ready={Boolean(r.work_ready)} />,
             },
             { key: 'pay_tier', header: 'Pay Tier' },
-            { key: 'start_date', header: 'Start Date' },
             {
               key: 'status', header: 'Status',
-              render: (r) => <StatusBadge status={r.status === 'active' ? 'approved' : 'offline'} label={r.status as string} />,
+              render: (r) => (
+                <span className="inline-flex items-center gap-1.5">
+                  <StatusBadge status={r.status === 'active' ? 'approved' : 'offline'} label={r.status as string} />
+                  {Boolean(r.account_banned) && (
+                    <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[9px] font-bold uppercase tracking-wider bg-red-500/20 text-red-400 border border-red-500/30">
+                      Banned
+                    </span>
+                  )}
+                </span>
+              ),
             },
             {
               key: 'actions', header: '',
@@ -817,17 +1019,19 @@ export default function WorkersPage() {
           worker={selectedWorker}
           onClose={() => setSelectedWorker(null)}
           onUpdated={handleWorkerUpdated}
+          onRequestDelete={openSingleDelete}
         />
       )}
 
-      {deleteOpen && selectedIds.size > 0 && (
+      {deleteOpen && deleteTargets.length > 0 && (
         <BulkDeleteModal
           kind="workers"
-          ids={Array.from(selectedIds)}
-          labels={selectedWorkers.map((w) => w.display_name)}
-          onClose={() => setDeleteOpen(false)}
+          ids={deleteTargets.map((w) => w.id)}
+          labels={deleteTargets.map((w) => w.display_name)}
+          onClose={() => { setDeleteOpen(false); setDeleteIds([]); }}
           onDeleted={(result) => {
             setDeleteOpen(false);
+            setDeleteIds([]);
             setSelectedIds(new Set());
             setSelectedWorker(null);
             setActionNote(`Deleted ${result.deleted_count} worker${result.deleted_count === 1 ? '' : 's'}.`);

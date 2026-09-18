@@ -2,9 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { Plus, Pencil, X, RefreshCw } from 'lucide-react';
+import Link from 'next/link';
 import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AdminRdpSubnav from '@/components/rdp/AdminRdpSubnav';
 import {
   createRdpResource,
   forceReleaseRdp,
@@ -363,20 +365,26 @@ export default function RdpManagementPage() {
 
   return (
     <div>
+      <AdminRdpSubnav />
       <PageHeader
         title="RDP Resource Management"
         actions={
-          <button
-            type="button"
-            onClick={() => {
-              setShowCreate((v) => !v);
-              cancelEdit();
-            }}
-            className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
-          >
-            {showCreate ? <X size={16} /> : <Plus size={16} />}
-            {showCreate ? 'Cancel' : 'Add Machine'}
-          </button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Link href="/admin/rdp/claim" className="btn-secondary text-sm py-2 px-4">
+              Claim board
+            </Link>
+            <button
+              type="button"
+              onClick={() => {
+                setShowCreate((v) => !v);
+                cancelEdit();
+              }}
+              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              {showCreate ? <X size={16} /> : <Plus size={16} />}
+              {showCreate ? 'Cancel' : 'Add Machine'}
+            </button>
+          </div>
         }
       />
       <FilterBar

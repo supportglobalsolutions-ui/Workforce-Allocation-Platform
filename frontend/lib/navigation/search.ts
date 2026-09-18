@@ -51,6 +51,7 @@ const ROUTE_CATALOG: Array<{
   { title: 'Partners', href: '/admin/partners', portal: 'admin', description: 'Partner workers and companies.', keywords: ['partner', 'contractor'], authRoles: ['admin', 'super_admin'] },
   { title: 'Clients', href: '/admin/clients', portal: 'admin', description: 'Client accounts and billing owners.', keywords: ['client', 'customer'] },
   { title: 'RDP Resources', href: '/admin/rdp', portal: 'admin', description: 'Remote machines — status, lock, release.', keywords: ['machine', 'rdp', 'fleet'] },
+  { title: 'RDP Claim Board', href: '/admin/rdp/claim', portal: 'admin', description: 'Claim a free desktop and open a session.', keywords: ['rdp', 'claim', 'connect', 'desktop'] },
   { title: 'Sessions', href: '/admin/sessions', portal: 'admin', description: 'All work sessions — live and history.', keywords: ['hours', 'time', 'evidence'] },
   { title: 'Shifts', href: '/admin/shifts', portal: 'admin', description: 'Shift scheduling and assignments.', keywords: ['schedule', 'rota'] },
   { title: 'Quality', href: '/admin/quality', portal: 'admin', description: 'Rate worker communication and organisation.', keywords: ['ratings', 'scores'] },

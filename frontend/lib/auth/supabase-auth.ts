@@ -190,29 +190,64 @@ export async function signOut(): Promise<void> {
   }
 }
 
+async function settleAuthSession(
+  session: { user: User; access_token: string } | null,
+  callback: (session: AuthSession | null) => void,
+  options?: { skipIf?: () => boolean },
+): Promise<void> {
+  if (options?.skipIf?.()) {
+    callback(null);
+    return;
+  }
+  if (!session?.user) {
+    callback(null);
+    return;
+  }
+  try {
+    // Abort-bounded in syncSessionCookie (5s) — never hang the UI gate.
+    await syncSessionCookie(session.access_token);
+    callback(await sessionFromUser(session.user, session.access_token));
+  } catch (err) {
+    if (err instanceof LoginOtpRequiredError) {
+      callback(null);
+      return;
+    }
+    try {
+      callback(await sessionFromUser(session.user, session.access_token));
+    } catch {
+      callback(null);
+    }
+  }
+}
+
 export function subscribeAuthState(
   callback: (session: AuthSession | null) => void,
   options?: { skipIf?: () => boolean },
 ): () => void {
-  supabase.auth.getSession().then(async ({ data: { session } }) => {
-    if (options?.skipIf?.()) {
-      callback(null);
-      return;
-    }
-    if (session?.user) {
-      try {
-        await syncSessionCookie(session.access_token);
-        callback(await sessionFromUser(session.user, session.access_token));
-      } catch (err) {
-        if (err instanceof LoginOtpRequiredError) {
-          callback(null);
-          return;
-        }
-        callback(null);
-      }
-    } else {
-      callback(null);
-    }
+  let settled = false;
+  const emit = (session: AuthSession | null) => {
+    settled = true;
+    callback(session);
+  };
+
+  // getSession can hang while Supabase refreshes a stale token. Cap wait so
+  // public pages (signup/login) are never stuck on a spinner.
+  const bootTimer = window.setTimeout(() => {
+    if (!settled) emit(null);
+  }, 4_000);
+
+  void Promise.race([
+    supabase.auth.getSession(),
+    new Promise<{ data: { session: null } }>((resolve) => {
+      window.setTimeout(() => resolve({ data: { session: null } }), 3_500);
+    }),
+  ]).then(async ({ data: { session } }) => {
+    window.clearTimeout(bootTimer);
+    if (settled && !session?.user) return;
+    await settleAuthSession(session, emit, options);
+  }).catch(() => {
+    window.clearTimeout(bootTimer);
+    if (!settled) emit(null);
   });
 
   // Prefer keeping a live Supabase user even if cookie sync fails briefly
@@ -222,27 +257,19 @@ export function subscribeAuthState(
       return;
     }
     if (event === 'SIGNED_OUT' || !session?.user) {
-      await clearSessionCookie();
-      callback(null);
+      void clearSessionCookie();
+      emit(null);
       return;
     }
-    try {
-      await syncSessionCookie(session.access_token);
-      callback(await sessionFromUser(session.user, session.access_token));
-    } catch (err) {
-      if (err instanceof LoginOtpRequiredError) {
-        return;
-      }
-      // Cookie sync failed but Supabase session is still valid — keep user signed in.
-      try {
-        callback(await sessionFromUser(session.user, session.access_token));
-      } catch {
-        callback(null);
-      }
-    }
+    await settleAuthSession(
+      { user: session.user, access_token: session.access_token },
+      emit,
+      options,
+    );
   });
 
   return () => {
+    window.clearTimeout(bootTimer);
     subscription.unsubscribe();
   };
 }
