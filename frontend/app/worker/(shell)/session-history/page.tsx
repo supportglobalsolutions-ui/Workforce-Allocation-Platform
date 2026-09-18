@@ -20,10 +20,22 @@ interface WorkSession {
   close_status: string | null;
   rdp_resource_id: string | null;
   start_image_url: string | null;
+  image_urls?: string[] | null;
   end_image_url: string | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
+}
+
+/** Mirrors backend session_image_paths: gallery first, legacy pair as fallback. */
+function hasAnyImage(s: {
+  image_urls?: string[] | null;
+  start_image_url?: string | null;
+  end_image_url?: string | null;
+}): boolean {
+  return Boolean(
+    (s.image_urls ?? []).length > 0 || s.start_image_url || s.end_image_url,
+  );
 }
 
 interface RDPResource {
@@ -120,7 +132,7 @@ export default function SessionHistoryPage() {
             sessionList.find(
               (s) =>
                 s.rdp_resource_id === pendingRdpId &&
-                !(s.evidence_complete || (s.start_image_url && s.end_image_url && s.image_start_at && s.image_end_at)),
+                !(s.evidence_complete || (hasAnyImage(s) && s.image_start_at && s.image_end_at)),
             ) || sessionList.find((s) => s.rdp_resource_id === pendingRdpId);
           if (match) opened = true;
           return match?.id ?? prev;
@@ -181,7 +193,7 @@ export default function SessionHistoryPage() {
       sessions.filter(
         (s) =>
           s.close_status &&
-          !(s.evidence_complete || (s.start_image_url && s.end_image_url && s.image_start_at && s.image_end_at)),
+          !(s.evidence_complete || (hasAnyImage(s) && s.image_start_at && s.image_end_at)),
       ),
     [sessions],
   );
@@ -211,13 +223,9 @@ export default function SessionHistoryPage() {
     URL.revokeObjectURL(url);
   };
 
-  const handleImageUploaded = (sessionId: string, type: 'start' | 'end', url: string) => {
+  const handleImagesChanged = (sessionId: string, paths: string[]) => {
     setSessions((prev) =>
-      prev.map((s) =>
-        s.id === sessionId
-          ? { ...s, [`${type}_image_url`]: url }
-          : s,
-      ),
+      prev.map((s) => (s.id === sessionId ? { ...s, image_urls: paths } : s)),
     );
   };
 
@@ -234,6 +242,7 @@ export default function SessionHistoryPage() {
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
     status: s.close_status ?? 'pending',
     start_image_url: s.start_image_url,
+    image_urls: s.image_urls,
     end_image_url: s.end_image_url,
     image_start_at: s.image_start_at,
     image_end_at: s.image_end_at,
@@ -367,7 +376,7 @@ export default function SessionHistoryPage() {
           duration_minutes: selectedFull.duration_minutes,
         } : selectedSession}
         onClose={() => setSelectedId(null)}
-        onImageUploaded={handleImageUploaded}
+        onImagesChanged={handleImagesChanged}
         onEvidenceSaved={(sessionId, patch) => {
           setSessions((prev) =>
             prev.map((s) => (s.id === sessionId ? {

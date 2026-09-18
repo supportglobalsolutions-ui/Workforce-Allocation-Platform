@@ -13,10 +13,31 @@ from models.notification import Notification
 from models.session import Session as WorkSession
 
 
+#: Most screenshots a worker may attach to one session.
+MAX_SESSION_IMAGES = 8
+
+
+def session_image_paths(session: WorkSession) -> list[str]:
+    """The session's screenshots, newest schema first, legacy pair as fallback.
+
+    Rows written before the gallery replaced the fixed start/end pair were
+    backfilled by migration f3a4b5c6d7e8, but a row can still carry only the
+    old columns if it was written while that deploy was in flight.
+    """
+    paths = [p for p in (session.image_urls or []) if p]
+    if paths:
+        return paths
+    return [p for p in (session.start_image_url, session.end_image_url) if p]
+
+
 def evidence_complete(session: WorkSession) -> bool:
+    """At least one screenshot plus both on-image times.
+
+    The two-screenshot rule went away with the single capture button; the
+    times are still what payroll pays on, so they stay required.
+    """
     return bool(
-        session.start_image_url
-        and session.end_image_url
+        session_image_paths(session)
         and session.image_start_at
         and session.image_end_at
     )
@@ -68,8 +89,8 @@ def notify_evidence_incomplete(db: Session, session: WorkSession) -> None:
             sender_admin_id=None,
             title="Add session evidence",
             message=(
-                f"Session {session.id} ({when}) needs start & end images and the times "
-                f"shown on those images. Open Session History to complete it."
+                f"Session {session.id} ({when}) needs at least one screenshot and the "
+                f"start & end times shown on it. Open Session History to complete it."
             ),
             category="session_evidence",
             target_type="specific",

@@ -7,7 +7,7 @@ import { Maximize2, Power } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
 import ConfirmModal from '@/components/platform/ConfirmModal';
-import SessionImageUpload from '@/components/rdp/SessionImageUpload';
+import SessionImageGallery from '@/components/rdp/SessionImageGallery';
 import { api } from '@/lib/api';
 import { reportError } from '@/lib/errors';
 import {
@@ -207,11 +207,12 @@ export default function RdpSessionPage({ params }: { params: { rdpId: string } }
 
       {sessionId && (
         <div className="glass-panel p-5">
-          <p className="text-xs text-theme-muted uppercase tracking-wide mb-3">Session start</p>
-          <SessionImageUpload
+          <p className="text-xs text-theme-muted uppercase tracking-wide mb-3">
+            Session screenshots
+          </p>
+          <SessionImageGallery
             sessionId={sessionId}
-            imageType="start"
-            label="Upload a screenshot taken at session start"
+            label="Session screenshot"
           />
         </div>
       )}

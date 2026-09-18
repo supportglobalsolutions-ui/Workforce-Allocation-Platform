@@ -39,7 +39,6 @@ from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
 from services.security_risk import (
     BULK_HARD_MAX,
-    BULK_OTP_THRESHOLD,
     after_destructive_bulk,
 )
 from services.worker_purge import purge_workers
@@ -93,6 +92,8 @@ def _apply_auth_profile(updates: dict, auth: dict | None) -> None:
     if last:
         updates["last_name"] = last
     updates["account_banned"] = bool(auth.get("banned"))
+    if auth.get("protected"):
+        updates["account_protected"] = True
     status_val = auth.get("status")
     if status_val:
         updates["account_status"] = status_val
@@ -107,14 +108,19 @@ def _enrich_worker(
     resp = WorkerResponse.model_validate(worker)
     updates: dict = {}
     auth_uid: str | None = None
-    if worker.admin_user:
-        updates["email"] = worker.admin_user.email
-        auth_uid = worker.admin_user.auth_user_id
+    admin_row = worker.admin_user
+    if admin_row:
+        updates["email"] = admin_row.email
+        auth_uid = admin_row.auth_user_id
+        if admin_row.is_protected:
+            updates["account_protected"] = True
     elif worker.admin_user_id:
         admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
         if admin:
             updates["email"] = admin.email
             auth_uid = admin.auth_user_id
+            if admin.is_protected:
+                updates["account_protected"] = True
     if auth_uid:
         auth = None
         if auth_by_uid is not None:
@@ -324,31 +330,27 @@ def request_workers_delete_otp(
     current_user: dict = Depends(require_admin),
 ):
     ids = _normalize_worker_ids(body.worker_ids)
-    if len(ids) <= BULK_OTP_THRESHOLD:
-        raise HTTPException(
-            status_code=400,
-            detail=f"OTP is only required when deleting more than {BULK_OTP_THRESHOLD} workers.",
-        )
     admin = get_admin_user(db, current_user)
     target = bulk_delete_target_id(PURPOSE_DELETE_WORKERS, ids)
+    count_label = "1 worker" if len(ids) == 1 else f"{len(ids)} workers"
     html = render_otp_html(
         title="Confirm worker deletion",
         intro=(
-            f"An administrator asked to permanently delete <strong>{len(ids)}</strong> workers. "
+            f"An administrator asked to permanently delete <strong>{count_label}</strong>. "
             "Enter this code in the platform to continue."
         ),
         warning="This cannot be undone. Sessions, wallets, and payslip rows for these workers will be removed.",
     )
     text = render_otp_text(
         title="Confirm worker deletion",
-        intro=f"An administrator asked to permanently delete {len(ids)} workers.",
+        intro=f"An administrator asked to permanently delete {count_label}.",
         warning="This cannot be undone.",
     )
     payload = issue_otp(
         db,
         purpose=PURPOSE_DELETE_WORKERS,
         target_id=target,
-        subject=f"Confirmation code — delete {len(ids)} workers",
+        subject=f"Confirmation code — delete {count_label}",
         html=html,
         text=text,
         admin=admin,
@@ -366,16 +368,20 @@ def confirm_workers_delete(
     ids = _normalize_worker_ids(body.worker_ids)
     admin = get_admin_user(db, current_user)
 
-    if len(ids) > BULK_OTP_THRESHOLD:
-        if not body.challenge_id or not body.code:
-            raise HTTPException(status_code=400, detail="Confirmation code is required for this delete.")
-        verify_otp(
-            db,
-            challenge_id=body.challenge_id,
-            purpose=PURPOSE_DELETE_WORKERS,
-            target_id=bulk_delete_target_id(PURPOSE_DELETE_WORKERS, ids),
-            code=body.code,
+    # Always require emailed OTP — even for a single worker — so a stolen
+    # admin session cannot wipe people without mailbox access.
+    if not body.challenge_id or not body.code:
+        raise HTTPException(
+            status_code=400,
+            detail="A confirmation code emailed to the alert inbox is required to delete workers.",
         )
+    verify_otp(
+        db,
+        challenge_id=body.challenge_id,
+        purpose=PURPOSE_DELETE_WORKERS,
+        target_id=bulk_delete_target_id(PURPOSE_DELETE_WORKERS, ids),
+        code=body.code,
+    )
 
     result = purge_workers(db, ids)
     deleted_ids = [UUID(row["id"]) for row in result["deleted"]]

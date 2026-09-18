@@ -40,6 +40,7 @@ PURPOSE_DELETE_PERIOD = "delete_payroll_period"
 PURPOSE_DELETE_WORKERS = "delete_workers"
 PURPOSE_DELETE_SESSIONS = "delete_sessions"
 PURPOSE_DELETE_ACCOUNT = "delete_account"
+PURPOSE_DELETE_RDP = "delete_rdp"
 PURPOSE_BAN_SUPER_ADMIN = "ban_super_admin"
 PURPOSE_DEMOTE_SUPER_ADMIN = "demote_super_admin"
 

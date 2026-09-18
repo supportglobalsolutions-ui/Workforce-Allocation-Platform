@@ -116,8 +116,23 @@ export const unlockRdp = (rdpId: string) =>
 export const maintenanceRdp = (rdpId: string) =>
   api.post<{ rdp_resource_id: string; status: string }>(`/rdp/${rdpId}/maintenance`, {});
 
-export const forceReleaseRdp = (rdpId: string, reason: string) =>
-  api.post<EndConnectionResult & { reason: string }>(`/rdp/${rdpId}/force-release`, { reason });
+export const setRdpStatus = (rdpId: string, mode: 'online' | 'locked' | 'maintenance') =>
+  api.post<RdpResource>(`/rdp/${rdpId}/set-status`, { mode });
+
+export const getRdpCredentials = (rdpId: string) =>
+  api.get<{
+    rdp_resource_id: string;
+    rdp_username: string | null;
+    rdp_password: string | null;
+    rdp_domain: string | null;
+    has_rdp_password: boolean;
+  }>(`/rdp/${rdpId}/credentials`);
+
+export const forceReleaseRdp = (rdpId: string, reason?: string) =>
+  api.post<EndConnectionResult & { reason: string; status?: string }>(
+    `/rdp/${rdpId}/force-release`,
+    { reason: reason?.trim() || undefined },
+  );
 
 /** Machines stranded mid-close or held after an unconfirmed End (Phase 8). */
 export interface QuarantinedRdpRow {
@@ -167,9 +182,15 @@ export interface RdpResource {
   monitor_port: number | null;
   last_health_check_at: string | null;
   status_changed_at: string;
+  /** Admin-only: username for card display. Password never returned. */
+  rdp_username?: string | null;
+  has_rdp_password?: boolean;
+  /** Admin-only: workers this machine is offered to on the claim board. */
+  allowed_worker_ids?: string[];
+  allowed_workers?: { id: string; name: string }[];
 }
 
-/** Write-only — forwarded to Guacamole, never stored in the app DB. */
+/** Write-only password (+ optional username/domain) for Guacamole sync. */
 export interface RdpCredentials {
   rdp_username?: string | null;
   rdp_password?: string | null;
@@ -188,6 +209,7 @@ export interface RdpResourceCreateBody extends RdpCredentials {
   monitor_port?: number | null;
   guacamole_connection_id?: string | null;
   health_notes?: string | null;
+  allowed_worker_ids?: string[];
 }
 
 export interface RdpResourceUpdateBody extends RdpCredentials {
@@ -199,6 +221,8 @@ export interface RdpResourceUpdateBody extends RdpCredentials {
   monitor_port?: number | null;
   guacamole_connection_id?: string | null;
   health_notes?: string | null;
+  /** Replaces the audience wholesale; omit to leave it unchanged. */
+  allowed_worker_ids?: string[];
 }
 
 export interface RdpProvisionResult {

@@ -67,7 +67,7 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
 
 /**
  * The bucket is private, so the database stores the object PATH
- * ("<sessionId>/start.jpg") rather than a URL.
+ * ("<sessionId>/shot-<stamp>.jpg") rather than a URL.
  *
  * Rows written before the bucket was made private hold a full public URL —
  * everything after "/session-images/" is still the object path, so those keep
@@ -107,24 +107,55 @@ export async function getSessionImageUrl(
   return data.signedUrl;
 }
 
+/** Must match MAX_SESSION_IMAGES in backend/services/session_evidence.py. */
+export const MAX_SESSION_IMAGES = 8;
+
+export interface SessionImagesResult {
+  image_urls: string[];
+  max_images: number;
+}
+
+/** Append a stored path to the session gallery. The cap is enforced server-side. */
+export async function addSessionImage(
+  sessionId: string,
+  imagePath: string,
+): Promise<SessionImagesResult> {
+  return api.post<SessionImagesResult>(`/sessions/${sessionId}/images`, {
+    image_url: imagePath,
+  });
+}
+
+/** Drop one screenshot so a bad capture can be retaken. */
+export async function removeSessionImage(
+  sessionId: string,
+  imagePath: string,
+): Promise<SessionImagesResult> {
+  return api.delete<SessionImagesResult>(
+    `/sessions/${sessionId}/images?image_url=${encodeURIComponent(imagePath)}`,
+  );
+}
+
 /**
  * Upload compressed blob to Supabase Storage.
  * Progress callback: 30 → 85 %.
  * Returns the object path, which is what gets persisted.
+ *
+ * Each shot gets its own object name — the gallery keeps every capture, so
+ * reusing one name per session would overwrite the previous screenshot.
  */
 async function uploadToStorage(
   sessionId: string,
-  imageType: 'start' | 'end',
   blob: Blob,
   onProgress?: (pct: number) => void,
 ): Promise<string> {
   onProgress?.(50);
-  const path = `${sessionId}/${imageType}.jpg`;
+  const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const path = `${sessionId}/shot-${stamp}.jpg`;
   const { error } = await supabase.storage
     .from(SESSION_IMAGE_BUCKET)
     .upload(path, blob, {
       contentType: 'image/jpeg',
-      upsert: true,
+      upsert: false,
     });
 
   if (error) {
@@ -147,10 +178,9 @@ async function uploadToStorage(
  */
 export async function uploadSessionImage(
   sessionId: string,
-  imageType: 'start' | 'end',
   file: File,
   onProgress?: (pct: number) => void,
-): Promise<string> {
+): Promise<SessionImagesResult> {
   const validationError = validateImageFile(file);
   if (validationError) throw new Error(validationError);
 
@@ -160,16 +190,15 @@ export async function uploadSessionImage(
   const compressed = await compressImage(file, onProgress);
 
   // 2 — upload to Supabase Storage (30 → 85 %)
-  const path = await uploadToStorage(sessionId, imageType, compressed, onProgress);
+  const path = await uploadToStorage(sessionId, compressed, onProgress);
 
-  // 3 — persist the object path to PostgreSQL (85 → 100 %)
+  // 3 — append to the session gallery (85 → 100 %)
   onProgress?.(90);
-  const field = `${imageType}_image_url` as const;
-  await api.patch(`/sessions/${sessionId}`, { [field]: path });
+  const result = await addSessionImage(sessionId, path);
 
   onProgress?.(100);
-  // Signed link so the caller can render it straight away.
-  return (await getSessionImageUrl(path)) ?? path;
+  // The server's list is authoritative — it owns ordering and the cap.
+  return result;
 }
 
 /**
@@ -178,19 +207,17 @@ export async function uploadSessionImage(
  */
 export async function uploadSessionImageBlob(
   sessionId: string,
-  imageType: 'start' | 'end',
   blob: Blob,
   onProgress?: (pct: number) => void,
-): Promise<string> {
+): Promise<SessionImagesResult> {
   onProgress?.(0);
-  const file = new File([blob], `${imageType}.jpg`, { type: blob.type || 'image/jpeg' });
+  const file = new File([blob], 'shot.jpg', { type: blob.type || 'image/jpeg' });
   const compressed = await compressImage(file, onProgress);
-  const path = await uploadToStorage(sessionId, imageType, compressed, onProgress);
+  const path = await uploadToStorage(sessionId, compressed, onProgress);
   onProgress?.(90);
-  const field = `${imageType}_image_url` as const;
-  await api.patch(`/sessions/${sessionId}`, { [field]: path });
+  const result = await addSessionImage(sessionId, path);
   onProgress?.(100);
-  return (await getSessionImageUrl(path)) ?? path;
+  return result;
 }
 
 /**

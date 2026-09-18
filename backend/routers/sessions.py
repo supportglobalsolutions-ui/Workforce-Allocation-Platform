@@ -18,6 +18,8 @@ from models.session import Session as WorkSession
 from schemas.session import (
     SessionCreate,
     SessionEvidenceUpdate,
+    SessionImageAdd,
+    SessionImagesResponse,
     SessionResponse,
     SessionUpdate,
     WorkerHoursTotalsResponse,
@@ -37,6 +39,7 @@ from services.security_risk import (
     after_destructive_bulk,
 )
 from services.session_evidence import (
+    MAX_SESSION_IMAGES,
     apply_image_duration,
     clear_evidence_reminders,
     evidence_complete,
@@ -126,6 +129,7 @@ def list_sessions(
         for s in sessions:
             s.start_image_url = None
             s.end_image_url = None
+            s.image_urls = []
     return [_session_response(s, staff=staff) for s in sessions]
 
 
@@ -288,6 +292,84 @@ def create_session(
     return _session_response(session, staff=_is_staff(current_user))
 
 
+def _session_for_caller(db: Session, session_id: UUID, current_user: dict) -> WorkSession:
+    """Staff reach any session; a worker only reaches their own."""
+    if current_user.get("role") in STAFF_ROLES:
+        session = db.exec(select(WorkSession).where(WorkSession.id == session_id)).first()
+    else:
+        worker = get_worker_for_user(db, current_user)
+        session = db.exec(
+            select(WorkSession).where(
+                WorkSession.id == session_id,
+                WorkSession.worker_id == worker.id,
+            )
+        ).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return session
+
+
+@router.post("/{session_id}/images", response_model=SessionImagesResponse)
+def add_session_image(
+    session_id: UUID,
+    body: SessionImageAdd,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Append one screenshot to the session gallery.
+
+    The cap is enforced here rather than in the browser: two tabs capturing at
+    once would otherwise both read 7 and both append.
+    """
+    session = _session_for_caller(db, session_id, current_user)
+    try:
+        path = validate_session_image_url(body.image_url)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    current = list(session.image_urls or [])
+    if path in current:
+        return SessionImagesResponse(image_urls=current, max_images=MAX_SESSION_IMAGES)
+    if len(current) >= MAX_SESSION_IMAGES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This session already has {MAX_SESSION_IMAGES} screenshots.",
+        )
+
+    # Reassign rather than append: JSONB columns are not change-tracked in place.
+    session.image_urls = current + [path]
+    if evidence_complete(session):
+        clear_evidence_reminders(db, session)
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return SessionImagesResponse(
+        image_urls=list(session.image_urls or []), max_images=MAX_SESSION_IMAGES
+    )
+
+
+@router.delete("/{session_id}/images", response_model=SessionImagesResponse)
+def remove_session_image(
+    session_id: UUID,
+    image_url: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Drop one screenshot from the gallery so a bad capture can be retaken."""
+    session = _session_for_caller(db, session_id, current_user)
+    current = list(session.image_urls or [])
+    remaining = [p for p in current if p != image_url]
+    if len(remaining) == len(current):
+        raise HTTPException(status_code=404, detail="That screenshot is not on this session.")
+    session.image_urls = remaining
+    db.add(session)
+    db.commit()
+    db.refresh(session)
+    return SessionImagesResponse(
+        image_urls=list(session.image_urls or []), max_images=MAX_SESSION_IMAGES
+    )
+
+
 @router.patch("/{session_id}/evidence", response_model=SessionResponse)
 def submit_session_evidence(
     session_id: UUID,
@@ -375,6 +457,18 @@ def update_session(
                 updates[field] = validate_session_image_url(updates[field])
             except ValueError as exc:
                 raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if updates.get("image_urls") is not None:
+        if len(updates["image_urls"]) > MAX_SESSION_IMAGES:
+            raise HTTPException(
+                status_code=400,
+                detail=f"A session can hold at most {MAX_SESSION_IMAGES} screenshots.",
+            )
+        try:
+            updates["image_urls"] = [
+                validate_session_image_url(u) for u in updates["image_urls"]
+            ]
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
     apply_update(session, SessionUpdate(**updates))
     # Prefer image-based duration when both times exist.
     apply_image_duration(session)

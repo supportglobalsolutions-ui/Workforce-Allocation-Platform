@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { Flag, X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
-import SessionImageUpload from './SessionImageUpload';
+import SessionImageGallery from './SessionImageGallery';
 import { api } from '@/lib/api';
 import { rdpConnectedMinutes } from '@/lib/hours';
 
@@ -17,8 +17,11 @@ interface SessionDetail {
   end_time?: string | null;
   rdp_minutes?: number | null;
   status: string;
+  /** Legacy pair, still present on rows written before the gallery. */
   start_image_url: string | null;
   end_image_url: string | null;
+  /** Evidence screenshots, in capture order. */
+  image_urls?: string[] | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
@@ -30,7 +33,7 @@ interface SessionDetail {
 interface Props {
   session: SessionDetail | null;
   onClose: () => void;
-  onImageUploaded: (sessionId: string, type: 'start' | 'end', url: string) => void;
+  onImagesChanged: (sessionId: string, paths: string[]) => void;
   onEvidenceSaved?: (sessionId: string, patch: Partial<SessionDetail>) => void;
   onSuspiciousChanged?: (sessionId: string, suspicious: boolean) => void;
   workerLabel?: string;
@@ -75,7 +78,7 @@ function minutesBetween(
 export default function SessionDetailPanel({
   session,
   onClose,
-  onImageUploaded,
+  onImagesChanged,
   onEvidenceSaved,
   onSuspiciousChanged,
   workerLabel,
@@ -237,19 +240,21 @@ export default function SessionDetailPanel({
           </div>
         )}
 
+        <div className="px-4 sm:px-6 pt-5">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-600 mb-2.5">
+            Session screenshots
+          </p>
+          <SessionImageGallery
+            sessionId={session.id}
+            initialUrls={session.image_urls}
+            label="Session screenshot"
+            onChanged={(paths) => onImagesChanged(session.id, paths)}
+            readOnly={!allowUpload}
+          />
+        </div>
+
         <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-600 mb-2.5">
-              Start image
-            </p>
-            <SessionImageUpload
-              sessionId={session.id}
-              imageType="start"
-              label="Session start screenshot"
-              initialUrl={session.start_image_url}
-              onUploaded={(url) => onImageUploaded(session.id, 'start', url)}
-              readOnly={!allowUpload}
-            />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time</span>
@@ -269,17 +274,6 @@ export default function SessionDetailPanel({
             )}
           </div>
           <div>
-            <p className="text-[11px] font-semibold uppercase tracking-widest text-amber-600 mb-2.5">
-              End image
-            </p>
-            <SessionImageUpload
-              sessionId={session.id}
-              imageType="end"
-              label="Session end screenshot"
-              initialUrl={session.end_image_url}
-              onUploaded={(url) => onImageUploaded(session.id, 'end', url)}
-              readOnly={!allowUpload}
-            />
             {allowEvidenceEdit ? (
               <label className="block mt-3">
                 <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">End time</span>

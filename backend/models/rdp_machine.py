@@ -16,6 +16,37 @@ if TYPE_CHECKING:
     from .worker import Worker
 
 
+class RDPResourceWorker(SQLModel, table=True):
+    """Workers an admin has marked as allowed on a machine (claim-board visibility).
+
+    Separate from ``RDPResource.assigned_worker_id``, which says who currently
+    holds the seat. A machine may be offered to one or many workers.
+    """
+
+    __tablename__ = "rdp_resource_workers"
+
+    rdp_resource_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("rdp_resources.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+    )
+    worker_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("workers.id", ondelete="CASCADE"),
+            primary_key=True,
+            nullable=False,
+        ),
+    )
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+
+
 class RDPResource(SQLModel, table=True):
     __tablename__ = "rdp_resources"
 

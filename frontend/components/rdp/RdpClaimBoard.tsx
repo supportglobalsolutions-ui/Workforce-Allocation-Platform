@@ -138,14 +138,37 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
     }
   };
 
+  const isStaff = ['admin', 'executive', 'super_admin'].includes(session?.authRole ?? '');
+
   const canClaim = (m: RDPResource) => {
     if (myActive) return false;
+    if (['maintenance', 'admin_locked', 'offline', 'unhealthy'].includes(m.status)) return false;
+    // Workers never claim another person's reserved machine.
+    if (!isStaff && m.assigned_worker_id && myWorkerId && m.assigned_worker_id !== myWorkerId) {
+      return false;
+    }
+    if (!isStaff) {
+      // Workers only act on desktops reserved for them (assignment) or shift-visible free seats.
+      if (myWorkerId && m.assigned_worker_id === myWorkerId) {
+        return m.status === 'online_free' || m.status === 'assigned';
+      }
+      // Visible via approved shift only — still must be free/assigned, not in use by others.
+      return m.status === 'online_free';
+    }
     if (m.status === 'online_free') return true;
     if (m.status === 'assigned' && myWorkerId && m.assigned_worker_id === myWorkerId) return true;
     return false;
   };
 
-  const isStaff = ['admin', 'executive', 'super_admin'].includes(session?.authRole ?? '');
+  // Workers: never list someone else's reserved desktop (backend already filters; belt-and-suspenders).
+  const visibleMachines = isStaff
+    ? machines
+    : machines.filter(
+        (m) =>
+          !m.assigned_worker_id ||
+          m.assigned_worker_id === myWorkerId ||
+          myActive?.rdp_resource_id === m.id,
+      );
 
   if (authLoading) {
     return (
@@ -219,7 +242,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
             <div key={n} className="glass-panel p-5 animate-pulse h-40" />
           ))}
         </div>
-      ) : machines.length === 0 ? (
+      ) : visibleMachines.length === 0 ? (
         <div className="glass-panel p-8 text-center">
           {isStaff ? (
             <>
@@ -237,7 +260,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {machines.map((m) => {
+          {visibleMachines.map((m) => {
             const isMine = myActive?.rdp_resource_id === m.id;
             const claimable = canClaim(m);
             return (

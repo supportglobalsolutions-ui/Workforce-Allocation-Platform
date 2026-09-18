@@ -11,7 +11,7 @@ from sqlmodel import Session, select
 
 from models.allocation import Allocation
 from models.enums import RdpStatusEnum, ShiftStatusEnum
-from models.rdp_machine import RDPResource
+from models.rdp_machine import RDPResource, RDPResourceWorker
 from models.shift import Shift
 
 logger = logging.getLogger(__name__)
@@ -197,8 +197,16 @@ def worker_may_see_resource(
     resource: RDPResource,
     worker_id: UUID,
 ) -> bool:
-    """Visibility (Phase 2): workers only see machines assigned to them."""
+    """Workers see machines they are marked on, hold, or are scheduled onto."""
     if resource.assigned_worker_id == worker_id:
+        return True
+    marked = db.exec(
+        select(RDPResourceWorker.worker_id).where(
+            RDPResourceWorker.rdp_resource_id == resource.id,
+            RDPResourceWorker.worker_id == worker_id,
+        ).limit(1)
+    ).first()
+    if marked:
         return True
     open_alloc = db.exec(
         select(Allocation).where(
@@ -233,7 +241,19 @@ def list_visible_rdp_resources(
         return list(all_rows)
     if not viewer_worker_id:
         return []
-    return [r for r in all_rows if worker_may_see_resource(db, r, viewer_worker_id)]
+    # One query for the marked machines, so the common case skips the
+    # per-row allocation and shift lookups below it.
+    marked_ids = set(
+        db.exec(
+            select(RDPResourceWorker.rdp_resource_id).where(
+                RDPResourceWorker.worker_id == viewer_worker_id
+            )
+        ).all()
+    )
+    return [
+        r for r in all_rows
+        if r.id in marked_ids or worker_may_see_resource(db, r, viewer_worker_id)
+    ]
 
 
 def require_worker_visible_or_staff(

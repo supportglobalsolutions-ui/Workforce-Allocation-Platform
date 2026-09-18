@@ -8,6 +8,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import AddPartnerModal from '@/components/admin/AddPartnerModal';
 import ConfirmAccountActionModal, { AccountCriticalAction } from '@/components/admin/ConfirmAccountActionModal';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import { api } from '@/lib/api';
 import {
   ManagedUser,
@@ -346,16 +347,18 @@ function AccountDetailModal({
   const isActing = actingOn === user.uid;
   const lockReason = accountLockReason(user, actorUid, ancestors);
   // Only admins/executives can ban; only executives can ban other executives.
-  const canBan =
-    !lockReason &&
-    (actorRole === 'super_admin' ||
-    (actorRole === 'admin' && user.role !== 'super_admin' && user.role !== 'executive'));
   const canDelete =
     !lockReason &&
+    !user.protected &&
     Boolean(actorUid) &&
     actorUid !== user.uid &&
     (actorRole === 'super_admin' ||
       (actorRole === 'admin' && user.role !== 'super_admin' && user.role !== 'executive'));
+  const canBan =
+    !lockReason &&
+    !user.protected &&
+    (actorRole === 'super_admin' ||
+    (actorRole === 'admin' && user.role !== 'super_admin' && user.role !== 'executive'));
   const isPending = user.status === 'pending';
   const roleOptions: AuthRole[] = assignableRoles(actorRole).filter((r) => r !== 'partner' || isPending);
   const canChangeRole =
@@ -715,6 +718,8 @@ export default function AccountsPage() {
     action: AccountCriticalAction;
     nextRole?: AuthRole;
   } | null>(null);
+  const [rejectTarget, setRejectTarget] = useState<ManagedUser | null>(null);
+  const [banTarget, setBanTarget] = useState<ManagedUser | null>(null);
 
   const [showCreate, setShowCreate] = useState(false);
   const [form, setForm] = useState({
@@ -878,12 +883,26 @@ export default function AccountsPage() {
   }
 
   async function handleReject(uid: string) {
-    const ok = window.confirm('Reject this request and delete the account? This cannot be undone.');
-    if (!ok) return;
-    setActingOn(uid); setActionError('');
-    try { await apiRejectUser(uid); await loadUsers(); setSelectedUser(null); }
-    catch (err: unknown) { setActionError(err instanceof Error ? err.message : 'Failed to reject.'); }
-    finally { setActingOn(null); }
+    const target = allUsers.find((u) => u.uid === uid) ?? (selectedUser?.uid === uid ? selectedUser : null);
+    if (!target) return;
+    setRejectTarget(target);
+  }
+
+  async function confirmReject() {
+    if (!rejectTarget) return;
+    const uid = rejectTarget.uid;
+    setActingOn(uid);
+    setActionError('');
+    try {
+      await apiRejectUser(uid);
+      await loadUsers();
+      setSelectedUser(null);
+      setRejectTarget(null);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to reject.');
+    } finally {
+      setActingOn(null);
+    }
   }
 
   async function handleBan(uid: string) {
@@ -897,10 +916,31 @@ export default function AccountsPage() {
       });
       return;
     }
+    if (target) {
+      setBanTarget(target);
+      return;
+    }
     setActingOn(uid); setActionError('');
     try { await apiBanUser(uid); await loadUsers(); setSelectedUser(null); }
     catch (err: unknown) { setActionError(err instanceof Error ? err.message : 'Failed to ban account.'); }
     finally { setActingOn(null); }
+  }
+
+  async function confirmBan() {
+    if (!banTarget) return;
+    const uid = banTarget.uid;
+    setActingOn(uid);
+    setActionError('');
+    try {
+      await apiBanUser(uid);
+      await loadUsers();
+      setSelectedUser(null);
+      setBanTarget(null);
+    } catch (err: unknown) {
+      setActionError(err instanceof Error ? err.message : 'Failed to ban account.');
+    } finally {
+      setActingOn(null);
+    }
   }
 
   async function handleUnban(uid: string) {
@@ -1330,6 +1370,42 @@ export default function AccountsPage() {
           }}
         />
       )}
+
+      <ConfirmModal
+        open={!!rejectTarget}
+        title="Reject and delete this account?"
+        body={
+          rejectTarget ? (
+            <p className="text-sm text-theme-muted">
+              Reject <span className="font-semibold text-theme-heading">{rejectTarget.displayName || rejectTarget.email}</span>
+              {' '}({rejectTarget.email}) and delete the login? This cannot be undone.
+            </p>
+          ) : null
+        }
+        confirmLabel="Reject & delete"
+        tone="danger"
+        busy={actingOn === rejectTarget?.uid}
+        onCancel={() => { if (!actingOn) setRejectTarget(null); }}
+        onConfirm={() => void confirmReject()}
+      />
+
+      <ConfirmModal
+        open={!!banTarget}
+        title="Ban this account?"
+        body={
+          banTarget ? (
+            <p className="text-sm text-theme-muted">
+              Ban <span className="font-semibold text-theme-heading">{banTarget.displayName || banTarget.email}</span>
+              {' '}so they cannot sign in?
+            </p>
+          ) : null
+        }
+        confirmLabel="Ban account"
+        tone="danger"
+        busy={actingOn === banTarget?.uid}
+        onCancel={() => { if (!actingOn) setBanTarget(null); }}
+        onConfirm={() => void confirmBan()}
+      />
     </div>
   );
 }

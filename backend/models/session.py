@@ -91,8 +91,15 @@ class Session(SQLModel, table=True):
         default=False,
         sa_column=Column(Boolean(), nullable=False, server_default=text("false")),
     )
+    # Legacy pair, kept so historic rows still render. New captures go to
+    # image_urls; nothing writes these two any more.
     start_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     end_image_url: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Ordered evidence screenshots (object paths), capped at MAX_SESSION_IMAGES.
+    image_urls: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
+    )
     # Times as shown on the worker's start/end screenshots (evidence hours).
     image_start_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)

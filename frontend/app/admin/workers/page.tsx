@@ -55,6 +55,7 @@ interface Worker {
   first_name?: string | null;
   last_name?: string | null;
   account_banned?: boolean;
+  account_protected?: boolean;
   account_status?: string | null;
   assigned_rdp_id?: string | null;
   assigned_rdp_nickname?: string | null;
@@ -69,6 +70,7 @@ interface WorkSession {
   close_status: string | null;
   rdp_resource_id: string | null;
   start_image_url: string | null;
+  image_urls?: string[] | null;
   end_image_url: string | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
@@ -320,6 +322,7 @@ function WorkerDetailModal({
       type: TYPE_LABELS[s.session_type] ?? s.session_type,
       status: s.close_status ?? (s.end_time ? 'completed' : 'active'),
       start_image_url: s.start_image_url,
+      image_urls: s.image_urls,
       end_image_url: s.end_image_url,
       image_start_at: s.image_start_at,
       image_end_at: s.image_end_at,
@@ -336,10 +339,8 @@ function WorkerDetailModal({
     <>
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
         onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-        <div className={`glass-panel rounded-2xl border border-white/10 w-full max-h-[85vh] flex flex-col ${
-          tab === 'sessions' ? 'max-w-2xl' : 'max-w-md'
-        }`}>
-          <div className="flex items-start justify-between px-5 pt-4 pb-3 border-b border-white/[0.06] shrink-0">
+        <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-5xl max-h-[85vh] flex flex-col">
+          <div className="flex items-start justify-between px-6 pt-4 pb-3 border-b border-white/[0.06] shrink-0">
             <div className="min-w-0 flex-1 pr-3">
               <h2 className="text-[15px] font-bold text-white truncate">{worker.display_name}</h2>
               <p className="text-xs text-theme-muted mt-0.5 truncate">
@@ -369,7 +370,7 @@ function WorkerDetailModal({
             </div>
           </div>
 
-          <div className="flex border-b border-white/[0.06] px-5 shrink-0">
+          <div className="flex border-b border-white/[0.06] px-6 shrink-0">
             {(['profile', 'sessions'] as WorkerModalTab[]).map((t) => (
               <button key={t} type="button" onClick={() => { setTab(t); setEditing(false); }}
                 className={`px-3 py-2.5 text-[11px] font-semibold uppercase tracking-wider transition-colors border-b-2 -mb-px ${
@@ -382,10 +383,10 @@ function WorkerDetailModal({
 
           <div className="overflow-y-auto flex-1">
             {tab === 'profile' && !editing && (
-              <div className="px-5 py-4 space-y-4">
+              <div className="px-6 py-5 space-y-5">
                 <div>
                   <SectionLabel>Identity</SectionLabel>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
+                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-4">
                     <DetailField label="Display Name" value={worker.display_name} />
                     <DetailField
                       label="Legal name"
@@ -417,7 +418,7 @@ function WorkerDetailModal({
 
                 <div className="border-t border-white/[0.06] pt-4">
                   <SectionLabel>Payment & assignment</SectionLabel>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-5 gap-y-3.5">
+                  <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-4">
                     <DetailField label="Pay Tier" value={worker.pay_tier || '—'} />
                     <DetailField
                       label="Pay amount"
@@ -435,60 +436,68 @@ function WorkerDetailModal({
                 {worker.admin_user_id && banStatus !== null && banStatus !== 'not_found' && (
                   <div className="border-t border-white/[0.06] pt-4">
                     <SectionLabel>Account Access</SectionLabel>
-                    {banError && <p className="text-xs text-red-400 mb-2">{banError}</p>}
-                    {banStatus === 'banned' && (
-                      <p className="text-xs text-red-400/90 mb-2.5 leading-relaxed">
-                        This account is banned. The worker cannot log in.
+                    {worker.account_protected ? (
+                      <p className="text-xs text-theme-muted leading-relaxed">
+                        This is a protected account. It cannot be banned or deleted.
                       </p>
-                    )}
-                    {banLoading ? (
-                      <div className="flex items-center gap-2 text-theme-muted text-xs py-1">
-                        <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin block" />
-                        Processing…
-                      </div>
                     ) : (
-                      <div className="flex flex-col sm:flex-row gap-2">
-                        {banStatus === 'banned' ? (
-                          <button type="button" onClick={handleUnban}
-                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-accent/15 hover:bg-emerald-accent/25 text-emerald-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-emerald-accent/25">
-                            <ShieldOff size={13} /> Unban Account
-                          </button>
-                        ) : (
-                          <button type="button" onClick={handleBan}
-                            className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/15 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/25">
-                            <Ban size={13} /> Lock / Ban Account
-                          </button>
+                      <>
+                        {banError && <p className="text-xs text-red-400 mb-2">{banError}</p>}
+                        {banStatus === 'banned' && (
+                          <p className="text-xs text-red-400/90 mb-2.5 leading-relaxed">
+                            This account is banned. The worker cannot log in.
+                          </p>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => onRequestDelete(worker)}
-                          className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
-                        >
-                          <Trash2 size={13} /> Delete
-                        </button>
-                      </div>
+                        {banLoading ? (
+                          <div className="flex items-center gap-2 text-theme-muted text-xs py-1">
+                            <span className="w-3 h-3 border-2 border-white/20 border-t-white rounded-full animate-spin block" />
+                            Processing…
+                          </div>
+                        ) : (
+                          <div className="flex flex-col sm:flex-row gap-2 max-w-xl">
+                            {banStatus === 'banned' ? (
+                              <button type="button" onClick={handleUnban}
+                                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-emerald-accent/15 hover:bg-emerald-accent/25 text-emerald-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-emerald-accent/25">
+                                <ShieldOff size={13} /> Unban Account
+                              </button>
+                            ) : (
+                              <button type="button" onClick={handleBan}
+                                className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/15 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/25">
+                                <Ban size={13} /> Lock / Ban Account
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => onRequestDelete(worker)}
+                              className="flex-1 flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                            >
+                              <Trash2 size={13} /> Delete
+                            </button>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}
-                {worker.admin_user_id && (banStatus === null || banStatus === 'not_found') && (
+                {worker.admin_user_id && (banStatus === null || banStatus === 'not_found') && !worker.account_protected && (
                   <div className="border-t border-white/[0.06] pt-4">
                     <SectionLabel>Account Access</SectionLabel>
                     <button
                       type="button"
                       onClick={() => onRequestDelete(worker)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                      className="w-full max-w-xl flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
                     >
                       <Trash2 size={13} /> Delete Worker
                     </button>
                   </div>
                 )}
-                {!worker.admin_user_id && (
+                {!worker.admin_user_id && !worker.account_protected && (
                   <div className="border-t border-white/[0.06] pt-4">
                     <SectionLabel>Danger zone</SectionLabel>
                     <button
                       type="button"
                       onClick={() => onRequestDelete(worker)}
-                      className="w-full flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
+                      className="w-full max-w-xl flex items-center justify-center gap-2 py-2.5 rounded-xl bg-red-500/10 hover:bg-red-500/20 text-red-400 text-[11px] font-bold uppercase tracking-wider transition-colors border border-red-500/30"
                     >
                       <Trash2 size={13} /> Delete Worker
                     </button>
@@ -498,10 +507,10 @@ function WorkerDetailModal({
             )}
 
             {tab === 'profile' && editing && (
-              <div className="px-5 py-4 space-y-4">
+              <div className="px-6 py-5 space-y-5">
                 <SectionLabel>Personal details</SectionLabel>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div className="col-span-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                  <div className="sm:col-span-2 lg:col-span-1">
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Display Name</label>
                     <input value={editForm.display_name}
                       onChange={(e) => setEditForm((f) => ({ ...f, display_name: e.target.value }))}
@@ -530,7 +539,7 @@ function WorkerDetailModal({
                       }}
                       className="input-field" />
                   </div>
-                  <div className="col-span-2">
+                  <div className="sm:col-span-2 lg:col-span-2">
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Phone</label>
                     <div className="flex gap-2">
                       <select
@@ -555,7 +564,7 @@ function WorkerDetailModal({
                     </div>
                     <p className="text-[11px] text-theme-muted mt-1">Include the country code. Kenya example: +254714516132</p>
                   </div>
-                  <div className="col-span-2">
+                  <div>
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Place of residence</label>
                     <input value={editForm.residence}
                       maxLength={RESIDENCE_MAX}
@@ -563,7 +572,7 @@ function WorkerDetailModal({
                       placeholder="City or town"
                       className="input-field" />
                   </div>
-                  <div className="col-span-2">
+                  <div className="sm:col-span-2 lg:col-span-3">
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Email</label>
                     <p className="text-[13px] font-medium text-white leading-snug break-words">{worker.email || '—'}</p>
                     <p className="text-[11px] text-theme-muted mt-1">Sign-in email — read only. Changing it is not supported here.</p>
@@ -572,7 +581,7 @@ function WorkerDetailModal({
 
                 <div className="border-t border-white/[0.06] pt-4">
                   <SectionLabel>Payment</SectionLabel>
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                  <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
                     <div>
                       <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Amount</label>
                       <input type="number" min="0" step="0.01" value={editForm.pay_amount}
@@ -727,8 +736,8 @@ function WorkerDetailModal({
       <SessionDetailPanel
         session={selectedSession}
         onClose={() => setSelectedSessionId(null)}
-        onImageUploaded={(sessionId, type, url) => {
-          setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, [`${type}_image_url`]: url } : s));
+        onImagesChanged={(sessionId: string, paths: string[]) => {
+          setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, image_urls: paths } : s));
         }}
         onSuspiciousChanged={(sessionId, suspicious) => {
           setSessions((prev) => prev.map((s) => s.id === sessionId ? { ...s, suspicious } : s));
@@ -825,10 +834,11 @@ export default function WorkersPage() {
     _worker: w,
   }));
 
-  const allVisibleSelected = filteredWorkers.length > 0 && filteredWorkers.every((w) => selectedIds.has(w.id));
+  const deletableVisible = filteredWorkers.filter((w) => !w.account_protected);
+  const allVisibleSelected = deletableVisible.length > 0 && deletableVisible.every((w) => selectedIds.has(w.id));
   const deleteTargets = deleteIds.length
-    ? workers.filter((w) => deleteIds.includes(w.id))
-    : workers.filter((w) => selectedIds.has(w.id));
+    ? workers.filter((w) => deleteIds.includes(w.id) && !w.account_protected)
+    : workers.filter((w) => selectedIds.has(w.id) && !w.account_protected);
 
   function toggleRow(id: string) {
     setSelectedIds((prev) => {
@@ -842,8 +852,8 @@ export default function WorkersPage() {
   function toggleAllVisible() {
     setSelectedIds((prev) => {
       const next = new Set(prev);
-      if (allVisibleSelected) filteredWorkers.forEach((w) => next.delete(w.id));
-      else filteredWorkers.forEach((w) => next.add(w.id));
+      if (allVisibleSelected) deletableVisible.forEach((w) => next.delete(w.id));
+      else deletableVisible.forEach((w) => next.add(w.id));
       return next;
     });
   }
@@ -854,11 +864,23 @@ export default function WorkersPage() {
   }
 
   function openBulkDelete() {
-    setDeleteIds(Array.from(selectedIds));
+    const ids = Array.from(selectedIds).filter((id) => {
+      const w = workers.find((row) => row.id === id);
+      return w && !w.account_protected;
+    });
+    if (!ids.length) {
+      setActionNote('Protected accounts cannot be deleted.');
+      return;
+    }
+    setDeleteIds(ids);
     setDeleteOpen(true);
   }
 
   function openSingleDelete(w: Worker) {
+    if (w.account_protected) {
+      setActionNote('Protected accounts cannot be deleted.');
+      return;
+    }
     setDeleteIds([w.id]);
     setDeleteOpen(true);
   }
@@ -961,15 +983,21 @@ export default function WorkersPage() {
             {
               key: 'select',
               header: '',
-              render: (r) => (
-                <input
-                  type="checkbox"
-                  checked={selectedIds.has(String(r.id))}
-                  onChange={() => toggleRow(String(r.id))}
-                  aria-label={`Select ${(r as typeof workerRows[number]).name}`}
-                  className="accent-emerald-400"
-                />
-              ),
+              render: (r) => {
+                const row = r as typeof workerRows[number];
+                const protectedAccount = Boolean(row._worker.account_protected);
+                return (
+                  <input
+                    type="checkbox"
+                    checked={selectedIds.has(String(r.id))}
+                    disabled={protectedAccount}
+                    onChange={() => toggleRow(String(r.id))}
+                    aria-label={protectedAccount ? `${row.name} is protected` : `Select ${row.name}`}
+                    title={protectedAccount ? 'Protected account — cannot delete' : undefined}
+                    className="accent-emerald-400 disabled:opacity-40"
+                  />
+                );
+              },
             },
             { key: 'name', header: 'Name' },
             { key: 'email', header: 'Email' },

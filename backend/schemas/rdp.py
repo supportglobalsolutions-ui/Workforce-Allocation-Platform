@@ -39,7 +39,8 @@ CREDENTIAL_FIELDS = set(GuacamoleCredentials.model_fields)
 
 
 class RDPResourceCreate(RDPResourceBase, GuacamoleCredentials):
-    pass
+    # Workers allowed to see and claim this machine on the claim board.
+    allowed_worker_ids: Optional[list[UUID]] = None
 
 
 class RDPResourceUpdate(GuacamoleCredentials):
@@ -54,6 +55,15 @@ class RDPResourceUpdate(GuacamoleCredentials):
     risk_flags:              Optional[list[Any]]     = None
     monitor_host:            Optional[str]           = None
     monitor_port:            Optional[int]           = None
+    # Replaces the machine's audience wholesale. None leaves it untouched.
+    allowed_worker_ids:      Optional[list[UUID]]    = None
+
+
+class RdpAllowedWorker(SQLModel):
+    """Name badge for a worker on a machine's claim-board audience."""
+
+    id:   UUID
+    name: str
 
 
 class RDPResourceResponse(RDPResourceBase):
@@ -66,10 +76,16 @@ class RDPResourceResponse(RDPResourceBase):
     client_name:          Optional[str] = None
     owner_name:           Optional[str] = None
     owner_type:           Optional[str] = None
+    # Admin card display — password never returned, only whether one is stored.
+    rdp_username:         Optional[str] = None
+    has_rdp_password:     bool = False
+    # Admin-only: who this machine is offered to on the claim board.
+    allowed_worker_ids:   list[UUID] = []
+    allowed_workers:      list[RdpAllowedWorker] = []
 
 
 class RdpForceReleaseBody(SQLModel):
-    reason: str
+    reason: Optional[str] = None
 
 
 class RdpProvisionBody(GuacamoleCredentials):

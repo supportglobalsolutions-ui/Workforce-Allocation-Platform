@@ -21,6 +21,7 @@ import {
   sessionEvidenceUrl,
 } from '@/lib/rdp';
 import {
+  MAX_SESSION_IMAGES,
   captureDisplayFrame,
   uploadSessionImageBlob,
 } from '@/lib/session-images';
@@ -47,11 +48,9 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [disconnectPhase, setDisconnectPhase] = useState<DisconnectPhase>('idle');
-  const [captureBusy, setCaptureBusy] = useState<'start' | 'end' | null>(null);
+  const [captureBusy, setCaptureBusy] = useState(false);
   const [captureNote, setCaptureNote] = useState<string | null>(null);
-  const [hasStartImage, setHasStartImage] = useState(false);
-  const [hasEndImage, setHasEndImage] = useState(false);
-  const [replaceConfirm, setReplaceConfirm] = useState<'start' | 'end' | null>(null);
+  const [shotCount, setShotCount] = useState(0);
   const [endError, setEndError] = useState<string | null>(null);
   /** Start collapsed so remote Chrome tabs stay clickable; expand on demand. */
   const [chromeHidden, setChromeHidden] = useState(true);
@@ -165,13 +164,10 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   useEffect(() => {
     if (!sessionId) return;
     let cancelled = false;
-    api.get<{ start_image_url?: string | null; end_image_url?: string | null }>(
-      `/sessions/${sessionId}`,
-    )
+    api.get<{ image_urls?: string[] | null }>(`/sessions/${sessionId}`)
       .then((s) => {
         if (cancelled) return;
-        setHasStartImage(Boolean(s.start_image_url));
-        setHasEndImage(Boolean(s.end_image_url));
+        setShotCount((s.image_urls ?? []).length);
       })
       .catch(() => { /* ignore */ });
     return () => { cancelled = true; };
@@ -272,12 +268,16 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
     }, 400);
   }, [leaveToHistory, rdpId, sessionId]);
 
-  const runCapture = useCallback(async (imageType: 'start' | 'end') => {
+  const runCapture = useCallback(async () => {
     if (!sessionId) {
       setCaptureNote('Session still starting — try again in a moment.');
       return;
     }
-    setCaptureBusy(imageType);
+    if (shotCount >= MAX_SESSION_IMAGES) {
+      setCaptureNote(`All ${MAX_SESSION_IMAGES} screenshots used for this session.`);
+      return;
+    }
+    setCaptureBusy(true);
     setCaptureNote(null);
     try {
       let blob = await viewerRef.current?.captureRemoteFrame() ?? null;
@@ -286,29 +286,19 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         setCaptureNote('Capture cancelled.');
         return;
       }
-      await uploadSessionImageBlob(sessionId, imageType, blob);
-      if (imageType === 'start') {
-        setHasStartImage(true);
-        setCaptureNote('Start screenshot saved.');
-      } else {
-        setHasEndImage(true);
-        setCaptureNote('End screenshot saved.');
-      }
+      // The server owns the cap and returns the authoritative list, so a
+      // second tab capturing at the same time cannot push this past 8.
+      const result = await uploadSessionImageBlob(sessionId, blob);
+      setShotCount(result.image_urls.length);
+      setCaptureNote(
+        `Screenshot ${result.image_urls.length} of ${result.max_images} saved.`,
+      );
     } catch (err) {
-      setCaptureNote(reportError('Capture session evidence', err, { rdpId, imageType }));
+      setCaptureNote(reportError('Capture session evidence', err, { rdpId }));
     } finally {
-      setCaptureBusy(null);
+      setCaptureBusy(false);
     }
-  }, [rdpId, sessionId]);
-
-  const requestCapture = useCallback((imageType: 'start' | 'end') => {
-    const already = imageType === 'start' ? hasStartImage : hasEndImage;
-    if (already) {
-      setReplaceConfirm(imageType);
-      return;
-    }
-    void runCapture(imageType);
-  }, [hasEndImage, hasStartImage, runCapture]);
+  }, [rdpId, sessionId, shotCount]);
 
   const notifyTakeover = useCallback(() => {
     try {
@@ -359,25 +349,22 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
             <div className="pointer-events-auto flex items-stretch rounded-b-xl overflow-hidden shadow-lg shadow-black/60 border border-white/10 border-t-0">
               <button
                 type="button"
-                onClick={() => requestCapture('start')}
-                disabled={!!captureBusy || disconnectPhase !== 'idle'}
-                title="Save start screenshot"
-                aria-label="Save start screenshot"
+                onClick={() => void runCapture()}
+                disabled={
+                  captureBusy
+                  || disconnectPhase !== 'idle'
+                  || shotCount >= MAX_SESSION_IMAGES
+                }
+                title={
+                  shotCount >= MAX_SESSION_IMAGES
+                    ? `All ${MAX_SESSION_IMAGES} screenshots used`
+                    : `Capture screenshot (${shotCount}/${MAX_SESSION_IMAGES})`
+                }
+                aria-label={`Capture screenshot, ${shotCount} of ${MAX_SESSION_IMAGES} used`}
                 className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-red-700 hover:bg-red-600 border-r border-red-900/50 transition-colors disabled:opacity-40"
               >
                 <Camera size={13} className="text-white pointer-events-none" />
-                {captureBusy === 'start' ? 'Saving…' : 'Start'}
-              </button>
-              <button
-                type="button"
-                onClick={() => requestCapture('end')}
-                disabled={!!captureBusy || disconnectPhase !== 'idle'}
-                title="Save end screenshot"
-                aria-label="Save end screenshot"
-                className="flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-red-700 hover:bg-red-600 border-r border-red-900/50 transition-colors disabled:opacity-40"
-              >
-                <Camera size={13} className="text-white pointer-events-none" />
-                {captureBusy === 'end' ? 'Saving…' : 'End shot'}
+                {captureBusy ? 'Saving…' : `${shotCount}/${MAX_SESSION_IMAGES}`}
               </button>
               <button
                 type="button"
@@ -484,24 +471,6 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         </div>
       )}
 
-      <ConfirmModal
-        open={replaceConfirm !== null}
-        title={replaceConfirm === 'end' ? 'Replace end screenshot?' : 'Replace start screenshot?'}
-        body={
-          replaceConfirm === 'end'
-            ? 'An end screenshot is already saved for this session. Capturing again will overwrite it.'
-            : 'A start screenshot is already saved for this session. Capturing again will overwrite it.'
-        }
-        confirmLabel="Replace image"
-        tone="danger"
-        busy={!!captureBusy}
-        onConfirm={() => {
-          const kind = replaceConfirm;
-          setReplaceConfirm(null);
-          if (kind) void runCapture(kind);
-        }}
-        onCancel={() => setReplaceConfirm(null)}
-      />
     </div>
   );
 }

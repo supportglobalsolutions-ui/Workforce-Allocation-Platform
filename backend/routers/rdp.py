@@ -12,6 +12,7 @@ from core.rate_limit import check_rate_limit
 from core.redis import get_redis
 from services.rdp_degraded import is_datastore_error
 from models.allocation import Allocation
+from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from schemas.rdp import (
@@ -42,6 +43,7 @@ from services.rdp_support import (
     request_ip,
     resume_existing_claim,
     rdp_response,
+    set_allowed_workers,
     viewer_worker_id,
 )
 from routers.rdp_tunnel import router as rdp_tunnel_router
@@ -153,10 +155,13 @@ def create_rdp_resource(
             status_code=status.HTTP_409_CONFLICT,
             detail=f"An RDP machine with nickname '{body.nickname}' already exists",
         )
-    resource = RDPResource(**body.model_dump(exclude=CREDENTIAL_FIELDS))
+    resource = RDPResource(
+        **body.model_dump(exclude=CREDENTIAL_FIELDS | {"allowed_worker_ids"})
+    )
     db.add(resource)
     db.commit()
     db.refresh(resource)
+    set_allowed_workers(db, resource, body.allowed_worker_ids)
     if body.auto_provision and not body.guacamole_connection_id and resource.monitor_host:
         error = provision_guacamole(db, resource, redis_client, body)
         if error:
@@ -303,19 +308,14 @@ def release_rdp_resource(
 @router.post("/{rdp_id}/force-release")
 def force_release_rdp_resource(
     rdp_id: UUID,
-    body: RdpForceReleaseBody,
     request: Request,
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
     redis_client=Depends(get_redis),
+    body: RdpForceReleaseBody = RdpForceReleaseBody(),
 ):
-    """Admin force-release with mandatory reason."""
-    if not body.reason.strip():
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="Release reason is required",
-        )
+    """Admin force-release. Reason is optional."""
     resource = db.exec(select(RDPResource).where(RDPResource.id == rdp_id)).first()
     if not resource:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="RDP resource not found")
@@ -332,12 +332,23 @@ def force_release_rdp_resource(
     )
     result = outcome.raise_if_error()
     db.refresh(resource)
-    note = f"Force release: {body.reason.strip()}"
+    reason = (body.reason or "").strip() or "Admin force release"
+    note = f"Force release: {reason}"
     resource.health_notes = f"{resource.health_notes}\n{note}" if resource.health_notes else note
+    # Force release must return the seat to a claimable state (not leave maintenance).
+    if resource.status in {RdpStatusEnum.maintenance, RdpStatusEnum.admin_locked}:
+        from services.rdp_state import transition_rdp_status
+
+        transition_rdp_status(
+            db,
+            resource,
+            RdpStatusEnum.assigned if resource.assigned_worker_id else RdpStatusEnum.online_free,
+            commit=False,
+        )
     db.add(resource)
     db.commit()
 
-    return {**result, "reason": body.reason.strip()}
+    return {**result, "reason": reason, "status": resource.status.value}
 
 
 @router.post("/{rdp_id}/join-ticket", response_model=RdpJoinTicket)

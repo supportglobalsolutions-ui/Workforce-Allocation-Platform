@@ -23,13 +23,14 @@ from core.redis import get_redis
 from models.allocation import Allocation
 from models.client import Client
 from models.enums import RdpStatusEnum, ReleaseReasonEnum, SessionCloseEnum, SessionTypeEnum
-from models.rdp_machine import RDPResource
+from models.rdp_machine import RDPResource, RDPResourceWorker
 from models.session import Session as WorkSession
 from models.worker import Worker
 from schemas.rdp import (
     RDPResourceCreate,
     RDPResourceResponse,
     RDPResourceUpdate,
+    RdpAllowedWorker,
     RdpProvisionBody,
 )
 from services.audit_service import record_audit
@@ -152,6 +153,46 @@ def record_rdp_logout(
     )
 
 
+def set_allowed_workers(
+    db: Session,
+    resource: RDPResource,
+    worker_ids: list[UUID] | None,
+) -> None:
+    """Replace a machine's claim-board audience.
+
+    ``None`` means "not supplied" and leaves the current rows alone; an empty
+    list clears the audience, which hides the machine from every worker who is
+    not holding or scheduled on it.
+    """
+    if worker_ids is None:
+        return
+    wanted = list(dict.fromkeys(worker_ids))
+    if wanted:
+        known = set(db.exec(select(Worker.id).where(Worker.id.in_(wanted))).all())
+        missing = [str(w) for w in wanted if w not in known]
+        if missing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unknown worker id(s): {', '.join(missing)}",
+            )
+    current = db.exec(
+        select(RDPResourceWorker).where(
+            RDPResourceWorker.rdp_resource_id == resource.id
+        )
+    ).all()
+    wanted_set = set(wanted)
+    for row in current:
+        if row.worker_id not in wanted_set:
+            db.delete(row)
+    have = {row.worker_id for row in current}
+    for worker_id in wanted:
+        if worker_id not in have:
+            db.add(
+                RDPResourceWorker(rdp_resource_id=resource.id, worker_id=worker_id)
+            )
+    db.commit()
+
+
 def rdp_response(
     db: Session,
     resource: RDPResource,
@@ -168,6 +209,14 @@ def rdp_response(
     """
     resp = RDPResourceResponse.model_validate(resource)
     is_admin = viewer is None or viewer.get("role") in STAFF_ROLES
+
+    if is_admin:
+        resp.rdp_username = resource.rdp_username
+        resp.has_rdp_password = bool(resource.rdp_password_enc)
+    else:
+        # Credentials are staff-only even though the ORM columns exist.
+        resp.rdp_username = None
+        resp.has_rdp_password = False
 
     if resource.assigned_worker_id:
         if is_admin or (
@@ -186,6 +235,18 @@ def rdp_response(
             resp.owner_type = client.owner_type.value if client.owner_type else None
             # The owner is a person (partner/account holder) — admins only.
             resp.owner_name = client_owner_name(db, client) if is_admin else None
+    if is_admin:
+        # Colleague identities stay admin-only, same rule as assigned_worker_name.
+        rows = db.exec(
+            select(Worker.id, Worker.display_name)
+            .join(RDPResourceWorker, RDPResourceWorker.worker_id == Worker.id)
+            .where(RDPResourceWorker.rdp_resource_id == resource.id)
+            .order_by(Worker.display_name)
+        ).all()
+        resp.allowed_worker_ids = [row[0] for row in rows]
+        resp.allowed_workers = [
+            RdpAllowedWorker(id=row[0], name=row[1]) for row in rows
+        ]
     return resp
 
 
@@ -597,6 +658,13 @@ def provision_guacamole(
 
     if resource.guacamole_connection_id != result.connection_id:
         resource.guacamole_connection_id = result.connection_id
+        db.add(resource)
+        db.commit()
+        db.refresh(resource)
+    # Clear a stale "already exists" note left from an earlier failed Sync.
+    notes = (resource.health_notes or "").strip()
+    if notes and "already exists" in notes.lower():
+        resource.health_notes = None
         db.add(resource)
         db.commit()
         db.refresh(resource)

@@ -24,6 +24,7 @@ interface WorkSession {
   rdp_resource_id: string | null;
   start_image_url: string | null;
   end_image_url: string | null;
+  image_urls?: string[] | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
@@ -67,6 +68,7 @@ interface SessionRow {
   heartbeat: string | null;
   start_image_url: string | null;
   end_image_url: string | null;
+  image_urls?: string[] | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
   duration_minutes?: number | null;
@@ -417,6 +419,7 @@ export default function AdminSessionsPage() {
             : null,
           start_image_url: s.start_image_url,
           end_image_url: s.end_image_url,
+          image_urls: s.image_urls,
           image_start_at: s.image_start_at,
           image_end_at: s.image_end_at,
           duration_minutes: s.duration_minutes,
@@ -496,6 +499,7 @@ export default function AdminSessionsPage() {
               ...prev,
               start_image_url: full.start_image_url,
               end_image_url: full.end_image_url,
+              image_urls: full.image_urls,
               image_start_at: full.image_start_at,
               image_end_at: full.image_end_at,
               duration_minutes: full.duration_minutes,
@@ -512,12 +516,12 @@ export default function AdminSessionsPage() {
     });
   };
 
-  const handleImageUploaded = (sessionId: string, type: 'start' | 'end', url: string) => {
+  const handleImagesChanged = (sessionId: string, paths: string[]) => {
     setSessions((prev) =>
-      prev.map((s) => (s.id === sessionId ? { ...s, [`${type}_image_url`]: url } : s)),
+      prev.map((s) => (s.id === sessionId ? { ...s, image_urls: paths } : s)),
     );
     setSelectedSession((prev) =>
-      prev?.id === sessionId ? { ...prev, [`${type}_image_url`]: url } : prev,
+      prev?.id === sessionId ? { ...prev, image_urls: paths } : prev,
     );
   };
 
@@ -933,7 +937,7 @@ export default function AdminSessionsPage() {
       <SessionDetailPanel
         session={selectedSession}
         onClose={() => setSelectedSession(null)}
-        onImageUploaded={handleImageUploaded}
+        onImagesChanged={handleImagesChanged}
         onSuspiciousChanged={handleSuspiciousChanged}
         workerLabel={workerLabel}
         allowUpload={false}

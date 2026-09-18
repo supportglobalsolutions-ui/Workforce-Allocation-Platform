@@ -38,6 +38,7 @@ class SessionUpdate(SQLModel):
     suspicious:             Optional[bool]                = None
     start_image_url:        Optional[str]                 = None
     end_image_url:          Optional[str]                 = None
+    image_urls:             Optional[list[str]]           = None
     image_start_at:         Optional[datetime]            = None
     image_end_at:           Optional[datetime]            = None
     type_specific_fields:   Optional[dict[str, Any]]      = None
@@ -56,6 +57,7 @@ class SessionResponse(SessionBase):
     suspicious:             bool = False
     start_image_url:        Optional[str]      = None
     end_image_url:          Optional[str]      = None
+    image_urls:             list[str]          = []
     image_start_at:         Optional[datetime] = None
     image_end_at:           Optional[datetime] = None
     evidence_complete:      Optional[bool]     = None
@@ -80,3 +82,14 @@ class WorkerHoursTotalsResponse(SQLModel):
     total_minutes: int
     total_hours: Decimal
     sessions: list[SessionResponse]
+
+
+class SessionImageAdd(SQLModel):
+    """Append one freshly captured screenshot to the session's gallery."""
+
+    image_url: str
+
+
+class SessionImagesResponse(SQLModel):
+    image_urls: list[str]
+    max_images: int

@@ -167,6 +167,22 @@ def list_held_machines(db: Session) -> list[dict]:
     return out
 
 
+def is_quarantine_held(db: Session, rdp_id) -> bool:
+    """True while the machine is still maintenance-held after an unconfirmed close."""
+    resource = db.get(RDPResource, rdp_id)
+    if resource is None or resource.status != RdpStatusEnum.maintenance:
+        return False
+    held = db.exec(
+        select(Allocation)
+        .where(
+            Allocation.rdp_resource_id == rdp_id,
+            Allocation.quarantined_at.is_not(None),
+        )
+        .limit(1)
+    ).first()
+    return held is not None
+
+
 def quarantine_allocation(
     db: Session,
     allocation: Allocation,

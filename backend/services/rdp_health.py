@@ -10,7 +10,7 @@ from sqlmodel import Session, select
 
 from models.enums import RdpStatusEnum
 from models.rdp_machine import RDPResource
-from services.rdp_state import PROTECTED_FROM_HEALTH, transition_rdp_status, utc_now
+from services.rdp_state import transition_rdp_status, utc_now
 
 logger = logging.getLogger(__name__)
 
@@ -19,8 +19,6 @@ KUMA_UP = 1
 KUMA_DOWN = 0
 KUMA_PENDING = 2
 KUMA_MAINTENANCE = 3
-
-PROTECTED_STATUSES = PROTECTED_FROM_HEALTH
 
 ACTIVE_ASSIGNMENT_STATUSES = frozenset({
     RdpStatusEnum.assigned,
@@ -146,7 +144,9 @@ def apply_uptime_kuma_event(db: Session, payload: dict[str, Any]) -> dict[str, A
     changed = False
     alert_message: str | None = None
 
-    if resource.status in PROTECTED_STATUSES and kuma_status != KUMA_MAINTENANCE:
+    # Admin lock is never overridden by Kuma. Maintenance is only skipped when
+    # the seat is quarantine-held — otherwise Kuma UP / admin unlock can clear it.
+    if resource.status == RdpStatusEnum.admin_locked and kuma_status != KUMA_MAINTENANCE:
         db.add(resource)
         db.commit()
         db.refresh(resource)
@@ -157,6 +157,21 @@ def apply_uptime_kuma_event(db: Session, payload: dict[str, Any]) -> dict[str, A
             "skipped": "protected_status",
             "status": resource.status.value,
         }
+
+    if resource.status == RdpStatusEnum.maintenance and kuma_status != KUMA_MAINTENANCE:
+        from services.rdp_quarantine import is_quarantine_held
+
+        if is_quarantine_held(db, resource.id):
+            db.add(resource)
+            db.commit()
+            db.refresh(resource)
+            return {
+                "ok": True,
+                "monitor": monitor_name,
+                "rdp_id": str(resource.id),
+                "skipped": "quarantine_hold",
+                "status": resource.status.value,
+            }
 
     if kuma_status == KUMA_DOWN:
         if resource.status != RdpStatusEnum.offline:

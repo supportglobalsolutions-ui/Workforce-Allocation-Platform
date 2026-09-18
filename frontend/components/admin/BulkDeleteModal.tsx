@@ -7,7 +7,7 @@ import { AlertCircle, AlertTriangle, Mail, Trash2, X } from 'lucide-react';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
-const OTP_THRESHOLD = 10;
+const SESSION_OTP_THRESHOLD = 10;
 const ALERT_THRESHOLD = 5;
 
 interface Challenge {
@@ -35,13 +35,14 @@ interface Props {
 }
 
 /**
- * Confirm bulk delete. ≤10: confirm only. >10: email OTP to Settings alert inbox.
- * >5: backend also emails an informational alert.
+ * Confirm bulk/single delete.
+ * Workers: always email OTP to the Settings alert inbox (even for one person).
+ * Sessions: confirm always; OTP when deleting more than 10.
  */
 export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDeleted }: Props) {
   const [mounted, setMounted] = useState(false);
-  const needsOtp = ids.length > OTP_THRESHOLD;
-  const [step, setStep] = useState<'confirm' | 'code'>(needsOtp ? 'confirm' : 'confirm');
+  const needsOtp = kind === 'workers' || ids.length > SESSION_OTP_THRESHOLD;
+  const [step, setStep] = useState<'confirm' | 'code'>('confirm');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [code, setCode] = useState('');
   const [busy, setBusy] = useState(false);
@@ -124,7 +125,9 @@ export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDel
             </span>
             <div className="min-w-0">
               <h2 className="text-base font-bold text-theme-heading">
-                {step === 'code' ? 'Enter confirmation code' : `Delete ${ids.length} ${ids.length === 1 ? noun : nouns}?`}
+                {step === 'code'
+                  ? 'Enter confirmation code'
+                  : `Delete ${ids.length} ${ids.length === 1 ? noun : nouns}?`}
               </h2>
               <p className="text-xs text-theme-muted mt-0.5">This cannot be undone.</p>
             </div>
@@ -145,8 +148,9 @@ export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDel
           <>
             <div className="text-sm text-theme-muted space-y-2">
               <p>
-                Permanently delete <span className="font-semibold text-theme-heading">{ids.length}</span>{' '}
-                {ids.length === 1 ? noun : nouns}.
+                Are you sure you want to permanently delete{' '}
+                <span className="font-semibold text-theme-heading">{ids.length}</span>{' '}
+                {ids.length === 1 ? noun : nouns}?
               </p>
               {sample.length > 0 && (
                 <ul className="text-xs list-disc pl-4 space-y-0.5">
@@ -159,13 +163,15 @@ export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDel
               {ids.length > ALERT_THRESHOLD && (
                 <p className="flex items-start gap-1.5 text-gold-accent text-xs">
                   <AlertTriangle size={12} className="shrink-0 mt-0.5" />
-                  More than {ALERT_THRESHOLD} — the Settings alert email will be notified.
+                  More than {ALERT_THRESHOLD} — the Settings alert email will also be notified.
                 </p>
               )}
               {needsOtp && (
                 <p className="flex items-start gap-1.5 text-xs">
                   <Mail size={12} className="shrink-0 mt-0.5 text-theme-muted" />
-                  More than {OTP_THRESHOLD} — a verification code will be sent to the Settings alert email.
+                  {kind === 'workers'
+                    ? 'A verification code will be sent to the Settings alert email before anyone can be deleted.'
+                    : `More than ${SESSION_OTP_THRESHOLD} — a verification code will be sent to the Settings alert email.`}
                 </p>
               )}
               {kind === 'sessions' && (

@@ -77,6 +77,7 @@ class WorkerResponse(WorkerBase):
     first_name: Optional[str] = None
     last_name:  Optional[str] = None
     account_banned: bool = False
+    account_protected: bool = False
     account_status: Optional[str] = None
     partner_entity_name: Optional[str] = None
     partner_entity_is_self: Optional[bool] = None

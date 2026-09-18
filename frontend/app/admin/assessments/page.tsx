@@ -7,6 +7,7 @@ import {
   Settings, Timer, Trash2, Upload, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
@@ -262,6 +263,7 @@ function McqDetailModal({
   const [showQForm, setShowQForm] = useState(false);
   const [editQ, setEditQ]         = useState<McqQuestion | undefined>();
   const [deletingQ, setDeletingQ] = useState<string | null>(null);
+  const [questionToDelete, setQuestionToDelete] = useState<McqQuestion | null>(null);
   const [results, setResults]     = useState<McqResult[]>([]);
   const [rLoading, setRLoading]   = useState(false);
   const [rError, setRError]       = useState('');
@@ -288,10 +290,15 @@ function McqDetailModal({
   useEffect(() => { loadQ(); }, [loadQ]);
   useEffect(() => { if (tab === 'results') loadR(); }, [tab, loadR]);
 
-  async function handleDeleteQ(qid: string) {
+  async function handleDeleteQ() {
+    if (!questionToDelete) return;
+    const qid = questionToDelete.id;
     setDeletingQ(qid);
-    try { await api.delete(`/assessments/questions/${qid}`); setQuestions((p) => p.filter((q) => q.id !== qid)); }
-    catch { /* ignore */ }
+    try {
+      await api.delete(`/assessments/questions/${qid}`);
+      setQuestions((p) => p.filter((q) => q.id !== qid));
+      setQuestionToDelete(null);
+    } catch { /* ignore */ }
     finally { setDeletingQ(null); }
   }
 
@@ -368,7 +375,7 @@ function McqDetailModal({
                         <div className="flex items-center gap-1 shrink-0">
                           <button type="button" onClick={() => { setEditQ(q); setShowQForm(true); }}
                             className="w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"><Settings size={12} /></button>
-                          <button type="button" onClick={() => handleDeleteQ(q.id)} disabled={deletingQ === q.id}
+                          <button type="button" onClick={() => setQuestionToDelete(q)} disabled={deletingQ === q.id}
                             className="w-7 h-7 flex items-center justify-center rounded-lg text-theme-muted hover:text-red-400 hover:bg-red-500/10 transition-colors disabled:opacity-40">
                             {deletingQ === q.id ? <SpinningDots size="sm" /> : <Trash2 size={12} />}
                           </button>
@@ -494,6 +501,23 @@ function McqDetailModal({
           onSaved={(u) => { const m = { ...localSet, ...u }; setLocalSet(m); onUpdated(m); setShowEdit(false); }}
           onClose={() => setShowEdit(false)} />
       )}
+      <ConfirmModal
+        open={!!questionToDelete}
+        title="Delete this question?"
+        body={
+          questionToDelete ? (
+            <p className="text-sm text-theme-muted">
+              Remove question <span className="font-semibold text-theme-heading">#{questionToDelete.sort_order}</span>?
+              This cannot be undone.
+            </p>
+          ) : null
+        }
+        confirmLabel="Delete question"
+        tone="danger"
+        busy={deletingQ === questionToDelete?.id}
+        onCancel={() => { if (!deletingQ) setQuestionToDelete(null); }}
+        onConfirm={() => void handleDeleteQ()}
+      />
     </>
   );
 }
