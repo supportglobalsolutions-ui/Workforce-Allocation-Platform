@@ -93,16 +93,25 @@ export default function SignupPage() {
       .catch(() => setCountries(fallback));
   }, [step, countries.length]);
 
-  const inputClass = isDark
-    ? 'w-full bg-[#04201a]/80 text-white placeholder-[#50756b] text-sm rounded-xl pl-10 pr-4 py-3 border border-[#0df5c4]/25 focus:border-[#0df5c4] focus:ring-1 focus:ring-[#0df5c4] outline-none transition-all'
-    : 'w-full bg-emerald-50/80 text-emerald-950 placeholder-emerald-800/35 text-sm rounded-xl pl-10 pr-4 py-3 border border-emerald-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400 outline-none transition-all';
+  // Shared control chrome without width — phone row needs dial + national side by side.
+  const controlClass = isDark
+    ? 'bg-[#04201a]/80 text-white placeholder-[#50756b] text-sm rounded-xl py-3 border border-[#0df5c4]/25 focus:border-[#0df5c4] focus:ring-1 focus:ring-[#0df5c4] outline-none transition-all'
+    : 'bg-emerald-50/80 text-emerald-950 placeholder-emerald-800/35 text-sm rounded-xl py-3 border border-emerald-200 focus:border-emerald-500 focus:ring-1 focus:ring-emerald-400 outline-none transition-all';
 
   const labelClass = isDark
     ? 'text-[10px] font-bold uppercase tracking-wider text-[#d4af37] mb-1.5 block'
     : 'text-[10px] font-bold uppercase tracking-wider text-emerald-800/55 mb-1.5 block';
 
   const fieldInput = (field: SignupField, extra = 'pl-4') =>
-    `${inputClass} ${extra} ${fieldErrors[field] ? 'border-red-400 focus:border-red-400 focus:ring-red-400' : ''}`;
+    `w-full ${controlClass} ${extra} ${fieldErrors[field] ? 'border-red-400 focus:border-red-400 focus:ring-red-400' : ''}`;
+
+  const phoneErrorClass = fieldErrors.phone
+    ? 'border-red-400 focus:border-red-400 focus:ring-red-400'
+    : '';
+
+  const phonePreview = phoneNational.trim()
+    ? composeE164(phoneDial, phoneNational)
+    : '';
 
   const sendCode = async (resend: boolean) => {
     setError('');
@@ -296,7 +305,7 @@ export default function SignupPage() {
                 disabled={sendingCode}
                 onChange={(e) => setCode(e.target.value.replace(/[^\d]/g, '').slice(0, 6))}
                 placeholder={sendingCode ? 'Sending…' : '••••••'}
-                className={`${inputClass} pl-4 tracking-[0.35em] text-center font-mono text-lg disabled:opacity-60`}
+                className={`w-full ${controlClass} pl-4 tracking-[0.35em] text-center font-mono text-lg disabled:opacity-60`}
               />
             </div>
             {error && (
@@ -372,12 +381,12 @@ export default function SignupPage() {
                 <label className={labelClass}>
                   Phone number <span className="text-red-400" aria-hidden>*</span>
                 </label>
-                <div className="flex gap-2">
+                <div className="flex items-stretch gap-2 min-w-0">
                   <select
                     required
                     value={phoneDial}
                     onChange={(e) => { setPhoneDial(e.target.value); clearField('phone'); }}
-                    className={`${fieldInput('phone')} w-[9.5rem] shrink-0`}
+                    className={`${controlClass} pl-3 pr-2 w-[8.75rem] shrink-0 ${phoneErrorClass}`}
                     aria-label="Country calling code (required)"
                   >
                     {PHONE_DIAL_CODES.map((c) => (
@@ -388,17 +397,28 @@ export default function SignupPage() {
                   </select>
                   <input
                     required
+                    type="tel"
                     inputMode="tel"
                     autoComplete="tel-national"
                     maxLength={12}
                     value={phoneNational}
                     onChange={(e) => { setPhoneNational(filterNationalNumber(e.target.value)); clearField('phone'); }}
-                    placeholder="712345678"
-                    className={`${fieldInput('phone')} flex-1`}
+                    placeholder="714516132"
+                    className={`${controlClass} pl-4 pr-4 min-w-0 flex-1 ${phoneErrorClass}`}
                     aria-required="true"
+                    aria-describedby="signup-phone-preview"
                   />
                 </div>
-                <p className="mt-1 text-[10px] text-theme-muted">Required. Example: +254 712345678</p>
+                <p
+                  id="signup-phone-preview"
+                  className={`mt-1.5 text-[11px] font-mono tracking-wide ${
+                    phonePreview
+                      ? (isDark ? 'text-[#0df5c4]' : 'text-emerald-700')
+                      : (isDark ? 'text-[#98b7af]' : 'text-emerald-800/55')
+                  }`}
+                >
+                  {phonePreview || 'Enter your number next to the code — e.g. +254714516132'}
+                </p>
                 {fieldErrors.phone && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.phone}</p>}
               </div>
               <div>
