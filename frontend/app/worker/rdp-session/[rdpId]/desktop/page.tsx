@@ -12,6 +12,7 @@ import {
 
 import ConfirmModal from '@/components/platform/ConfirmModal';
 import RdpViewer, { type RdpViewerHandle } from '@/components/rdp/RdpViewer';
+import RegionSnipOverlay from '@/components/rdp/RegionSnipOverlay';
 import { api } from '@/lib/api';
 import { reportError, reportWarning } from '@/lib/errors';
 import {
@@ -19,6 +20,9 @@ import {
   endRdpConnectionSafe,
   getMyActiveRdp,
   sessionEvidenceUrl,
+  portalFromParam,
+  DEFAULT_RDP_PORTAL,
+  type RdpPortal,
 } from '@/lib/rdp';
 import {
   MAX_SESSION_IMAGES,
@@ -35,8 +39,19 @@ interface RDPResource {
 
 type DisconnectPhase = 'idle' | 'confirm' | 'disconnecting';
 
+/**
+ * This tab renders no shell and lives under /worker for every role, so the
+ * portal that opened it rides along in the query string. Read from the URL
+ * rather than useSearchParams: the page is client-only and this avoids the
+ * Suspense bail-out that hook forces.
+ */
+function openerPortal(): RdpPortal {
+  if (typeof window === 'undefined') return DEFAULT_RDP_PORTAL;
+  return portalFromParam(new URLSearchParams(window.location.search).get('portal'));
+}
+
 function evidenceUrl(rdpId: string, sessionId?: string | null) {
-  return sessionEvidenceUrl(rdpId, sessionId);
+  return sessionEvidenceUrl(rdpId, sessionId, openerPortal());
 }
 
 /** Dedicated full-screen tab for the remote desktop. */
@@ -51,6 +66,9 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
   const [captureBusy, setCaptureBusy] = useState(false);
   const [captureNote, setCaptureNote] = useState<string | null>(null);
   const [shotCount, setShotCount] = useState(0);
+  /** Frame awaiting region selection in the snip overlay. */
+  const [pendingFrame, setPendingFrame] = useState<Blob | null>(null);
+  const [savingShot, setSavingShot] = useState(false);
   const [endError, setEndError] = useState<string | null>(null);
   /** Start collapsed so remote Chrome tabs stay clickable; expand on demand. */
   const [chromeHidden, setChromeHidden] = useState(true);
@@ -268,6 +286,7 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
     }, 400);
   }, [leaveToHistory, rdpId, sessionId]);
 
+  /** Grab a frame and open the snip overlay; nothing is saved until confirmed. */
   const runCapture = useCallback(async () => {
     if (!sessionId) {
       setCaptureNote('Session still starting — try again in a moment.');
@@ -286,6 +305,19 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         setCaptureNote('Capture cancelled.');
         return;
       }
+      setPendingFrame(blob);
+    } catch (err) {
+      setCaptureNote(reportError('Capture session evidence', err, { rdpId }));
+    } finally {
+      setCaptureBusy(false);
+    }
+  }, [rdpId, sessionId, shotCount]);
+
+  /** Save what the worker selected in the snip overlay (or the whole frame). */
+  const saveCapture = useCallback(async (blob: Blob) => {
+    if (!sessionId) return;
+    setSavingShot(true);
+    try {
       // The server owns the cap and returns the authoritative list, so a
       // second tab capturing at the same time cannot push this past 8.
       const result = await uploadSessionImageBlob(sessionId, blob);
@@ -293,12 +325,14 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
       setCaptureNote(
         `Screenshot ${result.image_urls.length} of ${result.max_images} saved.`,
       );
+      setPendingFrame(null);
     } catch (err) {
       setCaptureNote(reportError('Capture session evidence', err, { rdpId }));
+      setPendingFrame(null);
     } finally {
-      setCaptureBusy(false);
+      setSavingShot(false);
     }
-  }, [rdpId, sessionId, shotCount]);
+  }, [rdpId, sessionId]);
 
   const notifyTakeover = useCallback(() => {
     try {
@@ -352,6 +386,8 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
                 onClick={() => void runCapture()}
                 disabled={
                   captureBusy
+                  || savingShot
+                  || pendingFrame !== null
                   || disconnectPhase !== 'idle'
                   || shotCount >= MAX_SESSION_IMAGES
                 }
@@ -421,17 +457,22 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         />
       </div>
 
-      {/* One clear end dialog — then session history opens for images. */}
+      {/* One clear end dialog — then session history opens for images.
+          on-dark-surface: light theme remaps .text-white → dark ink; keep this dialog bright. */}
       {disconnectPhase === 'confirm' && (
-        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/60 p-4">
-          <div className="w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-red-900/40 bg-[#0f0808]">
+        <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/70 p-4">
+          <div className="on-dark-surface w-full max-w-sm rounded-2xl overflow-hidden shadow-2xl border border-red-500/50 bg-[#1a0c0c] text-[#f8fafc]">
             <div className="h-[3px] bg-gradient-to-r from-red-800 via-red-500 to-red-800" />
             <div className="px-6 pt-5 pb-6 space-y-4">
-              <p className="text-[15px] font-bold text-white">End this session?</p>
-              <p className="text-sm text-white/60 leading-relaxed">
+              <p className="text-[16px] font-bold" style={{ color: '#f8fafc' }}>
+                End this session?
+              </p>
+              <p className="text-sm leading-relaxed" style={{ color: '#f1f5f9' }}>
                 {machine?.nickname ? (
                   <>
-                    <span className="text-white/90 font-medium">{machine.nickname}</span>
+                    <span className="font-semibold" style={{ color: '#ffffff' }}>
+                      {machine.nickname}
+                    </span>
                     {' '}will disconnect. Next you can add or check screenshots in session history.
                   </>
                 ) : (
@@ -442,14 +483,16 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
                 <button
                   type="button"
                   onClick={() => setDisconnectPhase('idle')}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-medium text-white/70 bg-white/8 hover:bg-white/12 border border-white/10"
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-semibold bg-[#2a2a2e] hover:bg-[#3a3a40] border border-[#737373]"
+                  style={{ color: '#ffffff' }}
                 >
                   Keep working
                 </button>
                 <button
                   type="button"
                   onClick={() => void finishDisconnect()}
-                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-red-600 hover:bg-red-500"
+                  className="flex-1 px-4 py-2.5 rounded-xl text-sm font-bold bg-red-600 hover:bg-red-500"
+                  style={{ color: '#ffffff' }}
                 >
                   End session
                 </button>
@@ -469,6 +512,15 @@ export default function RdpDesktopPage({ params }: { params: { rdpId: string } }
         <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-50 max-w-md rounded-xl bg-red-950/90 border border-red-500/40 px-4 py-3 text-sm text-red-100">
           {endError}
         </div>
+      )}
+
+      {pendingFrame && (
+        <RegionSnipOverlay
+          source={pendingFrame}
+          busy={savingShot}
+          onConfirm={(blob) => { void saveCapture(blob); }}
+          onCancel={() => { if (!savingShot) setPendingFrame(null); }}
+        />
       )}
 
     </div>

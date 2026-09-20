@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile, status
+from pydantic import BaseModel
 from sqlmodel import Session, func, select
 
 from core.database import get_db
@@ -21,10 +22,19 @@ from schemas.client import (
     ClientRevenueAgreementUpdate,
     ClientUpdate,
 )
+from services.client_import import parse_client_import_file, upsert_clients_from_rows
 from services.client_owners import client_owner_name
 from .deps import apply_update
 
 router = APIRouter()
+
+
+class ClientImportResult(BaseModel):
+    created: int
+    updated: int
+    skipped: int
+    errors: list[str]
+    total_rows: int
 
 
 def _earning_response(db: Session, earning: ClientPeriodEarning) -> ClientPeriodEarningResponse:
@@ -78,6 +88,35 @@ def create_client(
     db.commit()
     db.refresh(client)
     return _to_response(db, client)
+
+
+@router.post("/import", response_model=ClientImportResult)
+async def import_clients(
+    file: UploadFile = File(...),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Bulk upsert clients from a CSV or Excel (.xlsx) rate sheet.
+
+    Expected columns (extras ignored; missing system fields stay blank):
+    Client, Billing Rate USD/hr, Active?, Notes — plus optional platform /
+    account fields. Matching is by client name (case-insensitive); existing
+    rows are updated. Platform defaults to Unassigned on create.
+    """
+    filename = file.filename or "upload.csv"
+    data = await file.read()
+    if not data:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    if len(data) > 5 * 1024 * 1024:
+        raise HTTPException(status_code=400, detail="File too large (max 5 MB).")
+    try:
+        rows = parse_client_import_file(filename, data)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not rows:
+        raise HTTPException(status_code=400, detail="No data rows found in the file.")
+    result = upsert_clients_from_rows(db, rows)
+    return ClientImportResult(**result)
 
 
 @router.get("/{client_id}", response_model=ClientResponse)

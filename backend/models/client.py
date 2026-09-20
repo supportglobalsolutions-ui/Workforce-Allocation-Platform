@@ -32,6 +32,11 @@ class Client(SQLModel, table=True):
     )
     name: str = Field(sa_column=Column(String(255), nullable=False))
     platform: str = Field(sa_column=Column(String(128), nullable=False))
+    # Client billing rate in USD per hour (from rate sheets / imports).
+    billing_rate_usd: Optional[Decimal] = Field(
+        default=None,
+        sa_column=Column(Numeric(10, 2), nullable=True),
+    )
     account_email: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     account_id: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     login_reference: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))

@@ -480,10 +480,17 @@ def disconnect(
     admin_id: UUID | None = None,
     allocation_id: UUID | None = None,
     connection_generation: int | None = None,
+    force: bool = False,
     close_sessions_fn,
     record_logout_fn,
 ) -> RdpOutcome:
-    """Close tunnel → confirm → release allocation. Generation-aware."""
+    """Close tunnel → confirm → release allocation. Generation-aware.
+
+    ``force`` is the admin's override: the seat is always torn down, even when
+    the gateway will not confirm the close. Without it an admin-initiated end
+    fails with 503 and nothing happens, which is the one case where an admin
+    most needs the session gone.
+    """
     db.refresh(resource)
     open_allocs = db.exec(
         select(Allocation).where(
@@ -617,11 +624,12 @@ def disconnect(
             # Ending the *allocation* satisfies the first: the worker is free to
             # claim elsewhere immediately. Holding the *machine* satisfies the
             # second. Nobody is trapped and nobody inherits a live tunnel.
-            if initiated_by == "worker":
+            if initiated_by == "worker" or force:
                 hold_machine = True
                 logger.warning(
-                    "Worker end for %s: Guacamole close %s — releasing the claim "
+                    "%s end for %s: Guacamole close %s — releasing the claim "
                     "but holding the machine out of service until confirmed",
+                    "Forced" if force else "Worker",
                     resource.id,
                     close_outcome.get("outcome"),
                 )
@@ -720,7 +728,7 @@ def disconnect(
             resource,
             open_allocs,
             reason=(
-                "Closure could not be confirmed when the worker disconnected "
+                "Closure could not be confirmed when the session ended "
                 f"({close_outcome.get('outcome')}). Held so nobody inherits a "
                 "possibly-live tunnel."
             ),
@@ -774,6 +782,7 @@ def force_release(
         ip_address=ip_address,
         initiated_by="admin",
         admin_id=admin_id,
+        force=True,
         close_sessions_fn=close_sessions_fn,
         record_logout_fn=record_logout_fn,
     )

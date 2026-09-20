@@ -2,7 +2,8 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Pencil, X, Check, LayoutDashboard, Star } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Pencil, X, Check, LayoutDashboard, Star, Wallet } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import {
@@ -13,15 +14,29 @@ import {
   parseE164,
   validateE164Phone,
 } from '@/lib/phone-country-codes';
+import { countryNameList } from '@/lib/countries';
+import { apiListSignupCountries } from '@/lib/auth/supabase-auth';
 import { filterResidence, validateResidence, RESIDENCE_MAX } from '@/lib/auth/signup-fields';
+import {
+  MM_NAME_MAX,
+  MM_PROVIDER_MAX,
+  filterMobileMoneyName,
+  filterMobileMoneyProvider,
+  hasCompletePayoutDetails,
+  validateMobileMoneyName,
+  validateMobileMoneyProvider,
+} from '@/lib/mobile-money-fields';
 
 interface Worker {
   id: string;
+  public_code?: string | null;
   username: string | null;
   display_name: string;
   country: string;
   phone?: string | null;
   residence?: string | null;
+  mobile_money_name?: string | null;
+  mobile_money_provider?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   pay_tier: string;
@@ -59,70 +74,102 @@ function Stat({ value, label }: { value: React.ReactNode; label: string }) {
 
 export default function ProfilePage() {
   const { session } = useAuth();
+  const router = useRouter();
+  const searchParams = useSearchParams();
+  const needsPayout = searchParams.get('complete') === 'payout';
   const [worker, setWorker] = useState<Worker | null>(null);
+  const [countries, setCountries] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [saveOk, setSaveOk] = useState(false);
   const [form, setForm] = useState({
     username: '',
     country: '',
     phoneDial: '254',
     phoneNational: '',
     residence: '',
+    mobileMoneyName: '',
+    mobileMoneyProvider: '',
   });
+
+  const applyWorkerToForm = (w: Worker) => {
+    const parsed = parseE164(w.phone || '');
+    setForm({
+      username: w.username ?? '',
+      country: w.country,
+      phoneDial: parsed?.dial || dialCodeForCountryName(w.country || 'Kenya'),
+      phoneNational: parsed?.national || '',
+      residence: w.residence || '',
+      mobileMoneyName: w.mobile_money_name || '',
+      mobileMoneyProvider: w.mobile_money_provider || '',
+    });
+  };
 
   useEffect(() => {
     api.get<Worker>('/workers/me')
       .then((w) => {
         setWorker(w);
-        const parsed = parseE164(w.phone || '');
-        setForm({
-          username: w.username ?? '',
-          country: w.country,
-          phoneDial: parsed?.dial || dialCodeForCountryName(w.country || 'Kenya'),
-          phoneNational: parsed?.national || '',
-          residence: w.residence || '',
-        });
+        applyWorkerToForm(w);
+        if (needsPayout || !hasCompletePayoutDetails(w)) {
+          setEditing(true);
+        }
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load profile'))
       .finally(() => setLoading(false));
-  }, []);
+  }, [needsPayout]);
+
+  // Fetch the picker list only once the form is open — the read-only view
+  // shows the saved name and needs no list at all.
+  useEffect(() => {
+    if (!editing || countries.length) return;
+    const fallback = countryNameList();
+    apiListSignupCountries()
+      .then((rows) => {
+        const names = rows.map((row) => row.name).filter(Boolean);
+        setCountries(names.length ? names : fallback);
+      })
+      .catch(() => setCountries(fallback));
+  }, [editing, countries.length]);
 
   const cleanUsername = (v: string) => v.replace(/[^a-zA-Z0-9_]/g, '').slice(0, 32);
 
   const handleEdit = () => {
     if (!worker) return;
-    const parsed = parseE164(worker.phone || '');
-    setForm({
-      username: worker.username ?? '',
-      country: worker.country,
-      phoneDial: parsed?.dial || dialCodeForCountryName(worker.country || 'Kenya'),
-      phoneNational: parsed?.national || '',
-      residence: worker.residence || '',
-    });
+    applyWorkerToForm(worker);
     setSaveError(null);
+    setSaveOk(false);
     setEditing(true);
   };
 
   const handleCancel = () => {
-    setEditing(false);
+    if (worker) applyWorkerToForm(worker);
     setSaveError(null);
+    setSaveOk(false);
+    setEditing(false);
   };
 
   const handleSave = async () => {
     if (!worker) return;
     const username = form.username.trim().toLowerCase();
     const fullPhone = composeE164(form.phoneDial, form.phoneNational);
+    const requirePayout = needsPayout || !hasCompletePayoutDetails(worker);
+    const mmName = filterMobileMoneyName(form.mobileMoneyName).trim();
+    const mmProvider = filterMobileMoneyProvider(form.mobileMoneyProvider).trim();
     const phoneErr = validateE164Phone(fullPhone);
     const residenceErr = form.residence.trim() ? validateResidence(form.residence) : '';
-    if (phoneErr || residenceErr) {
-      setSaveError(phoneErr || residenceErr);
+    const mmNameErr = validateMobileMoneyName(mmName, { required: requirePayout });
+    const mmProviderErr = validateMobileMoneyProvider(mmProvider, { required: requirePayout });
+    if (phoneErr || residenceErr || mmNameErr || mmProviderErr) {
+      setSaveOk(false);
+      setSaveError(phoneErr || residenceErr || mmNameErr || mmProviderErr);
       return;
     }
     setSaving(true);
     setSaveError(null);
+    setSaveOk(false);
     try {
       const updated = await api.patch<Worker>('/workers/me', {
         username: username || undefined,
@@ -130,11 +177,21 @@ export default function ProfilePage() {
         country: form.country.trim() || undefined,
         phone: fullPhone,
         residence: form.residence.trim().replace(/\s+/g, ' ') || undefined,
+        mobile_money_name: mmName || null,
+        mobile_money_provider: mmProvider || null,
       });
       setWorker(updated);
-      setEditing(false);
+      applyWorkerToForm(updated);
+      setSaveOk(true);
+      if (hasCompletePayoutDetails(updated)) {
+        setEditing(false);
+        if (needsPayout) router.replace('/worker/profile');
+      }
     } catch (e) {
-      setSaveError(e instanceof Error ? e.message : 'Save failed');
+      const raw = e instanceof Error ? e.message : 'Save failed';
+      const looksLikeRule =
+        /letter|number|special|character|max|digit|only use/i.test(raw);
+      setSaveError(looksLikeRule ? 'Could not save. Please check your details and try again.' : raw);
     } finally {
       setSaving(false);
     }
@@ -167,6 +224,13 @@ export default function ProfilePage() {
 
   return (
     <div className="max-w-4xl mx-auto pb-10">
+      {(needsPayout || (worker && !hasCompletePayoutDetails(worker))) && (
+        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 flex gap-3 items-center">
+          <Wallet size={20} className="text-amber-400 shrink-0" />
+          <p className="text-sm font-bold text-theme-heading">Add your mobile money details to continue.</p>
+        </div>
+      )}
+
       <div className="relative h-44 md:h-52 rounded-2xl overflow-hidden bg-gradient-to-br from-[#032F25] via-[#0A4D3A] to-[#032F25]">
         <div className="absolute inset-0 bg-[radial-gradient(600px_200px_at_80%_0%,rgba(212,175,55,0.18),transparent_65%)]" />
         <div className="absolute inset-0 bg-[radial-gradient(500px_220px_at_15%_100%,rgba(63,199,160,0.2),transparent_60%)]" />
@@ -195,29 +259,29 @@ export default function ProfilePage() {
             <button
               type="button"
               onClick={handleEdit}
-              className="absolute top-5 right-6 flex items-center gap-2 text-[11px] font-bold uppercase tracking-[0.15em] text-emerald-accent hover:opacity-80 transition-opacity"
+              className="absolute top-5 right-6 btn-primary text-xs py-2 px-4 flex items-center gap-2"
             >
+              <Pencil size={14} />
               Edit
-              <Pencil size={15} />
             </button>
           ) : (
-            <div className="absolute top-5 right-6 flex items-center gap-4">
+            <div className="absolute top-5 right-6 flex items-center gap-2">
               <button
                 type="button"
                 onClick={handleCancel}
                 disabled={saving}
-                className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.15em] text-theme-muted hover:text-theme-heading transition-colors"
+                className="btn-secondary text-xs py-2 px-4 flex items-center gap-1.5 disabled:opacity-50"
               >
                 <X size={14} />
                 Cancel
               </button>
               <button
                 type="button"
-                onClick={handleSave}
+                onClick={() => void handleSave()}
                 disabled={saving}
-                className="flex items-center gap-1.5 text-[11px] font-bold uppercase tracking-[0.15em] text-emerald-accent hover:opacity-80 transition-opacity disabled:opacity-50"
+                className="btn-primary text-xs py-2 px-4 flex items-center gap-1.5 disabled:opacity-50"
               >
-                <Check size={15} />
+                <Check size={14} />
                 {saving ? 'Saving…' : 'Save'}
               </button>
             </div>
@@ -265,12 +329,7 @@ export default function ProfilePage() {
       </div>
 
       <div className="mt-10 flex items-end justify-between">
-        <div>
-          <h2 className="font-display text-2xl font-bold text-theme-heading tracking-tight">Profile details</h2>
-          <p className="text-sm text-theme-muted mt-1">
-            {editing ? 'Update your details below, then save.' : 'Your account information.'}
-          </p>
-        </div>
+        <h2 className="font-display text-2xl font-bold text-theme-heading tracking-tight">Profile details</h2>
         {!editing && (
           <button
             type="button"
@@ -298,12 +357,10 @@ export default function ProfilePage() {
                     className="input-field pl-7"
                   />
                 </div>
-                <p className="text-[11px] text-theme-muted">This is also your display name.</p>
               </div>
               <div className="flex flex-col gap-1">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Country</label>
-                <input
-                  type="text"
+                <select
                   value={form.country}
                   onChange={(e) => {
                     const next = e.target.value;
@@ -314,7 +371,15 @@ export default function ProfilePage() {
                     }));
                   }}
                   className="input-field"
-                />
+                >
+                  <option value="">Select country</option>
+                  {/* Keep whatever is already saved selectable, even if it is
+                      not on the list (e.g. the "Unassigned" default). */}
+                  {form.country && !countries.includes(form.country) && (
+                    <option value={form.country}>{form.country}</option>
+                  )}
+                  {countries.map((name) => <option key={name} value={name}>{name}</option>)}
+                </select>
               </div>
               <div className="flex flex-col gap-1 sm:col-span-2">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Phone number</label>
@@ -336,11 +401,10 @@ export default function ProfilePage() {
                     inputMode="tel"
                     value={form.phoneNational}
                     onChange={(e) => setForm((f) => ({ ...f, phoneNational: filterNationalNumber(e.target.value) }))}
-                    placeholder="714516132"
+                    placeholder="712345678"
                     className="input-field flex-1"
                   />
                 </div>
-                <p className="text-[11px] text-theme-muted">Include country code. Kenya example: +254714516132</p>
               </div>
               <div className="flex flex-col gap-1 sm:col-span-2">
                 <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Place of residence</label>
@@ -353,6 +417,33 @@ export default function ProfilePage() {
                   className="input-field"
                 />
               </div>
+              <div className="flex flex-col gap-1 sm:col-span-2">
+                <p className="text-[10px] font-bold uppercase tracking-[0.15em] text-theme-muted pt-1">
+                  Mobile money payout
+                </p>
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Full name on mobile money</label>
+                <input
+                  type="text"
+                  maxLength={MM_NAME_MAX}
+                  value={form.mobileMoneyName}
+                  onChange={(e) => setForm((f) => ({ ...f, mobileMoneyName: filterMobileMoneyName(e.target.value) }))}
+                  placeholder="Jane Doe"
+                  className="input-field"
+                />
+              </div>
+              <div className="flex flex-col gap-1">
+                <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Provider</label>
+                <input
+                  type="text"
+                  maxLength={MM_PROVIDER_MAX}
+                  value={form.mobileMoneyProvider}
+                  onChange={(e) => setForm((f) => ({ ...f, mobileMoneyProvider: filterMobileMoneyProvider(e.target.value) }))}
+                  placeholder="e.g. Mpesa, MTN"
+                  className="input-field"
+                />
+              </div>
             </>
           ) : (
             <>
@@ -361,16 +452,13 @@ export default function ProfilePage() {
               <Field label="Country" value={worker.country} />
               <Field label="Phone" value={worker.phone || <span className="text-theme-muted italic">Not set</span>} />
               <Field label="Place of residence" value={worker.residence || <span className="text-theme-muted italic">Not set</span>} />
+              <Field label="Mobile money name" value={worker.mobile_money_name || <span className="text-theme-muted italic">Not set</span>} />
+              <Field label="Provider" value={worker.mobile_money_provider || <span className="text-theme-muted italic">Not set</span>} />
             </>
           )}
           <Field
             label="Email"
-            value={
-              <span className="flex items-center gap-2">
-                {email ?? <span className="text-theme-muted italic">—</span>}
-                <span className="text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded border border-theme text-theme-muted">From sign-in</span>
-              </span>
-            }
+            value={email ?? <span className="text-theme-muted italic">—</span>}
           />
           <Field
             label="Last Updated"
@@ -381,13 +469,50 @@ export default function ProfilePage() {
         <div className="border-t border-theme" />
 
         <div className="grid grid-cols-1 gap-3">
-          <Field label="Worker ID" value={<span className="font-mono text-xs">{worker.id}</span>} />
+          <Field
+            label="Worker ID"
+            value={
+              worker.public_code ? (
+                <span className="font-mono text-sm tracking-wide text-emerald-accent">{worker.public_code}</span>
+              ) : (
+                <span className="text-theme-muted italic">Not assigned (staff accounts have no worker ID)</span>
+              )
+            }
+          />
           {worker.partner_entity_id && (
             <Field label="Partner Entity ID" value={<span className="font-mono text-xs">{worker.partner_entity_id}</span>} />
           )}
         </div>
 
-        {saveError && <p className="text-danger text-sm">{saveError}</p>}
+        {saveError && (
+          <p className="text-danger text-sm font-medium">{saveError}</p>
+        )}
+        {saveOk && !saveError && (
+          <p className="text-emerald-accent text-sm font-medium">Saved.</p>
+        )}
+
+        {editing && (
+          <div className="sticky bottom-4 z-10 -mx-2 mt-2 rounded-2xl border border-emerald-accent/30 bg-[var(--card-bg)]/95 backdrop-blur-md px-4 py-3 flex flex-wrap items-center justify-end gap-3 shadow-lg">
+            <button
+              type="button"
+              onClick={handleCancel}
+              disabled={saving}
+              className="btn-secondary py-2.5 px-5 text-sm flex items-center gap-2 disabled:opacity-50"
+            >
+              <X size={16} />
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void handleSave()}
+              disabled={saving}
+              className="btn-primary py-2.5 px-8 text-sm font-bold flex items-center gap-2 disabled:opacity-50 min-w-[8.5rem] justify-center"
+            >
+              <Check size={16} />
+              {saving ? 'Saving…' : 'Save'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );

@@ -170,4 +170,34 @@ export const api = {
   patch:  <T>(path: string, body: unknown)     => request<T>('PATCH',  path, body),
   put:    <T>(path: string, body: unknown)     => request<T>('PUT',    path, body),
   delete: <T>(path: string)                    => request<T>('DELETE', path),
+  /** Multipart upload — do not set Content-Type (browser sets the boundary). */
+  upload: async <T>(path: string, formData: FormData): Promise<T> => {
+    const fetchWith = async (forceRefresh: boolean) => {
+      const token = await getToken(forceRefresh);
+      return fetch(`${BASE}${path}`, {
+        method: 'POST',
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        body: formData,
+      });
+    };
+    let res = await fetchWith(false);
+    if (res.status === 401) res = await fetchWith(true);
+    if (!res.ok) {
+      const parsed = await parseErrorMessage(res);
+      throw new AppError({
+        friendly: parsed.friendly,
+        raw: parsed.raw,
+        status: res.status,
+        requestId: parsed.requestId,
+        debug: parsed.debug,
+        url: `${BASE}${path}`,
+        method: 'POST',
+        retryAfterMs: retryAfterHeaderMs(res),
+      });
+    }
+    if (res.status === 204) return undefined as unknown as T;
+    return res.json() as Promise<T>;
+  },
 };

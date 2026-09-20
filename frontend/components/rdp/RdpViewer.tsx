@@ -80,6 +80,32 @@ function backoffDelayMs(attempt: number, base = 1000, cap = 30_000): number {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
+ * Browsers keep Web Audio suspended until a user gesture. Guacamole plays
+ * remote sound through its singleton AudioContext — resume it (and nudge a
+ * silent buffer) so the first click actually unmutes RDP audio.
+ */
+function unlockBrowserAudio(Guacamole: {
+  AudioContextFactory?: { getAudioContext?: () => AudioContext | null };
+}): void {
+  try {
+    const fromGuac = Guacamole.AudioContextFactory?.getAudioContext?.() ?? null;
+    const Ctx = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
+    const ctx = fromGuac ?? (Ctx ? new Ctx() : null);
+    if (!ctx) return;
+    if (ctx.state === 'suspended') {
+      void ctx.resume();
+    }
+    const buffer = ctx.createBuffer(1, 1, 22050);
+    const source = ctx.createBufferSource();
+    source.buffer = buffer;
+    source.connect(ctx.destination);
+    source.start(0);
+  } catch {
+    /* ignore — audio unlock is best-effort */
+  }
+}
+
+/**
  * Trade a single-use join ticket for a Guacamole token scoped to one machine.
  *
  * Returns null when this worker is outside the rollout cohort — the caller
@@ -464,9 +490,15 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
         document.addEventListener('fullscreenchange', resizeRemote);
 
         // Mouse input (scale coordinates back to remote resolution).
+        // First press also unlocks Web Audio so remote sound can play.
+        let audioUnlocked = false;
         mouse = new Guacamole.Mouse(displayEl);
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const sendMouse = (state: any) => {
+          if (!audioUnlocked) {
+            audioUnlocked = true;
+            unlockBrowserAudio(Guacamole);
+          }
           const scale = client.getDisplay().getScale() || 1;
           client.sendMouseState(
             new Guacamole.Mouse.State(
@@ -486,8 +518,15 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
 
         // Keyboard input.
         keyboard = new Guacamole.Keyboard(document);
-        keyboard.onkeydown = (keysym: number) => client.sendKeyEvent(1, keysym);
-        keyboard.onkeyup = (keysym: number) => client.sendKeyEvent(0, keysym);
+        const unlockThenKey = (pressed: 0 | 1) => (keysym: number) => {
+          if (!audioUnlocked) {
+            audioUnlocked = true;
+            unlockBrowserAudio(Guacamole);
+          }
+          client.sendKeyEvent(pressed, keysym);
+        };
+        keyboard.onkeydown = unlockThenKey(1);
+        keyboard.onkeyup = unlockThenKey(0);
 
         const box = displayRef.current;
         const width = Math.max(box?.clientWidth ?? window.innerWidth, 800);
@@ -521,6 +560,10 @@ const RdpViewer = forwardRef<RdpViewerHandle, RdpViewerProps>(function RdpViewer
             });
         connectData.append('GUAC_IMAGE', 'image/png');
         connectData.append('GUAC_IMAGE', 'image/jpeg');
+        // Advertise PCM audio so guacd negotiates Remote Audio into the browser
+        // (same idea as mstsc “Play on this computer”).
+        connectData.append('GUAC_AUDIO', 'audio/L8');
+        connectData.append('GUAC_AUDIO', 'audio/L16');
 
         // Surface FastAPI close reasons (e.g. 4409 already-open) before Guacamole paints.
         try {

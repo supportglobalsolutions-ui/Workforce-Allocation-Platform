@@ -24,7 +24,7 @@ function remainingSeconds(iso: string): number {
   return Math.max(0, Math.ceil(ms / 1000));
 }
 
-type Kind = 'workers' | 'sessions';
+type Kind = 'workers' | 'sessions' | 'accounts';
 
 interface Props {
   kind: Kind;
@@ -41,7 +41,8 @@ interface Props {
  */
 export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDeleted }: Props) {
   const [mounted, setMounted] = useState(false);
-  const needsOtp = kind === 'workers' || ids.length > SESSION_OTP_THRESHOLD;
+  // Accounts and workers always need the emailed code; sessions only in bulk.
+  const needsOtp = kind === 'workers' || kind === 'accounts' || ids.length > SESSION_OTP_THRESHOLD;
   const [step, setStep] = useState<'confirm' | 'code'>('confirm');
   const [challenge, setChallenge] = useState<Challenge | null>(null);
   const [code, setCode] = useState('');
@@ -49,11 +50,12 @@ export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDel
   const [error, setError] = useState<string | null>(null);
   const [left, setLeft] = useState(0);
 
-  const noun = kind === 'workers' ? 'worker' : 'session';
-  const nouns = kind === 'workers' ? 'workers' : 'sessions';
-  const requestPath = kind === 'workers' ? '/workers/delete/request-otp' : '/sessions/delete/request-otp';
-  const confirmPath = kind === 'workers' ? '/workers/delete/confirm' : '/sessions/delete/confirm';
-  const idKey = kind === 'workers' ? 'worker_ids' : 'session_ids';
+  const noun = kind === 'workers' ? 'worker' : kind === 'accounts' ? 'account' : 'session';
+  const nouns = kind === 'workers' ? 'workers' : kind === 'accounts' ? 'accounts' : 'sessions';
+  const basePath = kind === 'workers' ? '/workers' : kind === 'accounts' ? '/auth/users' : '/sessions';
+  const requestPath = `${basePath}/delete/request-otp`;
+  const confirmPath = `${basePath}/delete/confirm`;
+  const idKey = kind === 'workers' ? 'worker_ids' : kind === 'accounts' ? 'uids' : 'session_ids';
 
   useEffect(() => {
     setMounted(true);
@@ -169,13 +171,19 @@ export default function BulkDeleteModal({ kind, ids, labels = [], onClose, onDel
               {needsOtp && (
                 <p className="flex items-start gap-1.5 text-xs">
                   <Mail size={12} className="shrink-0 mt-0.5 text-theme-muted" />
-                  {kind === 'workers'
-                    ? 'A verification code will be sent to the Settings alert email before anyone can be deleted.'
-                    : `More than ${SESSION_OTP_THRESHOLD} — a verification code will be sent to the Settings alert email.`}
+                  {kind === 'sessions'
+                    ? `More than ${SESSION_OTP_THRESHOLD} — a verification code will be sent to the Settings alert email.`
+                    : 'A verification code will be sent to the Settings alert email before anything is deleted.'}
                 </p>
               )}
               {kind === 'sessions' && (
                 <p className="text-[11px] text-theme-muted">Live (unended) sessions are skipped automatically.</p>
+              )}
+              {kind === 'accounts' && (
+                <p className="text-[11px] text-theme-muted">
+                  Protected Super Admins, your own account, and the account that created
+                  yours are refused automatically.
+                </p>
               )}
             </div>
             <div className="flex justify-end gap-2 pt-1">

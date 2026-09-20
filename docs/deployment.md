@@ -1,9 +1,9 @@
 # Production Deployment Guide: Hetzner Backend & Vercel Frontend
 ### GlobalSolutions Workforce Allocation Platform
 
-> **Topology:** production runs on **one Hetzner VPS** (API + Redis + Guacamole + coordinator + Kuma). A separate media host is **not** planned. **No numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`). [rdp-media-deployment.md](rdp-media-deployment.md) §1–4 live work is cancelled.
+> **Topology:** production runs on **one Hetzner VPS** (API + Redis + Guacamole + coordinator + Kuma). A separate media host is **not** planned. **No numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`). See [rdp-architecture.md](rdp-architecture.md) §3 (single-VPS; cancelled second-host work).
 >
-> **Phase 7 multi-host redundancy** templates remain in [rdp-redundancy.md](rdp-redundancy.md) / `scripts/rdp_acceptance.py` for optional future use; live ops stay single-host.
+> **Multi-host redundancy** templates remain in [rdp-architecture.md](rdp-architecture.md) §4 / `scripts/rdp_acceptance.py` for optional future use; live ops stay single-host.
 
 This is the single, complete, step-by-step production deployment manual for the platform. It walks you through deploying the **Backend & Infrastructure** (FastAPI, Redis, Apache Guacamole, Uptime Kuma) on a **Hetzner Cloud VPS**, connecting to **Supabase** for PostgreSQL and Authentication, and hosting the **Frontend** (Next.js 14) on **Vercel**.
 

@@ -1,12 +1,13 @@
 # RDP Architecture
 ### GlobalSolutions Workforce Allocation Platform
 
-This file has **two parts**:
+**Single source of truth for remote desktop:** design, single-VPS topology notes, and redundancy runbooks. Former `rdp-media-deployment.md` and `rdp-redundancy.md` content lives here.
 
-| Part | Purpose | Keep? |
-|---|---|---|
-| **[Section 1 — Logic and design](#section-1--logic-and-design-keep-for-reference)** | How the system works, product rules, target design | **Keep** for future reference |
-| **[Section 2 — Live testing](#section-2--live-testing)** | Pilot / VPS checks before `RDP_DIRECT_GATEWAY_MODE=on` | **Keep** until every Result is Success |
+| Part | Purpose |
+|---|---|
+| **[Section 1 — Logic and design](#section-1--logic-and-design-keep-for-reference)** | How the system works, product rules, target design |
+| **[Section 3 — Single-VPS topology](#section-3--single-vps-topology-media-split-cancelled)** | Current ops plan; cancelled second-host / session-cap work |
+| **[Section 4 — Redundancy](#section-4--control-plane--gateway-redundancy)** | Optional multi-gateway / dual-API runbook (future) |
 
 ---
 
@@ -386,100 +387,254 @@ quietly not being freed.
 
 Answered: scale toward large concurrency; 5‑min grace; disconnect only (no Windows logoff); force-stop required; no silent dual tabs; **Guacamole auth-json** over a custom extension (Phase 5); **no numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`); load-test scripts remain optional tooling only; grace-window sessions hold their capacity slot when a cap is enabled (§1.6).
 
-Still open if needed later: Windows host region/provider limits; capacity at claim vs connect if a positive cap is re-enabled; gateway fence timing. Degraded-mode runtime behaviour is **implemented** (Phase 8 Action 3); backup/restore plan remains in `docs/rdp-redundancy.md`.
+Still open if needed later: Windows host region/provider limits; capacity at claim vs connect if a positive cap is re-enabled; gateway fence timing. Degraded-mode runtime behaviour is **implemented** (Phase 8 Action 3); backup/restore plan is in [§4](#section-4--control-plane--gateway-redundancy).
 
 **Non-goals:** rewrite FastAPI; replace Guacamole early; pixels through Vercel; migrate work to another Windows host on failure.
 
 ---
 
-# Section 2 — Live testing
+# Section 3 — Single-VPS topology (media split cancelled)
 
-Build for Phases 1–8 is complete. This section is the remaining **live** proof on the VPS / browser before flipping `RDP_DIRECT_GATEWAY_MODE=on`.
+Status: **single-VPS topology only** — a separate media host will not be provisioned.
+**Session cap:** we do **not** enforce a numeric max-session limit
+(`RDP_MAX_LIVE_SESSIONS=0` = unlimited). Do not size or apply a production
+ceiling from a ramp.
+The coordinator (Phase 4) and direct ticket-authenticated browser gateway (Phase 5)
+are live on this same host. Compose media/control split files remain in-repo for a
+possible future split; they are not part of the current ops plan.
 
-**How to use**
+> **Cancelled:** provisioning `workforce-rdp-prod` / moving Guacamole to a second VPS
+> (§3.1–3.3 below). Skip those sections unless the single-VPS decision is reversed.
+>
+> **Cancelled:** measured load ramp to set `RDP_MAX_LIVE_SESSIONS` (§3.4). Scripts and
+> CSV templates remain for optional diagnostics only.
 
-| Column | Meaning |
+## 3.1 Provision and network
+
+*(Reference only — cancelled for live ops.)*
+
+Create `workforce-rdp-prod` in the control host's region, with an operator-selected
+size and SSH key. Attach both hosts to the same private network/subnet. Example
+addresses below are **placeholders**: control `10.20.0.2`, media `10.20.0.3`.
+Record server ID, region, vCPU, RAM, NIC speed, public/private addresses and image
+versions with the acceptance results. No capacity is implied by the chosen size.
+
+Install Docker Compose v2, Nginx and Certbot using [deployment.md](deployment.md). Allow public
+80/443, restrict SSH to operations IPs, and allow private TCP 8081 only from the
+control host. Permit media egress to each Windows host on its configured RDP port;
+update Windows/provider allowlists for the new media egress IP. Kuma and API
+preflight probes still need control-host access to Windows.
+
+The media Compose file publishes only localhost 8080; PostgreSQL and guacd have no
+published ports. Nginx binds private 8081 and enforces a control-IP allowlist.
+Private HTTP assumes a trusted network; use an encrypted overlay or private TLS
+if your threat model requires encryption between hosts. Docker-published ports
+are still reachable from other containers on the same host unless firewall rules
+block them — treat published ports as host-local, not internet-private.
+
+## 3.2 DNS, TLS, Compose split
+
+*(Reference only — cancelled for live ops.)*
+
+## 3.3 Data migration and cutover
+
+*(Reference only — cancelled for live ops.)*
+
+Do not combine this move with a Guacamole or PostgreSQL major-version upgrade.
+
+## 3.4 Capacity measurement (optional diagnostics only)
+
+**Not part of the live plan.** Ops does not set a max-session number from this
+section. If you still want host-pressure numbers for resizing the VPS (not for
+`RDP_MAX_LIVE_SESSIONS`), the ramp protocol and `scripts/rdp_capacity.py` remain
+available; leave production at `RDP_MAX_LIVE_SESSIONS=0`.
+
+| Acceptance item | Result |
 |---|---|
-| **Details** | What must be true |
-| **Test to do** | Concrete steps (browser, DevTools, SSH) |
-| **Result** | `Success` / `Fail` / `Not done` |
-
-Update **Result** after each Action. Leave `Not done` until you run it.
-
----
-
-## Test 2 — Direct join ticket
-
-Prerequisite: `RDP_DIRECT_GATEWAY_MODE=pilot` and pilot email set on the VPS.
-
-### Action 1 — Pilot claim and open
-
-| Details | Test to do | Result |
-|---|---|---|
-| Pilot worker can claim and open a desktop on the direct path. | Log in as the pilot email. Claim an assigned machine and open the desktop session. | Not done |
-
-### Action 2 — Join ticket returns direct mode
-
-| Details | Test to do | Result |
-|---|---|---|
-| Join ticket API selects the Guacamole path, not the Python proxy. | In DevTools Network: `POST /rdp/{id}/join-ticket` response includes `"mode": "direct"`. | Not done |
-
-### Action 3 — WebSocket goes to `guac.`
-
-| Details | Test to do | Result |
-|---|---|---|
-| Desktop pixels use Guacamole WebSocket, not FastAPI `ws-tunnel`. | In DevTools: desktop WebSocket is `wss://guac.gsdeck.com/.../websocket-tunnel`, **not** `wss://api…/ws-tunnel`. | Not done |
+| Provisioned media host and migrated data | **Cancelled** — single-VPS only; Guacamole stays on the existing host |
+| Direct gateway + API restart acceptance | Passed locally (2026-09-19); production go-live when `RDP_DIRECT_GATEWAY_MODE=on` |
+| Measured ramp → set `RDP_MAX_LIVE_SESSIONS` | **Cancelled** — unlimited (`0`); no numeric session ceiling |
+| Production cap from evidence | **N/A** — policy is no fixed max sessions |
 
 ---
 
-## Test 3 — Ticket and public Guacamole security
+# Section 4 — Control-plane + gateway redundancy
 
-### Action 1 — Ticket is single-use
+Optional future runbook. Live ops stay on **one** VPS ([§3](#section-3--single-vps-topology-media-split-cancelled)). Code support already exists for multi-gateway when needed.
 
-| Details | Test to do | Result |
-|---|---|---|
-| A redeemed join ticket cannot be reused. | Capture `rdp_ticket` from the successful join. Replay the same ticket against Guacamole / verify → expect `403`. | Not done |
+## Goal
 
-### Action 2 — Public Guacamole password login fails
+Survive loss of one media gateway or one API host without dual-control of a
+Windows session, and without inventing frees during Redis/Postgres outages.
 
-| Details | Test to do | Result |
-|---|---|---|
-| Workers cannot log into Guacamole with a password on the public URL. | Open `https://guac.gsdeck.com` in a normal browser (no SSH tunnel). Confirm password login fails. (SSH-tunnel admin path may still work.) | Not done |
+Code support lives in:
 
----
-
-## Test 4 — API restart does not kill the desktop
-
-### Action 1 — Restart backend mid-session
-
-| Details | Test to do | Result |
-|---|---|---|
-| Live picture survives a control-plane restart (pixels on Guacamole). | With a live desktop open: `sudo systemctl restart workforce-backend`. Confirm the picture keeps moving and the tab does not go black. | Not done |
-
-### Action 2 — Coordinator still healthy after restart
-
-| Details | Test to do | Result |
-|---|---|---|
-| Coordinator unit stays up when API restarts. | After Action 1: `systemctl is-active workforce-rdp-coordinator` is `active`. Session still owned / not mass-released. | Not done |
+- `backend/services/rdp_gateway_cluster.py` — sticky placement, drain, health
+- `backend/services/rdp_coordinator.py` — Redis leader election + gateway probing
+- `infrastructure/systemd/workforce-rdp-coordinator.service`
+- `infrastructure/nginx/api-upstream.conf` — dual FastAPI upstream template
+- `scripts/rdp_acceptance.py` — scores an acceptance run (§4.3)
 
 ---
 
-## Test 5 — Shift watch and go-live
+## 4.1 Gateway redundancy
 
-### Action 1 — Full-shift watch on direct path
+### Configure multiple media nodes
 
-| Details | Test to do | Result |
-|---|---|---|
-| Direct canvas stays usable for a real shift; legacy tunnel stays as rollback until then. | With `RDP_DIRECT_GATEWAY_MODE=pilot`, one or two real workers run a full shift. Confirm WebSocket stays on `wss://guac…/websocket-tunnel`. | Not done |
+In backend `.env`:
 
-### Action 2 — Flip to `on`
+```ini
+RDP_GATEWAY_CAPACITY=50
+RDP_GATEWAYS=[{"id":"gw1","public_url":"https://guac1.yourdomain.com","private_url":"http://10.0.0.11:8080/guacamole","capacity":50},{"id":"gw2","public_url":"https://guac2.yourdomain.com","private_url":"http://10.0.0.12:8080/guacamole","capacity":50}]
+GUACAMOLE_JSON_SECRET_KEY=<same 32 hex on every Guacamole node and the API>
+```
 
-| Details | Test to do | Result |
-|---|---|---|
-| After Tests 2–4 and Action 1 succeed, enable direct mode for everyone. | Set `RDP_DIRECT_GATEWAY_MODE=on` on the VPS, restart API + coordinator, record date/result. | Not done |
+Each media host runs `compose.media.yml` with its own guacd + guacamole +
+guac_db (or a shared replicated guac_db — decide before scaling writes).
 
-### Action 3 — Schedule legacy tunnel removal
+DNS: one A/AAAA per `guacN.` hostname (Cloudflare DNS-only, no proxy).
 
-| Details | Test to do | Result |
-|---|---|---|
-| Unused Python `ws-tunnel` path is removed in a later controlled release (not required to pass go-live). | After Action 2: note a release ticket/date to delete the legacy tunnel code path. | Not done |
+### Sticky placement
+
+On claim / join-ticket the control plane stores `allocations.gateway_id`.
+Reconnects reuse that gateway when it is still accepting seats. New claims
+pick the least-loaded non-draining node under capacity.
+
+### Maintenance drain
+
+```bash
+# Stop placing new sessions on gw1 (existing tunnels keep running)
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://api.yourdomain.com/rdp/gateways/gw1/drain
+
+# Allow new placements again
+curl -X POST -H "Authorization: Bearer $TOKEN" \
+  https://api.yourdomain.com/rdp/gateways/gw1/undrain
+
+# Inspect
+curl -H "Authorization: Bearer $TOKEN" \
+  https://api.yourdomain.com/rdp/gateways
+```
+
+Drain order: mark draining → wait for live_sessions → 0 (or force-stop) →
+take host offline → undrain after healthy again.
+
+A mistyped gateway id returns 404 rather than silently draining nothing.
+
+### Losing a gateway without draining it first
+
+Drain is the planned path. For an unplanned loss, the coordinator probes every
+configured gateway once per tick (under leader election, so a claim never pays
+for a probe) and publishes the result to `rdp:gateway:health:<id>`:
+
+- A node observed **down** is skipped for new placements, and a reconnect whose
+  sticky `gateway_id` points at it is re-placed onto a survivor.
+- A node with **no marker** — never probed, marker expired, or no coordinator
+  running — counts as usable. That is deliberate: a broken probe or a dead
+  coordinator must degrade to blind placement, not empty the pool and refuse
+  every claim (Principle 4, unknown is not free).
+- `GET /rdp/gateways` reports `healthy` alongside `draining` and `live_sessions`.
+
+Sessions already running on the lost node cannot be saved — their tunnels are
+gone. They are released by the normal 5-minute grace, and the worker reclaims
+onto a surviving gateway.
+
+### Headroom
+
+Three nodes that each pass a 50-session test are **not** 150 production seats.
+Keep N+1 spare: run normally at ~2/3 of measured capacity so one node failure
+still fits survivors.
+
+---
+
+## 4.2 Control-plane redundancy
+
+### Second FastAPI instance
+
+1. Provision a second control host (or second process on a larger box).
+2. Share the same `.env` secrets (Supabase, Redis, Guacamole JSON key).
+3. Point both at the same Redis and Postgres (Supabase).
+4. Put Nginx (or Hetzner LB) in front with the upstream in
+   `infrastructure/nginx/api-upstream.conf`.
+5. Set `RDP_RUN_COORDINATOR_IN_API=false` on **both** API hosts and run
+   `workforce-rdp-coordinator` on exactly one host (or two with leader election —
+   the Redis key already elects a single writer).
+
+### Coordinator leader election
+
+Already implemented: `rdp:coordinator:leader` Redis key with TTL.
+Multiple coordinator processes may start; only the leader runs grace expiry
+and reconcile ticks. If the leader dies, another instance takes over within
+one TTL window.
+
+### Postgres / Redis failover plan
+
+| Store | Role | Failure response | Restore |
+|---|---|---|---|
+| Supabase Postgres | Authoritative ownership | Pause new claims/tickets; established media tunnels may continue | Supabase PITR / project failover; never invent frees |
+| Redis | Locks, tickets, leader, drain flags | Pause ticket issuance and capacity locks; do not auto-release allocations | Redeploy Redis from empty; rebuild tickets on next claim; drain flags reset to env defaults |
+| guac_db (per media host) | Guacamole connection catalog | That gateway goes offline; sticky sessions on it cannot reconnect until repaired | Restore from media-host backup; run reconcile |
+
+Backups to keep now (even before a second node exists):
+
+- Supabase automatic backups enabled
+- Nightly `pg_dump` of each `guac_db`
+- Document Redis as ephemeral — losing it must not erase Postgres allocations
+
+---
+
+## 4.3 Full acceptance run
+
+Targets (starting values — agree them **before** the run, not after seeing the
+numbers). The machine-checked thresholds live in
+`infrastructure/load-test/acceptance.example.json`; this table is the human
+summary of the same intent:
+
+| Metric | Starting target |
+|---|---|
+| Claim → first frame p95 | < 5 s |
+| Reconnect p95 | < 10 s |
+| Unexpected disconnects / session-hour | < 0.1 |
+| Claims that succeed then never paint | 0 |
+
+Runbook:
+
+1. Cap measured from optional load diagnostics is applied (`RDP_MAX_LIVE_SESSIONS` / per-gateway) only if ops re-enables a numeric ceiling.
+2. Start N concurrent desktops for ≥ 12 hours with realistic typing/scrolling.
+3. Inject: API deploy mid-session, kill one gateway (drain then stop), duplicate-tab Switch here, force-stop, Wi‑Fi style disconnect for 5 minutes, and kill the coordinator holding the leader key.
+4. Capture first-frame, reconnect, drop rate, CPU/RAM on each gateway.
+5. Feed plateaus into `scripts/rdp_capacity.py` with the limits JSON.
+6. Fix failures; re-run until every gate passes.
+
+### Scoring the run
+
+"The acceptance suite passed" has to mean the same thing each time, so the
+verdict is computed, not judged:
+
+```bash
+cp infrastructure/load-test/acceptance-results.example.json my-run.json
+# replace every value with what was actually observed, then:
+python scripts/rdp_acceptance.py my-run.json \
+  --limits infrastructure/load-test/acceptance.example.json
+```
+
+Exit code 0 only when the endurance thresholds hold **and** all six required
+scenarios are recorded as passed. Two rules matter most:
+
+- A scenario that was not exercised scores `not run`, never a pass. Silence is
+  not evidence, and every scenario must carry an `evidence` note.
+- `api_deploy_mid_session` cannot pass on `media_path: "proxy"`. Pixels going
+  through FastAPI cannot survive a restart of FastAPI, so a "pass" there would
+  be measuring the wrong thing.
+
+Record results under `docs/rdp-acceptance-results/` (create when you have numbers).
+
+---
+
+## 4.4 Deploy order (if multi-host is revived)
+
+1. Phase 5 direct gateway working on one media host.
+2. Optional media split + measured diagnostics (§3).
+3. Add second media host + `RDP_GATEWAYS` + DNS.
+4. Dual API + coordinator unit + upstream.
+5. Acceptance run (§4.3) before calling the platform “100-worker ready”.

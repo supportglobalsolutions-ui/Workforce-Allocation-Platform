@@ -101,10 +101,24 @@ export async function endRdpConnectionSafe(
   }
 }
 
-export function sessionEvidenceUrl(rdpId: string, sessionId?: string | null): string {
+/** Portal a desktop was opened from — evidence and back-links stay inside it. */
+export type RdpPortal = '/worker' | '/leadership';
+
+export const DEFAULT_RDP_PORTAL: RdpPortal = '/worker';
+
+/** Read the portal off the desktop tab's query string. */
+export function portalFromParam(value: string | null | undefined): RdpPortal {
+  return value === 'leadership' ? '/leadership' : DEFAULT_RDP_PORTAL;
+}
+
+export function sessionEvidenceUrl(
+  rdpId: string,
+  sessionId?: string | null,
+  basePath: RdpPortal = DEFAULT_RDP_PORTAL,
+): string {
   const q = new URLSearchParams({ evidence: '1', rdp: rdpId });
   if (sessionId) q.set('session', sessionId);
-  return `/worker/session-history?${q.toString()}`;
+  return `${basePath}/session-history?${q.toString()}`;
 }
 
 export const lockRdp = (rdpId: string) =>
@@ -305,11 +319,25 @@ export const getDesktopGuard = (rdpId: string) =>
     `/rdp/${rdpId}/desktop-guard`,
   );
 
-export const rdpDesktopUrl = (rdpId: string) => `/worker/rdp-session/${rdpId}/desktop`;
+/**
+ * The desktop tab itself lives under /worker for every role (it renders no
+ * shell), so it carries the opener's portal as a query param and hands that
+ * back when the session ends.
+ */
+export const rdpDesktopUrl = (
+  rdpId: string,
+  basePath: RdpPortal = DEFAULT_RDP_PORTAL,
+) => {
+  const base = `/worker/rdp-session/${rdpId}/desktop`;
+  return basePath === '/leadership' ? `${base}?portal=leadership` : base;
+};
 
 /** Open the dedicated remote-desktop tab (full viewport). Returns the Window so callers can close it later. */
-export function openRdpDesktopTab(rdpId: string): Window | null {
-  return window.open(rdpDesktopUrl(rdpId), `rdp-desktop-${rdpId}`);
+export function openRdpDesktopTab(
+  rdpId: string,
+  basePath: RdpPortal = DEFAULT_RDP_PORTAL,
+): Window | null {
+  return window.open(rdpDesktopUrl(rdpId, basePath), `rdp-desktop-${rdpId}`);
 }
 
 /**
@@ -348,9 +376,13 @@ export function reserveDesktopTab(rdpId: string): Window | null {
   return win;
 }
 
-export function sendTabToDesktop(win: Window | null, rdpId: string): void {
+export function sendTabToDesktop(
+  win: Window | null,
+  rdpId: string,
+  basePath: RdpPortal = DEFAULT_RDP_PORTAL,
+): void {
   if (!win || win.closed) return;
-  win.location.replace(rdpDesktopUrl(rdpId));
+  win.location.replace(rdpDesktopUrl(rdpId, basePath));
 }
 
 export function closeReservedTab(win: Window | null): void {

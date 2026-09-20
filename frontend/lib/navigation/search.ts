@@ -79,6 +79,9 @@ const ROUTE_CATALOG: Array<{
   { title: 'CEO Command', href: '/leadership/ceo-command', portal: 'leadership', description: 'Executive KPIs and live operations.', keywords: ['ceo', 'dashboard', 'command'] },
   { title: 'Ops Briefing', href: '/leadership/analytics', portal: 'leadership', description: 'Today, week, and month intelligence.', keywords: ['analytics', 'briefing', 'ai', 'insights'] },
   { title: 'Utilization', href: '/leadership/utilization', portal: 'leadership', description: 'Machine use, idle time, capacity.', keywords: ['rdp', 'machines', 'capacity'] },
+  { title: 'RDP Claim Board', href: '/leadership/rdp-claim-board', portal: 'leadership', description: 'Claim a remote machine without leaving the leadership portal.', keywords: ['rdp', 'machine', 'claim', 'desktop'] },
+  { title: 'Session History', href: '/leadership/session-history', portal: 'leadership', description: 'Your past desktop sessions and the evidence screen.', keywords: ['history', 'sessions', 'evidence', 'hours'] },
+  { title: 'Chat with admin', href: '/leadership/chat', portal: 'leadership', description: 'Message an administrator for help.', keywords: ['chat', 'support', 'admin', 'help', 'contact'] },
   { title: 'Financial Intel', href: '/leadership/financial', portal: 'leadership', description: 'Revenue, payouts, and profit by month.', keywords: ['finance', 'revenue', 'payroll', 'profit'] },
 ];
 

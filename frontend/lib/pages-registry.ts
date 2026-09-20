@@ -72,6 +72,16 @@ export const PAGES: PageEntry[] = [
     roles: ['Worker', 'Partner Worker'],
   },
   {
+    id: 'leadership-rdp-claim-board',
+    title: 'RDP Claim Board (Leadership)',
+    href: '/leadership/rdp-claim-board',
+    portal: 'leadership',
+    purpose: 'The same machine grid, mounted in the leadership shell so an executive never lands in the worker portal to claim a desktop.',
+    features: ['Machine status grid', 'Country/client/status filters', 'Search', 'Claim action', 'Live updates'],
+    status: 'live',
+    roles: ['Executive', 'Super Admin'],
+  },
+  {
     id: 'active-session',
     title: 'Active Session Screen',
     href: '/worker/active-session',

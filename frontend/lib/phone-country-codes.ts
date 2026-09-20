@@ -151,3 +151,30 @@ export function phoneNeedsCountryCodeUpdate(phone: string | null | undefined): b
   if (!phone || !phone.trim()) return true;
   return Boolean(validateE164Phone(phone));
 }
+
+/**
+ * Admin display: always show dial + national together (e.g. +254714516132).
+ * Uses country name to recover a dial when the stored value has no +.
+ */
+export function formatPhoneE164(
+  phone: string | null | undefined,
+  country?: string | null,
+): string {
+  const raw = (phone || '').trim();
+  if (!raw) return '—';
+
+  const compact = raw.replace(/[^\d+]/g, '');
+  if (compact.startsWith('+')) {
+    const parsed = parseE164(compact);
+    if (parsed?.national) {
+      return composeE164(parsed.dial, parsed.national);
+    }
+    const digits = compact.slice(1);
+    return digits ? `+${digits}` : '—';
+  }
+
+  const national = compact.replace(/\D/g, '');
+  if (!national) return '—';
+  const dial = dialCodeForCountryName(country || '') || '254';
+  return composeE164(dial, national);
+}

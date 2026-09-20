@@ -123,9 +123,9 @@ globalsolutions-platform/
     ├── ERD.md                  ← data model diagram
     ├── api.md                  ← FastAPI auto-docs reference
     ├── deployment.md           ← Hetzner VPS setup guide
-    ├── rdp-architecture.md     ← RDP logic (Section 1) + implementation phases (Section 2)
+    ├── rdp-architecture.md     ← All RDP docs (design, topology, redundancy)
     ├── security-checklist.md
     └── phase-progress.md       ← weekly update log
 ```
 
-Remote desktop design, current defects, and the build checklist live in [rdp-architecture.md](rdp-architecture.md). This file stays the repository tree.
+Remote desktop design, topology, and redundancy live in [rdp-architecture.md](rdp-architecture.md). This file stays the repository tree.

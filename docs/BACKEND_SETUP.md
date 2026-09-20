@@ -207,9 +207,18 @@ are ready. Each machine shows its own connection state:
 - **not provisioned** — no connection yet; click **Sync Guacamole**
 - **connection … no longer exists** — someone deleted it in Guacamole; click **Sync Guacamole** to rebuild it
 
-**Sync Guacamole** is idempotent and safe to press any time: it updates the existing connection,
-adopts one that already has the same nickname, or creates a new one. Editing the host, port or
-nickname re-syncs automatically. Leaving the password blank on an edit keeps the current one.
+**Sync Guacamole** pushes this platform’s machine settings into Guacamole’s connection
+catalogue for that nickname: host/IP, port, RDP username/password when known, quality
+defaults, and **audio always on** (`disable-audio=false`). It finds an existing connection
+by name, updates it, or creates one, then stores Guacamole’s connection id on the machine.
+
+Use Sync when Guacamole’s copy may be wrong or missing — first add, host/port/nickname/password
+change, Guacamole wipe/rebuild, or after platform defaults change (e.g. enabling audio). You do
+**not** need it on every worker claim. After Sync that changes connection params, workers must
+**end and reopen** the desktop; an already-open tab keeps the old tunnel.
+
+Editing the host, port or nickname re-syncs automatically. Leaving the password blank on an
+edit keeps the current one.
 
 Changing credentials later: edit the machine, type the new password, save.
 
@@ -610,7 +619,7 @@ sudo systemctl start globalsolutions-api
 | Machine shows **connection … no longer exists** | The connection was deleted in Guacamole — click **Sync Guacamole** to rebuild it |
 | Viewer opens but auth fails on the Windows login screen | Wrong RDP username/password — edit the machine, retype the password, save |
 | Guacamole tab opens but screen is black | Windows Firewall on the remote PC is blocking port 3389 |
-| No sound in the browser desktop | Platform had audio off by default; it is now on (`disable-audio=false`). On **Admin → RDP**, click **Sync Guacamole** for each machine, reconnect, and click once in the desktop (browsers block sound until a click). Windows “Play on this PC” in mstsc does not apply to Guacamole. |
+| No sound in the browser desktop | Audio is always on in Guacamole (`disable-audio=false`). **Admin → RDP → Sync** the machine (pushes that flag), end and reopen the desktop, then click once in the session (browser autoplay). Windows mstsc “Play on this PC” does not apply to Guacamole. |
 | `venv\Scripts\activate` not found | Run `python -m venv venv` then `pip install -r requirements.txt` |
 | Guacamole login fails with guacadmin/guacadmin | Run `docker compose down -v`, regenerate `guacamole_initdb.sql`, then `docker compose up -d` |
 | `ModuleNotFoundError` | Virtual environment not activated — run `venv\Scripts\activate` |

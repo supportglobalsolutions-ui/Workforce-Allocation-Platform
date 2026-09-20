@@ -58,6 +58,7 @@ from services.admin_otp import (
     PURPOSE_BAN_SUPER_ADMIN,
     PURPOSE_DELETE_ACCOUNT,
     PURPOSE_DEMOTE_SUPER_ADMIN,
+    bulk_delete_target_id,
     issue_otp,
     verify_otp,
 )
@@ -69,6 +70,7 @@ from services.usernames import (
     email_for_identifier,
     normalize_username,
 )
+from services.worker_public_code import assign_public_code
 from services.login_otp import (
     OTP_RESEND_LIMIT,
     OTP_RESEND_WINDOW_SECONDS,
@@ -380,6 +382,8 @@ def _ensure_login_profile(
             work_ready=False,
         )
         db.add(worker)
+        db.flush()
+        assign_public_code(db, worker)
         db.commit()
         db.refresh(worker)
     elif as_partner:
@@ -592,6 +596,124 @@ def _list_postgres_users(db: Session) -> list[dict]:
         })
 
     return users
+
+
+class AccountBulkDeleteRequest(BaseModel):
+    uids: list[str] = Field(min_length=1)
+
+
+class AccountBulkDeleteConfirm(BaseModel):
+    uids: list[str] = Field(min_length=1)
+    challenge_id: UUID | None = None
+    code: str | None = None
+
+
+ACCOUNT_BULK_HARD_MAX = 50
+
+
+def _normalize_uids(uids: list[str]) -> list[str]:
+    unique = [u for u in dict.fromkeys(x.strip() for x in uids) if u]
+    if not unique:
+        raise HTTPException(status_code=400, detail="Select at least one account.")
+    if len(unique) > ACCOUNT_BULK_HARD_MAX:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Cannot delete more than {ACCOUNT_BULK_HARD_MAX} accounts at once.",
+        )
+    return unique
+
+
+def _account_delete_target(uids: list[str]) -> UUID:
+    return bulk_delete_target_id(
+        PURPOSE_DELETE_ACCOUNT, [_auth_uid_uuid(u) for u in uids]
+    )
+
+
+# ── Bulk delete (registered before the /users/{uid} routes) ──────────────────
+
+@router.post("/users/delete/request-otp")
+def request_accounts_delete_otp(
+    body: AccountBulkDeleteRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Email a code to the alert inbox. Nothing is deleted yet."""
+    uids = _normalize_uids(body.uids)
+    admin = get_admin_user(db, current_user)
+    label = "1 account" if len(uids) == 1 else f"{len(uids)} accounts"
+    html = render_otp_html(
+        title="Confirm account deletion",
+        intro=(
+            f"An administrator asked to permanently delete <strong>{label}</strong>. "
+            "Enter this code in the platform to continue."
+        ),
+        warning=(
+            "This cannot be undone. Protected Super Admins and your own account "
+            "are always refused."
+        ),
+    )
+    text = render_otp_text(
+        title="Confirm account deletion",
+        intro=f"An administrator asked to permanently delete {label}.",
+        warning="This cannot be undone.",
+    )
+    payload = issue_otp(
+        db,
+        purpose=PURPOSE_DELETE_ACCOUNT,
+        target_id=_account_delete_target(uids),
+        subject=f"Confirmation code — delete {label}",
+        html=html,
+        text=text,
+        admin=admin,
+    )
+    payload["count"] = len(uids)
+    return payload
+
+
+@router.post("/users/delete/confirm")
+def confirm_accounts_delete(
+    body: AccountBulkDeleteConfirm,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Consume the code, then delete each account the actor is allowed to."""
+    uids = _normalize_uids(body.uids)
+
+    # Always require the emailed code — a stolen admin session must not be
+    # enough to wipe logins without mailbox access.
+    if not body.challenge_id or not body.code:
+        raise HTTPException(
+            status_code=400,
+            detail="A confirmation code emailed to the alert inbox is required to delete accounts.",
+        )
+    verify_otp(
+        db,
+        challenge_id=body.challenge_id,
+        purpose=PURPOSE_DELETE_ACCOUNT,
+        target_id=_account_delete_target(uids),
+        code=body.code,
+    )
+
+    deleted = 0
+    blocked: list[str] = []
+    # Per-account rules (protected founders, self-delete, the account that
+    # created yours) live in delete_login_account — one refusal must not sink
+    # the rest of the batch.
+    for uid in uids:
+        try:
+            delete_login_account(
+                db,
+                uid,
+                actor_uid=current_user["uid"],
+                actor_role=current_user["role"],
+            )
+            deleted += 1
+        except (AccountGuardError, PermissionError, ValueError) as exc:
+            blocked.append(f"{uid}: {exc}")
+        except Exception as exc:  # noqa: BLE001 — report, do not abort
+            blocked.append(f"{uid}: {exc}")
+
+    return {"deleted_count": deleted, "blocked_active": blocked}
 
 
 @router.get("/users")
@@ -902,6 +1024,9 @@ def approve_user(
                 start_date=date.today(),
                 work_ready=False,
             )
+            db.add(worker)
+            db.flush()
+            assign_public_code(db, worker)
         else:
             worker.worker_type = worker_type
             worker.partner_entity_id = (
@@ -911,7 +1036,7 @@ def approve_user(
             worker.country = country_name
             if username:
                 worker.username = username
-        db.add(worker)
+            db.add(worker)
         db.commit()
 
     email = (profile.get("email") or "").strip().lower()

@@ -30,13 +30,9 @@ DEFAULT_ATTRIBUTES: dict[str, str] = {
     "max-connections-per-user": "",
 }
 
-# Sane defaults for Windows RDP over guacd.
-# Audio: Guacamole remotes sound over the tunnel into the browser. Windows then
-# shows a "Remote Audio" device — the tray X means that device never appeared,
-# almost always because disable-audio was still true on the Guacamole connection
-# or console-audio was on. Force both off/false on every sync.
-# Visuals: 32 bpp + font smoothing / theming reduce the soft, blotchy look that
-# shows up when guacd falls back to heavy JPEG compression on a thin session.
+# Audio is always on for browser sessions (Guacamole equivalent of mstsc
+# “Play on this computer”). Hard-pin on every sync so a leftover
+# disable-audio=true / console-audio cannot leave Windows with a tray X.
 DEFAULT_PARAMETERS: dict[str, str] = {
     "security": "any",
     "ignore-cert": "true",

@@ -100,10 +100,11 @@ export default function ResetPasswordPage() {
     <AuthPageShell>
       <AuthGlassCard>
         <div className="flex flex-col items-center text-center mb-6">
-          <GlobalSolutionsLogo size="md" showOperations={false} />
-          <h1 className="text-xl sm:text-2xl font-display font-bold mt-5 tracking-tight text-white">
-            {stage === 'update' ? 'Choose a new password' : 'Reset your password'}
-          </h1>
+          <GlobalSolutionsLogo
+            size="md"
+            title={stage === 'update' ? 'Choose a new password' : 'Reset password'}
+            showOperations={false}
+          />
           <p className="text-xs text-[#98b7af] text-center mt-3">
             {stage === 'update'
               ? 'Use 8 to 10 characters, with 1 capital letter, 1 number, and 1 special character.'

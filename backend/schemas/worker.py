@@ -6,6 +6,7 @@ from uuid import UUID
 from pydantic import ConfigDict, field_validator
 from sqlmodel import SQLModel
 
+from core.mobile_money import normalize_mobile_money_name, normalize_mobile_money_provider
 from models.enums import WorkerStatusEnum, WorkerTypeEnum
 
 
@@ -14,6 +15,8 @@ class WorkerBase(SQLModel):
     partner_entity_id: Optional[UUID] = None
     username:          Optional[str]  = None
     display_name:      str
+    mobile_money_name: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
     country:           str
     pay_tier:          str
     pay_amount:        Optional[Decimal] = None
@@ -29,12 +32,24 @@ class WorkerCreate(WorkerBase):
 
 
 class WorkerUpdate(SQLModel):
-    """Worker self-service: identity fields only."""
+    """Worker self-service: identity and mobile-money payout fields."""
     username:     Optional[str] = None
     display_name: Optional[str] = None
     country:      Optional[str] = None
     phone:        Optional[str] = None
     residence:    Optional[str] = None
+    mobile_money_name: Optional[str] = None
+    mobile_money_provider: Optional[str] = None
+
+    @field_validator("mobile_money_name")
+    @classmethod
+    def _mm_name(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_mobile_money_name(v)
+
+    @field_validator("mobile_money_provider")
+    @classmethod
+    def _mm_provider(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_mobile_money_provider(v)
 
 
 class WorkerAdminUpdate(SQLModel):
@@ -44,6 +59,8 @@ class WorkerAdminUpdate(SQLModel):
     country:           Optional[str]              = None
     phone:             Optional[str]              = None
     residence:         Optional[str]              = None
+    mobile_money_name: Optional[str]              = None
+    mobile_money_provider: Optional[str]          = None
     pay_tier:          Optional[str]              = None
     pay_amount:        Optional[Decimal]          = None
     pay_frequency:     Optional[str]              = None
@@ -64,11 +81,22 @@ class WorkerAdminUpdate(SQLModel):
             raise ValueError("pay_frequency must be per_month or per_task")
         return v
 
+    @field_validator("mobile_money_name")
+    @classmethod
+    def _mm_name(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_mobile_money_name(v)
+
+    @field_validator("mobile_money_provider")
+    @classmethod
+    def _mm_provider(cls, v: Optional[str]) -> Optional[str]:
+        return normalize_mobile_money_provider(v)
+
 
 class WorkerResponse(WorkerBase):
     model_config = ConfigDict(from_attributes=True)
 
     id:         UUID
+    public_code: Optional[str] = None
     created_at: datetime
     updated_at: datetime
     email:      Optional[str] = None

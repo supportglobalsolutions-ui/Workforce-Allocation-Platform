@@ -11,6 +11,7 @@ import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
 import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
+import { fetchAllSessions } from '@/lib/fetchSessions';
 import { periodForSessionDay, shortPeriodLabel, type PeriodLike } from '@/lib/periods';
 
 interface WorkSession {
@@ -35,6 +36,7 @@ interface WorkSession {
 
 interface Worker {
   id: string;
+  public_code?: string;
   display_name: string;
   username: string | null;
   email: string | null;
@@ -157,7 +159,8 @@ function workerPrimary(w: Worker): string {
   return w.username ? `@${w.username}` : w.display_name;
 }
 function workerSecondary(w: Worker): string {
-  return w.email ?? '';
+  const bits = [w.public_code, w.email].filter(Boolean);
+  return bits.join(' · ');
 }
 
 function WorkerCombobox({
@@ -181,6 +184,7 @@ function WorkerCombobox({
     if (!q) return workers;
     return workers.filter(
       (w) =>
+        (w.public_code ?? '').toLowerCase().includes(q) ||
         (w.username ?? '').toLowerCase().includes(q) ||
         w.display_name.toLowerCase().includes(q) ||
         (w.email ?? '').toLowerCase().includes(q),
@@ -337,7 +341,7 @@ export default function AdminSessionsPage() {
     if (opts.silent) setRefreshing(true); else setLoading(true);
     try {
       const [sessionRes, workerRes, rdpRes] = await Promise.allSettled([
-        api.get<WorkSession[]>('/sessions?limit=500&include_images=false'),
+        fetchAllSessions<WorkSession>({ includeImages: false }),
         api.get<Worker[]>('/workers'),
         api.get<RDPResource[]>('/rdp'),
       ]);
@@ -403,7 +407,9 @@ export default function AdminSessionsPage() {
           end_time: s.end_time,
           session_type: s.session_type,
           worker_id: s.worker_id,
-          worker: worker?.display_name ?? '—',
+          worker: worker
+            ? `${worker.display_name}${worker.public_code ? ` (${worker.public_code})` : ''}`
+            : `Worker ${s.worker_id.slice(0, 8)}…`,
           email: worker?.email ?? '—',
           machine,
           duration: live ? formatElapsed(s.start_time, now) : formatDuration(rdpMinutes),

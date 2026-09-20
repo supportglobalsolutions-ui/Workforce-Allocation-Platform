@@ -52,7 +52,16 @@ class Worker(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_entities.id"), nullable=True),
     )
     username: Optional[str] = Field(default=None, sa_column=Column(String(64), unique=True, nullable=True))
+    # Human-facing ID: G + DDMMYY + daily seq (e.g. G180926001). UUID stays PK.
+    public_code: Optional[str] = Field(
+        default=None,
+        sa_column=Column(String(16), unique=True, nullable=True, index=True),
+    )
     display_name: str = Field(sa_column=Column(String(255), nullable=False))
+    # Registered mobile-money wallet identity (name on the SIM / provider).
+    # Phone number for payouts lives in auth user_metadata; provider + name here.
+    mobile_money_name: Optional[str] = Field(default=None, sa_column=Column(String(60), nullable=True))
+    mobile_money_provider: Optional[str] = Field(default=None, sa_column=Column(String(32), nullable=True))
     country: str = Field(sa_column=Column(String(64), nullable=False))
     pay_tier: str = Field(sa_column=Column(String(64), nullable=False))
     pay_amount: Optional[float] = Field(

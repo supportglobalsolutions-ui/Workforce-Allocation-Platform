@@ -8,6 +8,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import AdminRdpSubnav from '@/components/rdp/AdminRdpSubnav';
 import DeleteRdpModal from '@/components/rdp/DeleteRdpModal';
+import EntityPickerModal from '@/components/admin/EntityPickerModal';
 import {
   createRdpResource,
   forceReleaseRdp,
@@ -29,6 +30,9 @@ import { api } from '@/lib/api';
 import { reportError } from '@/lib/errors';
 
 type StatusMode = 'online' | 'locked' | 'maintenance';
+
+/** Per-card actions that need their own in-progress label. */
+type CardAction = 'sync' | 'stop' | 'other';
 
 interface ClientOption {
   id: string;
@@ -114,7 +118,7 @@ function statusMode(status: string): StatusMode {
 
 function cardShellClass(mode: StatusMode): string {
   // Same deep green as the app sidebar (`--sidebar-bg`).
-  const base = 'bg-[var(--sidebar-bg)] text-white';
+  const base = 'on-dark-surface bg-[var(--sidebar-bg)] text-white';
   if (mode === 'locked') {
     return `${base} border-white/15`;
   }
@@ -122,6 +126,11 @@ function cardShellClass(mode: StatusMode): string {
     return `${base} border-amber-400/45`;
   }
   return `${base} border-emerald-accent/45`;
+}
+
+/** True only when a worker holds the machine live (or in disconnect grace). */
+function hasLiveSession(m: RdpResource): boolean {
+  return m.status === 'active' || m.status === 'idle';
 }
 
 export default function RdpManagementPage() {
@@ -132,6 +141,8 @@ export default function RdpManagementPage() {
   const [error, setError] = useState<string | null>(null);
   const [modalError, setModalError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  /** Which button on the busy card is working — the labels differ. */
+  const [busyAction, setBusyAction] = useState<CardAction>('other');
 
   const [showCreate, setShowCreate] = useState(false);
   const [createForm, setCreateForm] = useState<MachineForm>(EMPTY_FORM);
@@ -184,8 +195,13 @@ export default function RdpManagementPage() {
       .catch(() => setWorkers([]));
   }, []);
 
-  const runAction = async (id: string, action: () => Promise<unknown>) => {
+  const runAction = async (
+    id: string,
+    action: () => Promise<unknown>,
+    kind: CardAction = 'other',
+  ) => {
     setBusyId(id);
+    setBusyAction(kind);
     setError(null);
     setModalError(null);
     try {
@@ -197,6 +213,7 @@ export default function RdpManagementPage() {
       setModalError(msg);
     } finally {
       setBusyId(null);
+      setBusyAction('other');
     }
   };
 
@@ -340,13 +357,13 @@ export default function RdpManagementPage() {
           />
         </label>
 
-        <div className="block sm:col-span-2 relative">
+        <div className="block sm:col-span-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-theme-muted mb-1.5 block">
             Client account
           </span>
           <button
             type="button"
-            onClick={() => setOpenPicker((v) => (v === clientKey ? null : clientKey))}
+            onClick={() => setOpenPicker(clientKey)}
             className={`${fieldClass} flex items-center justify-between gap-2 text-left`}
           >
             <span className={selectedClient ? 'text-white truncate' : 'text-white/40'}>
@@ -356,50 +373,17 @@ export default function RdpManagementPage() {
                   }`
                 : 'None'}
             </span>
-            <ChevronDown
-              size={16}
-              className={`shrink-0 text-theme-muted transition-transform ${clientOpen ? 'rotate-180' : ''}`}
-            />
+            <ChevronDown size={16} className="shrink-0 text-theme-muted" />
           </button>
-          {clientOpen && (
-            <div className="absolute z-20 mt-1.5 w-full max-h-52 overflow-y-auto rounded-xl border border-white/10 bg-[var(--sidebar-bg)] shadow-xl py-1">
-              <button
-                type="button"
-                onClick={() => {
-                  setForm((f) => ({ ...f, client_id: '' }));
-                  setOpenPicker(null);
-                }}
-                className="w-full px-3 py-2 text-left text-sm text-white/70 hover:bg-white/5"
-              >
-                None
-              </button>
-              {clients.map((c) => (
-                <button
-                  key={c.id}
-                  type="button"
-                  onClick={() => {
-                    setForm((f) => ({ ...f, client_id: c.id }));
-                    setOpenPicker(null);
-                  }}
-                  className={`w-full px-3 py-2 text-left text-sm hover:bg-emerald-accent/10 ${
-                    form.client_id === c.id ? 'text-emerald-accent' : 'text-white'
-                  }`}
-                >
-                  {c.name} — {c.platform}
-                  {c.owner_name ? ` · ${c.owner_name}` : ''}
-                </button>
-              ))}
-            </div>
-          )}
         </div>
 
-        <div className="block sm:col-span-2 relative">
+        <div className="block sm:col-span-2">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-theme-muted mb-1.5 block">
             Workers who can see this desktop
           </span>
           <button
             type="button"
-            onClick={() => setOpenPicker((v) => (v === workersKey ? null : workersKey))}
+            onClick={() => setOpenPicker(workersKey)}
             className={`${fieldClass} flex items-center justify-between gap-2 text-left`}
           >
             <span className={form.allowed_worker_ids.length ? 'text-white' : 'text-white/40'}>
@@ -407,70 +391,46 @@ export default function RdpManagementPage() {
                 ? 'Nobody — off the claim board'
                 : `${form.allowed_worker_ids.length} worker${form.allowed_worker_ids.length === 1 ? '' : 's'} selected`}
             </span>
-            <ChevronDown
-              size={16}
-              className={`shrink-0 text-theme-muted transition-transform ${workersOpen ? 'rotate-180' : ''}`}
-            />
+            <ChevronDown size={16} className="shrink-0 text-theme-muted" />
           </button>
-          {workersOpen && (
-            <div className="absolute z-20 mt-1.5 w-full rounded-xl border border-white/10 bg-[var(--sidebar-bg)] shadow-xl overflow-hidden">
-              <div className="flex items-center justify-end gap-3 px-3 py-2 border-b border-white/10">
-                <button
-                  type="button"
-                  onClick={() => setForm((f) => ({ ...f, allowed_worker_ids: workers.map((w) => w.id) }))}
-                  className="text-xs text-emerald-accent hover:underline"
-                >
-                  Select all
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setForm((f) => ({ ...f, allowed_worker_ids: [] }))}
-                  className="text-xs text-theme-muted hover:underline"
-                >
-                  Clear
-                </button>
-              </div>
-              <div className="max-h-48 overflow-y-auto px-2 py-1.5 space-y-0.5">
-                {workers.length === 0 ? (
-                  <p className="text-xs text-theme-muted px-2 py-2">No workers found.</p>
-                ) : (
-                  workers.map((w) => {
-                    const checked = form.allowed_worker_ids.includes(w.id);
-                    return (
-                      <label
-                        key={w.id}
-                        className="flex items-center gap-2 cursor-pointer rounded-lg px-2 py-1.5 hover:bg-white/5"
-                      >
-                        <input
-                          type="checkbox"
-                          checked={checked}
-                          onChange={() =>
-                            setForm((f) => ({
-                              ...f,
-                              allowed_worker_ids: checked
-                                ? f.allowed_worker_ids.filter((id) => id !== w.id)
-                                : [...f.allowed_worker_ids, w.id],
-                            }))
-                          }
-                          className="accent-emerald-accent"
-                        />
-                        <span className="text-sm text-white truncate">
-                          {w.display_name}
-                          {w.username ? (
-                            <span className="text-theme-muted"> · @{w.username}</span>
-                          ) : null}
-                        </span>
-                      </label>
-                    );
-                  })
-                )}
-              </div>
-            </div>
-          )}
           <p className="text-[11px] text-theme-muted mt-1.5">
             Only selected workers see this desktop on their claim board.
           </p>
         </div>
+
+        <EntityPickerModal
+          open={clientOpen}
+          title="Select client account"
+          description="The client this desktop works on."
+          noneLabel="None"
+          searchPlaceholder="Search clients…"
+          emptyLabel="No clients yet."
+          options={clients.map((c) => ({
+            id: c.id,
+            label: `${c.name} — ${c.platform}`,
+            hint: c.owner_name ? `Owner ${c.owner_name}` : undefined,
+          }))}
+          value={form.client_id}
+          onSave={(id) => setForm((f) => ({ ...f, client_id: id }))}
+          onClose={() => setOpenPicker(null)}
+        />
+
+        <EntityPickerModal
+          multiple
+          open={workersOpen}
+          title="Workers who can see this desktop"
+          description="Only these workers see it on their claim board."
+          searchPlaceholder="Search workers by name or username…"
+          emptyLabel="No workers found."
+          options={workers.map((w) => ({
+            id: w.id,
+            label: w.display_name,
+            hint: w.username ? `@${w.username}` : undefined,
+          }))}
+          value={form.allowed_worker_ids}
+          onSave={(ids) => setForm((f) => ({ ...f, allowed_worker_ids: ids }))}
+          onClose={() => setOpenPicker(null)}
+        />
 
         <label className="block">
           <span className="text-[11px] font-semibold uppercase tracking-wider text-theme-muted mb-1.5 block">
@@ -693,6 +653,7 @@ export default function RdpManagementPage() {
         <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3">
           {machines.map((m) => {
             const mode = statusMode(m.status);
+            const live = hasLiveSession(m);
             const title =
               mode === 'locked' ? 'Locked' : mode === 'maintenance' ? 'Maintenance' : 'Online';
             return (
@@ -701,17 +662,31 @@ export default function RdpManagementPage() {
                 title={title}
                 className={`rounded-xl border px-4 py-3 flex items-center gap-3 ${cardShellClass(mode)}`}
               >
-                <div className="min-w-0 flex-1 flex items-center gap-2">
-                  {mode === 'locked' && (
-                    <Lock size={15} className="shrink-0 text-white/70" aria-hidden />
+                <div className="min-w-0 flex-1 flex flex-col gap-0.5">
+                  <div className="flex items-center gap-2 min-w-0">
+                    {mode === 'locked' && (
+                      <Lock size={15} className="shrink-0 text-white/70" aria-hidden />
+                    )}
+                    {mode === 'maintenance' && (
+                      <Wrench size={15} className="shrink-0 text-amber-300" aria-hidden />
+                    )}
+                    {mode === 'online' && !live && (
+                      <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-accent" aria-hidden />
+                    )}
+                    {live && (
+                      <span
+                        className="h-2 w-2 shrink-0 rounded-full bg-red-400 animate-pulse"
+                        aria-hidden
+                        title="Live session"
+                      />
+                    )}
+                    <p className="font-semibold text-sm truncate text-white">{m.nickname}</p>
+                  </div>
+                  {live && (
+                    <p className="text-[11px] text-red-300/90 truncate pl-4">
+                      Live · {m.assigned_worker_name || 'In use'}
+                    </p>
                   )}
-                  {mode === 'maintenance' && (
-                    <Wrench size={15} className="shrink-0 text-amber-300" aria-hidden />
-                  )}
-                  {mode === 'online' && (
-                    <span className="h-2 w-2 shrink-0 rounded-full bg-emerald-accent" aria-hidden />
-                  )}
-                  <p className="font-semibold text-sm truncate sidebar-text-strong">{m.nickname}</p>
                 </div>
                 <button
                   type="button"
@@ -724,12 +699,33 @@ export default function RdpManagementPage() {
                 </button>
                 <button
                   type="button"
-                  disabled={busyId === m.id}
-                  onClick={() => runAction(m.id, () => forceReleaseRdp(m.id))}
-                  className="shrink-0 text-xs py-1.5 px-2.5 rounded-lg font-semibold border border-red-400/35 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-50"
-                  title="Kick the current session and free the machine"
+                  disabled={busyId === m.id || !m.monitor_host}
+                  onClick={() => runAction(m.id, () => provisionRdpConnection(m.id), 'sync')}
+                  className="shrink-0 inline-flex h-8 w-8 items-center justify-center rounded-lg border border-white/15 bg-white/[0.06] text-white/80 hover:bg-emerald-accent/15 hover:text-emerald-accent hover:border-emerald-accent/30 disabled:opacity-35 disabled:cursor-not-allowed"
+                  aria-label={`Sync Guacamole connection for ${m.nickname}`}
+                  title={
+                    m.monitor_host
+                      ? 'Push host, RDP login, quality defaults, and audio-on into Guacamole. Use after create/edit, Guacamole rebuild, or if sound/connect is wrong — not every claim. Reopen the desktop after Sync.'
+                      : 'Set the machine’s host/IP first'
+                  }
                 >
-                  Force stop
+                  <RefreshCw
+                    size={14}
+                    className={busyId === m.id && busyAction === 'sync' ? 'animate-spin' : undefined}
+                  />
+                </button>
+                <button
+                  type="button"
+                  disabled={busyId === m.id || !live}
+                  onClick={() => runAction(m.id, () => forceReleaseRdp(m.id), 'stop')}
+                  className="shrink-0 text-xs py-1.5 px-2.5 rounded-lg font-semibold border border-red-400/35 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-35 disabled:grayscale disabled:cursor-not-allowed disabled:hover:bg-red-500/10"
+                  title={
+                    live
+                      ? `Kick ${m.assigned_worker_name || 'current session'} and free the machine`
+                      : 'Force stop is only available when someone is connected (or in reconnect grace)'
+                  }
+                >
+                  {busyId === m.id && busyAction === 'stop' ? 'Stopping…' : 'Force stop'}
                 </button>
               </div>
             );
@@ -751,9 +747,9 @@ export default function RdpManagementPage() {
               onSubmit={handleSaveEdit}
               className="glass-modal relative z-10 w-full max-w-3xl max-h-[90vh] overflow-y-auto rounded-2xl border border-theme shadow-2xl"
             >
-              <header className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/[0.06] bg-[var(--sidebar-bg)]/95 backdrop-blur px-5 py-4">
+              <header className="sticky top-0 z-10 flex items-start justify-between gap-3 border-b border-white/[0.06] bg-[var(--glass-bg)] backdrop-blur px-5 py-4">
                 <div>
-                  <h2 className="text-base font-bold text-white">Edit {editing.nickname}</h2>
+                  <h2 className="text-base font-bold text-theme-heading">Edit {editing.nickname}</h2>
                   <p className="text-xs text-theme-muted mt-0.5">
                     Status, access, connection, and credentials
                   </p>
@@ -812,7 +808,7 @@ export default function RdpManagementPage() {
                 {formFields(editForm, setEditForm, { showPasswordToggle: true, pickerScope: 'edit' })}
               </div>
 
-              <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-white/[0.06] bg-[var(--sidebar-bg)]/95 backdrop-blur px-5 py-4">
+              <div className="sticky bottom-0 flex flex-wrap items-center gap-2 border-t border-white/[0.06] bg-[var(--glass-bg)] backdrop-blur px-5 py-4">
                 <button
                   type="submit"
                   disabled={savingEdit}
@@ -825,6 +821,7 @@ export default function RdpManagementPage() {
                   disabled={busyId === editing.id || !editForm.monitor_host.trim()}
                   onClick={() => runAction(editing.id, () => provisionRdpConnection(editing.id))}
                   className="btn-secondary text-sm py-2 px-3 inline-flex items-center gap-1.5 disabled:opacity-50"
+                  title="Push this machine’s host, RDP login, quality defaults, and audio-on into Guacamole. Needed after create/edit or a Guacamole rebuild — not every worker claim. Reopen the desktop afterward."
                 >
                   <RefreshCw size={14} /> Sync
                 </button>

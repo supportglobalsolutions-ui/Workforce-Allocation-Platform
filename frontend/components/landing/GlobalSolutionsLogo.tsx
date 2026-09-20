@@ -6,6 +6,8 @@ import Link from 'next/link';
 interface LogoProps {
   size?: 'sm' | 'md' | 'lg';
   showText?: boolean;
+  /** Wordmark next to the mark. Defaults to the brand name. */
+  title?: string;
   /** Hide gold OPERATIONS subtitle (landing / login only). */
   showOperations?: boolean;
   className?: string;
@@ -14,6 +16,7 @@ interface LogoProps {
 export default function GlobalSolutionsLogo({
   size = 'md',
   showText = true,
+  title = 'Global Solutions',
   showOperations = false,
   className = '',
 }: LogoProps) {
@@ -47,7 +50,7 @@ export default function GlobalSolutionsLogo({
       {showText && (
         <span className="flex flex-col leading-none">
           <span className={`${wordmarkDimensions.text} font-display font-extrabold tracking-tight text-white`}>
-            Global Solutions
+            {title}
           </span>
           {showOperations && (
             <span className={`mt-1 ${wordmarkDimensions.sub} font-bold tracking-[0.24em] text-[#d5b34a]`}>

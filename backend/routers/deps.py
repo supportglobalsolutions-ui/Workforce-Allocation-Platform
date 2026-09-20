@@ -17,6 +17,8 @@ from models.enums import (
     WorkerTypeEnum,
 )
 from models.worker import Worker
+from services.worker_public_code import assign_public_code
+
 
 # Auth role (Supabase claim) -> org role stored on admin_users.role.
 # admin_users.role is metadata only; it does NOT drive auth/routing.
@@ -123,6 +125,10 @@ def get_worker_for_user(db: Session, current_user: dict) -> Worker:
         work_ready=current_user.get("role") in STAFF_ROLES,
     )
     db.add(worker)
+    db.flush()
+    # Staff JIT profiles intentionally get no G/P worker ID.
+    if current_user.get("role") not in STAFF_ROLES:
+        assign_public_code(db, worker)
     db.commit()
     db.refresh(worker)
     return worker

@@ -101,6 +101,42 @@ html.light .force-dark-page .text-white {
   color: #fff;
 }
 
+/* A panel that keeps its dark background on the light canvas (RDP cards,
+   dropdown menus painted with --sidebar-bg). Without this the light-theme
+   ink remapping above turns their white text into dark-on-dark. */
+html.light .on-dark-surface,
+html.light .on-dark-surface .text-white {
+  color: #fff;
+}
+html.light .on-dark-surface .text-white\/90,
+html.light .on-dark-surface .text-white\/80,
+html.light .on-dark-surface .text-white\/70 {
+  color: rgba(255, 255, 255, 0.75);
+}
+html.light .on-dark-surface .text-white\/60,
+html.light .on-dark-surface .text-white\/50,
+html.light .on-dark-surface .text-white\/40,
+html.light .on-dark-surface .text-white\/30 {
+  color: rgba(255, 255, 255, 0.45);
+}
+html.light .on-dark-surface .text-theme-heading {
+  color: #fff;
+}
+html.light .on-dark-surface .text-theme-muted,
+html.light .on-dark-surface .text-brand-on-surface-variant {
+  color: rgba(255, 255, 255, 0.6);
+}
+html.light .on-dark-surface .border-white\/5,
+html.light .on-dark-surface .border-white\/10,
+html.light .on-dark-surface .border-white\/15 {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+html.light .on-dark-surface .bg-white\/5,
+html.light .on-dark-surface .bg-white\/\[0\.04\],
+html.light .on-dark-surface .bg-white\/\[0\.06\] {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
   /* Luxe light canvas — faint emerald & gold washes over the mint-porcelain base */
   html.light .bg-brand-background {
     background-color: var(--background);
@@ -117,6 +153,24 @@ html.light .force-dark-page .text-white {
   }
   html.light .text-brand-on-surface-variant {
     color: var(--on-surface-variant);
+  }
+  /* Alpha-white text reads as "dimmed ink" on a dark surface. Only the exact
+     .text-white class was remapped, so on the light canvas these stayed
+     near-white and disappeared. Map them onto the same ink ramp. */
+  html.light .text-white\/90,
+  html.light .text-white\/80,
+  html.light .text-white\/70 {
+    color: var(--on-surface);
+  }
+  html.light .text-white\/60,
+  html.light .text-white\/50,
+  html.light .text-white\/40,
+  html.light .text-white\/30 {
+    color: var(--on-surface-variant);
+  }
+  html.light .placeholder\:text-white\/30::placeholder,
+  html.light .placeholder\:text-white\/40::placeholder {
+    color: color-mix(in srgb, var(--on-surface-variant) 70%, transparent);
   }
   html.light .border-white\/5,
   html.light .border-white\/10 {

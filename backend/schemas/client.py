@@ -12,6 +12,7 @@ from models.enums import ClientContractStatusEnum, ClientOwnerTypeEnum
 class ClientBase(SQLModel):
     name:                    str
     platform:                str
+    billing_rate_usd:        Optional[Decimal] = None
     account_email:           Optional[str] = None
     account_id:              Optional[str] = None
     login_reference:         Optional[str] = None
@@ -30,6 +31,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(SQLModel):
     name:                    Optional[str] = None
     platform:                Optional[str] = None
+    billing_rate_usd:        Optional[Decimal] = None
     account_email:           Optional[str] = None
     account_id:              Optional[str] = None
     login_reference:         Optional[str] = None

@@ -335,8 +335,17 @@ def force_release_rdp_resource(
     reason = (body.reason or "").strip() or "Admin force release"
     note = f"Force release: {reason}"
     resource.health_notes = f"{resource.health_notes}\n{note}" if resource.health_notes else note
-    # Force release must return the seat to a claimable state (not leave maintenance).
-    if resource.status in {RdpStatusEnum.maintenance, RdpStatusEnum.admin_locked}:
+    # Force release returns the seat to a claimable state — but only when the
+    # gateway confirmed the tunnel is down. If closure could not be proven the
+    # engine deliberately held the machine, and re-pooling here would hand the
+    # next worker a session that may still be live.
+    closure_confirmed = bool(result.get("guacamole_disconnected")) or (
+        result.get("disconnect_outcome") in {"closed", "already_closed"}
+    )
+    if closure_confirmed and resource.status in {
+        RdpStatusEnum.maintenance,
+        RdpStatusEnum.admin_locked,
+    }:
         from services.rdp_state import transition_rdp_status
 
         transition_rdp_status(

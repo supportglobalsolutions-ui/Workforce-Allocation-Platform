@@ -20,6 +20,7 @@ import {
   apiUnbanUser,
   apiUpdateUserRole,
 } from '@/lib/auth/supabase-auth';
+import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { AuthRole, ROLE_DISPLAY, assignableRoles } from '@/lib/auth/config';
 
@@ -447,30 +448,32 @@ function AccountDetailModal({
           <div>
             <p className="text-[10px] font-bold uppercase tracking-widest text-gray-400 mb-3">Account Info</p>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-4">
-              {user.status === 'pending' && (
-                <>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Full name</p>
-                    <p className="text-sm text-gray-800">{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.displayName || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Phone</p>
-                    <p className="text-sm text-gray-800">{user.phone || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Country</p>
-                    <p className="text-sm text-gray-800">{user.country || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Place of residence</p>
-                    <p className="text-sm text-gray-800">{user.residence || '—'}</p>
-                  </div>
-                  <div>
-                    <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Username</p>
-                    <p className="text-sm text-gray-800">{user.username || '—'}</p>
-                  </div>
-                </>
-              )}
+              {/* Shown for every account, not just pending signups — an admin
+                  looking at an active colleague still needs the phone number. */}
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Full name</p>
+                <p className="text-sm text-gray-800">{[user.firstName, user.lastName].filter(Boolean).join(' ') || user.displayName || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Email</p>
+                <p className="text-sm text-gray-800 break-all">{user.email || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Phone</p>
+                <p className="text-sm text-gray-800">{user.phone || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Country</p>
+                <p className="text-sm text-gray-800">{user.country || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Place of residence</p>
+                <p className="text-sm text-gray-800">{user.residence || '—'}</p>
+              </div>
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Username</p>
+                <p className="text-sm text-gray-800">{user.username ? `@${user.username}` : '—'}</p>
+              </div>
               <div>
                 <p className="text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-1">Status</p>
                 <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold ${
@@ -703,6 +706,9 @@ export default function AccountsPage() {
 
   const [activeTab, setActiveTab] = useState<AccountsTab>('all');
   const [allUsers, setAllUsers] = useState<ManagedUser[]>([]);
+  /** Accounts ticked for bulk delete, keyed by uid. */
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
+  const [deleteOpen, setDeleteOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [search, setSearch] = useState('');
@@ -786,11 +792,17 @@ export default function AccountsPage() {
       .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
+  /**
+   * Staff seats only. Workers are managed on the Workers page — listing them
+   * here buried the handful of privileged accounts this screen exists to
+   * govern. Pending signups and the Promote panel still read the unfiltered
+   * `allUsers`, because both exist precisely to act on workers.
+   */
   const allAccounts = useMemo(() => {
     const q = search.trim().toLowerCase();
-    return allUsers.filter(
-      (u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q),
-    );
+    return allUsers
+      .filter((u) => u.role !== 'user')
+      .filter((u) => !q || u.displayName.toLowerCase().includes(q) || u.email.toLowerCase().includes(q));
   }, [allUsers, search]);
 
   const tabUsers =
@@ -800,6 +812,32 @@ export default function AccountsPage() {
         : activeTab === 'super_admin' ? superAdmins
           : activeTab === 'partner' ? partners
             : pendingUsers;
+
+  /** Rows an admin is actually allowed to tick. */
+  const selectableOnTab = tabUsers.filter((u) => !u.protected && u.uid !== actorUid);
+  const allOnTabSelected = selectableOnTab.length > 0
+    && selectableOnTab.every((u) => selectedIds.has(u.uid));
+  const someOnTabSelected = selectableOnTab.some((u) => selectedIds.has(u.uid));
+
+  function toggleOne(uid: string) {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(uid)) next.delete(uid);
+      else next.add(uid);
+      return next;
+    });
+  }
+
+  function toggleSelectAllOnTab() {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (allOnTabSelected) selectableOnTab.forEach((u) => next.delete(u.uid));
+      else selectableOnTab.forEach((u) => next.add(u.uid));
+      return next;
+    });
+  }
+
+  const selectedUsers = allUsers.filter((u) => selectedIds.has(u.uid));
 
   const TABS: { key: AccountsTab; label: string; count: number }[] = [
     { key: 'all', label: 'All accounts', count: allAccounts.length },
@@ -1215,6 +1253,26 @@ export default function AccountsPage() {
         <span className="text-xs text-theme-muted ml-1">
           {tabUsers.length} account{tabUsers.length !== 1 ? 's' : ''}
         </span>
+        {selectedIds.size > 0 && (
+          <div className="flex items-center gap-2 ml-auto">
+            <span className="text-xs text-theme-muted">{selectedIds.size} selected</span>
+            <button
+              type="button"
+              onClick={() => setSelectedIds(new Set())}
+              className="text-xs text-theme-muted hover:underline"
+            >
+              Clear
+            </button>
+            <button
+              type="button"
+              onClick={() => setDeleteOpen(true)}
+              className="text-sm py-2 px-3.5 inline-flex items-center gap-2 rounded-xl font-semibold bg-danger/90 text-white hover:bg-danger"
+            >
+              <Trash2 size={14} />
+              Delete {selectedIds.size}
+            </button>
+          </div>
+        )}
       </div>
 
       {loading ? (
@@ -1228,6 +1286,16 @@ export default function AccountsPage() {
           <table className="w-full text-sm min-w-[640px]">
             <thead>
               <tr className="border-b border-white/[0.06]">
+                <th className="w-10 px-4 py-3">
+                  <input
+                    type="checkbox"
+                    aria-label="Select all accounts on this tab"
+                    checked={allOnTabSelected}
+                    ref={(el) => { if (el) el.indeterminate = someOnTabSelected && !allOnTabSelected; }}
+                    onChange={() => toggleSelectAllOnTab()}
+                    className="accent-emerald-accent cursor-pointer"
+                  />
+                </th>
                 <th className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">
                   {activeTab === 'pending' ? 'Applicant' : 'Account'}
                 </th>
@@ -1246,6 +1314,21 @@ export default function AccountsPage() {
             <tbody>
               {tabUsers.map((u) => (
                 <tr key={u.uid} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
+                  <td className="px-4 py-3">
+                    <input
+                      type="checkbox"
+                      aria-label={`Select ${u.displayName || u.email}`}
+                      checked={selectedIds.has(u.uid)}
+                      disabled={u.protected || u.uid === actorUid}
+                      title={
+                        u.protected ? 'Protected Super Admin — cannot be deleted'
+                          : u.uid === actorUid ? 'You cannot delete your own account'
+                            : undefined
+                      }
+                      onChange={() => toggleOne(u.uid)}
+                      className="accent-emerald-accent cursor-pointer disabled:opacity-30 disabled:cursor-not-allowed"
+                    />
+                  </td>
                   <td className="px-4 py-3">
                     <p className="text-white font-medium">{u.displayName || '—'}</p>
                     <p className="text-xs text-theme-muted">{u.email}</p>
@@ -1301,6 +1384,20 @@ export default function AccountsPage() {
             </tbody>
           </table>
         </div>
+      )}
+
+      {deleteOpen && selectedIds.size > 0 && (
+        <BulkDeleteModal
+          kind="accounts"
+          ids={selectedUsers.map((u) => u.uid)}
+          labels={selectedUsers.map((u) => u.displayName || u.email)}
+          onClose={() => setDeleteOpen(false)}
+          onDeleted={() => {
+            setDeleteOpen(false);
+            setSelectedIds(new Set());
+            void loadUsers();
+          }}
+        />
       )}
 
       {selectedUser && (

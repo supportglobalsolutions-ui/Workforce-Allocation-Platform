@@ -65,7 +65,7 @@ export default function LoginModal({ isOpen, onClose }: LoginModalProps) {
             WELCOME TO
           </div>
           <h1 className="text-3xl sm:text-4xl font-display font-extrabold text-white tracking-tight drop-shadow-[0_0_20px_rgba(13,245,196,0.3)]">
-            Global Solutions
+            Login
           </h1>
           <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#0df5c4] mt-1">
             REMOTE • SMART • GLOBAL

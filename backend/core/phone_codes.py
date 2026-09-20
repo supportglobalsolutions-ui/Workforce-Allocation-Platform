@@ -83,7 +83,7 @@ _DIALS_LONGEST = sorted(_DIAL_SET, key=len, reverse=True)
 PHONE_UPDATE_TITLE = "Update your phone number"
 PHONE_UPDATE_MESSAGE = (
     "Please update your phone number to include your country code "
-    "(for example Kenya: +254714516132). Open Profile, choose your country code "
+    "(for example: +254712345678). Open Profile, choose your country code "
     "from the dropdown, and save the correct number."
 )
 

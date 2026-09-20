@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Briefcase, CircleDollarSign, Eye, FileCheck, Link2, Monitor, Percent, Plus, Search, Trash2, Users, X,
+  AlertCircle, Briefcase, CircleDollarSign, Eye, FileCheck, Link2, Monitor, Percent, Plus, Search, Trash2, Upload, Users, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
@@ -23,6 +23,7 @@ interface Client {
   id: string;
   name: string;
   platform: string;
+  billing_rate_usd?: string | number | null;
   account_email: string | null;
   account_id: string | null;
   login_reference: string | null;
@@ -214,6 +215,7 @@ function OwnerTypeChip({ type }: { type: OwnerType }) {
 interface ClientFormState {
   name: string;
   platform: string;
+  billing_rate_usd: string;
   account_email: string;
   account_id: string;
   login_reference: string;
@@ -228,6 +230,7 @@ interface ClientFormState {
 const EMPTY_FORM: ClientFormState = {
   name: '',
   platform: '',
+  billing_rate_usd: '',
   account_email: '',
   account_id: '',
   login_reference: '',
@@ -243,6 +246,7 @@ function formFromClient(c: Client): ClientFormState {
   return {
     name: c.name,
     platform: c.platform,
+    billing_rate_usd: c.billing_rate_usd != null && c.billing_rate_usd !== '' ? String(c.billing_rate_usd) : '',
     account_email: c.account_email ?? '',
     account_id: c.account_id ?? '',
     login_reference: c.login_reference ?? '',
@@ -293,6 +297,7 @@ function ClientForm({
     const payload = {
       name: form.name.trim(),
       platform: form.platform.trim(),
+      billing_rate_usd: form.billing_rate_usd.trim() === '' ? null : Number(form.billing_rate_usd),
       account_email: form.account_email.trim() || null,
       account_id: form.account_id.trim() || null,
       login_reference: form.login_reference.trim() || null,
@@ -329,6 +334,18 @@ function ClientForm({
           <datalist id="client-platform-suggestions">
             {PLATFORM_SUGGESTIONS.map((p) => <option key={p} value={p} />)}
           </datalist>
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Billing rate USD/hr</label>
+          <input
+            type="number"
+            min="0"
+            step="0.01"
+            value={form.billing_rate_usd}
+            onChange={(e) => set('billing_rate_usd', e.target.value)}
+            placeholder="18.70"
+            className="input-field"
+          />
         </div>
         <div>
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Account Email</label>
@@ -945,6 +962,123 @@ function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onC
   );
 }
 
+// ── Import clients (CSV / Excel) ───────────────────────────────────────────────
+
+interface ClientImportResult {
+  created: number;
+  updated: number;
+  skipped: number;
+  errors: string[];
+  total_rows: number;
+}
+
+function ImportClientsModal({
+  onClose,
+  onImported,
+}: {
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<ClientImportResult | null>(null);
+
+  async function handleUpload() {
+    if (!file) return;
+    setUploading(true);
+    setError(null);
+    setResult(null);
+    try {
+      const fd = new FormData();
+      fd.append('file', file);
+      const res = await api.upload<ClientImportResult>('/clients/import', fd);
+      setResult(res);
+      onImported();
+    } catch (e: unknown) {
+      setError(e instanceof Error ? e.message : 'Import failed.');
+    } finally {
+      setUploading(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-lg">
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
+          <div>
+            <h2 className="text-base font-bold text-white">Import clients</h2>
+            <p className="text-xs text-theme-muted mt-0.5">CSV or Excel (.xlsx) rate sheet</p>
+          </div>
+          <button type="button" onClick={onClose}
+            className="flex items-center justify-center w-8 h-8 rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
+            <X size={16} />
+          </button>
+        </div>
+
+        <div className="p-5 space-y-4">
+          <label className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-8 cursor-pointer hover:border-emerald-accent/40 transition-colors">
+            <Upload size={22} className="text-emerald-accent" />
+            <span className="text-sm text-theme-heading font-medium">
+              {file ? file.name : 'Choose CSV or Excel file'}
+            </span>
+            <span className="text-[11px] text-theme-muted">Max 5 MB · .csv / .xlsx</span>
+            <input
+              type="file"
+              accept=".csv,.xlsx,.xlsm,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+              className="hidden"
+              onChange={(e) => {
+                setFile(e.target.files?.[0] ?? null);
+                setResult(null);
+                setError(null);
+              }}
+            />
+          </label>
+
+          {error && (
+            <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
+              <AlertCircle size={14} /> {error}
+            </div>
+          )}
+
+          {result && (
+            <div className="rounded-xl border border-emerald-accent/25 bg-emerald-accent/10 p-3 text-sm text-theme-heading space-y-1">
+              <p>
+                Imported {result.total_rows} row{result.total_rows === 1 ? '' : 's'}:{' '}
+                <span className="font-semibold">{result.created}</span> created,{' '}
+                <span className="font-semibold">{result.updated}</span> updated
+                {result.skipped > 0 ? `, ${result.skipped} skipped` : ''}.
+              </p>
+              {result.errors.length > 0 && (
+                <ul className="text-xs text-amber-300/90 list-disc pl-4 max-h-28 overflow-y-auto">
+                  {result.errors.map((err) => <li key={err}>{err}</li>)}
+                </ul>
+              )}
+            </div>
+          )}
+
+          <div className="flex justify-end gap-2 pt-1">
+            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">
+              {result ? 'Close' : 'Cancel'}
+            </button>
+            {!result && (
+              <button
+                type="button"
+                disabled={!file || uploading}
+                onClick={() => void handleUpload()}
+                className="btn-primary text-sm py-2 px-4 disabled:opacity-50 inline-flex items-center gap-2"
+              >
+                {uploading ? <SpinningDots size="sm" /> : <Upload size={14} />}
+                {uploading ? 'Importing…' : 'Import'}
+              </button>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ClientManagementPage() {
@@ -955,6 +1089,7 @@ export default function ClientManagementPage() {
   const [platformFilter, setPlatformFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
   const [showCreate, setShowCreate] = useState(false);
+  const [showImport, setShowImport] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [applyOpen, setApplyOpen] = useState(false);
@@ -1049,9 +1184,14 @@ export default function ClientManagementPage() {
       <PageHeader
         title="Client Management"
         actions={
-          <button type="button" onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 text-sm py-2 px-4">
-            <Plus size={15} /> Add Client
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setShowImport(true)} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4">
+              <Upload size={15} /> Import
+            </button>
+            <button type="button" onClick={() => setShowCreate(true)} className="btn-primary flex items-center gap-2 text-sm py-2 px-4">
+              <Plus size={15} /> Add Client
+            </button>
+          </div>
         }
       />
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mb-6">
@@ -1137,6 +1277,16 @@ export default function ClientManagementPage() {
             },
             { key: 'platform', header: 'Platform', render: (r) => (r._client as Client).platform },
             {
+              key: 'rate',
+              header: 'USD/hr',
+              render: (r) => {
+                const rate = (r._client as Client).billing_rate_usd;
+                if (rate == null || rate === '') return <span className="text-theme-muted">—</span>;
+                const n = Number(rate);
+                return Number.isFinite(n) ? `$${n.toFixed(2)}` : String(rate);
+              },
+            },
+            {
               key: 'account', header: 'Account',
               render: (r) => {
                 const c = r._client as Client;
@@ -1212,6 +1362,13 @@ export default function ClientManagementPage() {
             </div>
           </div>
         </div>
+      )}
+
+      {showImport && (
+        <ImportClientsModal
+          onClose={() => setShowImport(false)}
+          onImported={() => { void load(); }}
+        />
       )}
 
       {selectedClient && (

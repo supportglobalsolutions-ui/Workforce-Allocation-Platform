@@ -14,6 +14,7 @@ import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { enteredPayMinutes, rdpConnectedMinutes } from '@/lib/hours';
+import { fetchAllSessions } from '@/lib/fetchSessions';
 import {
   AccountStatus,
   apiBanWorker,
@@ -25,15 +26,25 @@ import {
   composeE164,
   dialCodeForCountryName,
   filterNationalNumber,
+  formatPhoneE164,
   parseE164,
   validateE164Phone,
 } from '@/lib/phone-country-codes';
 import { RESIDENCE_MAX, filterResidence, validateResidence } from '@/lib/auth/signup-fields';
+import {
+  MM_NAME_MAX,
+  MM_PROVIDER_MAX,
+  filterMobileMoneyName,
+  filterMobileMoneyProvider,
+  validateMobileMoneyName,
+  validateMobileMoneyProvider,
+} from '@/lib/mobile-money-fields';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
 interface Worker {
   id: string;
+  public_code?: string | null;
   display_name: string;
   username: string | null;
   country: string;
@@ -52,6 +63,8 @@ interface Worker {
   email: string | null;
   phone?: string | null;
   residence?: string | null;
+  mobile_money_name?: string | null;
+  mobile_money_provider?: string | null;
   first_name?: string | null;
   last_name?: string | null;
   account_banned?: boolean;
@@ -159,6 +172,8 @@ interface WorkerAdminForm {
   phoneDial: string;
   phoneNational: string;
   residence: string;
+  mobile_money_name: string;
+  mobile_money_provider: string;
   pay_tier: string;
   pay_amount: string;
   pay_frequency: '' | 'per_month' | 'per_task';
@@ -177,6 +192,8 @@ function adminFormFromWorker(w: Worker): WorkerAdminForm {
     phoneDial: parsedPhone?.dial || dialCodeForCountryName(w.country ?? ''),
     phoneNational: parsedPhone?.national ?? '',
     residence: w.residence ?? '',
+    mobile_money_name: w.mobile_money_name ?? '',
+    mobile_money_provider: w.mobile_money_provider ?? '',
     pay_tier: w.pay_tier ?? '',
     pay_amount: w.pay_amount != null ? String(w.pay_amount) : '',
     pay_frequency: (w.pay_frequency === 'per_month' || w.pay_frequency === 'per_task')
@@ -228,8 +245,12 @@ function WorkerDetailModal({
         ? composeE164(editForm.phoneDial, editForm.phoneNational)
         : '';
       const residence = editForm.residence.trim();
+      const mmName = editForm.mobile_money_name.trim();
+      const mmProvider = editForm.mobile_money_provider.trim();
       const fieldError = (phone && validateE164Phone(phone))
         || (residence && validateResidence(residence))
+        || (mmName && validateMobileMoneyName(mmName, { required: false }))
+        || (mmProvider && validateMobileMoneyProvider(mmProvider, { required: false }))
         || '';
       if (fieldError) { setEditError(fieldError); return; }
       const body = {
@@ -239,6 +260,8 @@ function WorkerDetailModal({
         // Left blank means "leave as is" — the API rejects an empty phone.
         ...(phone ? { phone } : {}),
         ...(residence ? { residence } : {}),
+        mobile_money_name: mmName || null,
+        mobile_money_provider: mmProvider || null,
         pay_tier: editForm.pay_tier.trim() || 'unassigned',
         pay_amount: editForm.pay_amount === '' ? null : Number(editForm.pay_amount),
         pay_frequency: editForm.pay_frequency || null,
@@ -293,7 +316,7 @@ function WorkerDetailModal({
     setSessionsLoading(true);
     setSessionsError(null);
     Promise.all([
-      api.get<WorkSession[]>(`/sessions?worker_id=${worker.id}&limit=200`),
+      fetchAllSessions<WorkSession>({ workerId: worker.id, includeImages: true }),
       api.get<RDPResource[]>('/rdp'),
     ])
       .then(([s, m]) => { setSessions(s); setMachines(m); })
@@ -344,6 +367,12 @@ function WorkerDetailModal({
             <div className="min-w-0 flex-1 pr-3">
               <h2 className="text-[15px] font-bold text-white truncate">{worker.display_name}</h2>
               <p className="text-xs text-theme-muted mt-0.5 truncate">
+                {worker.public_code ? (
+                  <>
+                    <span className="font-mono text-emerald-accent/90">{worker.public_code}</span>
+                    {' · '}
+                  </>
+                ) : null}
                 {WORKER_TYPE_LABELS[worker.worker_type] ?? worker.worker_type}
                 {worker.worker_type === 'partner_worker' && worker.partner_entity_name ? ` · ${worker.partner_entity_name}` : ''}
               </p>
@@ -387,6 +416,14 @@ function WorkerDetailModal({
                 <div>
                   <SectionLabel>Identity</SectionLabel>
                   <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-x-6 gap-y-4">
+                    <DetailField
+                      label="Worker ID"
+                      value={
+                        worker.public_code
+                          ? <span className="font-mono tracking-wide">{worker.public_code}</span>
+                          : <span className="text-theme-muted">— (staff)</span>
+                      }
+                    />
                     <DetailField label="Display Name" value={worker.display_name} />
                     <DetailField
                       label="Legal name"
@@ -397,9 +434,18 @@ function WorkerDetailModal({
                     />
                     <DetailField label="Username" value={worker.username || '—'} />
                     <DetailField label="Email" value={worker.email || '—'} />
-                    <DetailField label="Phone" value={worker.phone || '—'} />
+                    <DetailField
+                      label="Phone"
+                      value={
+                        worker.phone
+                          ? <span className="font-mono tracking-wide">{formatPhoneE164(worker.phone, worker.country)}</span>
+                          : '—'
+                      }
+                    />
                     <DetailField label="Country" value={worker.country || '—'} />
                     <DetailField label="Place of residence" value={worker.residence || '—'} />
+                    <DetailField label="Mobile money name" value={worker.mobile_money_name || '—'} />
+                    <DetailField label="Provider" value={worker.mobile_money_provider || '—'} />
                     <DetailField label="Worker Type" value={<WorkerTypeBadge worker={worker} />} />
                     <DetailField label="Status" value={<StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />} />
                     <DetailField label="Work Ready" value={<WorkReadyBadge ready={worker.work_ready} />} />
@@ -559,10 +605,10 @@ function WorkerDetailModal({
                         inputMode="tel"
                         value={editForm.phoneNational}
                         onChange={(e) => setEditForm((f) => ({ ...f, phoneNational: filterNationalNumber(e.target.value) }))}
-                        placeholder="714516132"
+                        placeholder="712345678"
                         className="input-field flex-1" />
                     </div>
-                    <p className="text-[11px] text-theme-muted mt-1">Include the country code. Kenya example: +254714516132</p>
+                    <p className="text-[11px] text-theme-muted mt-1">Include the country code. Example: +254712345678</p>
                   </div>
                   <div>
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Place of residence</label>
@@ -571,6 +617,32 @@ function WorkerDetailModal({
                       onChange={(e) => setEditForm((f) => ({ ...f, residence: filterResidence(e.target.value) }))}
                       placeholder="City or town"
                       className="input-field" />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Mobile money name</label>
+                    <input
+                      value={editForm.mobile_money_name}
+                      maxLength={MM_NAME_MAX}
+                      onChange={(e) => setEditForm((f) => ({ ...f, mobile_money_name: filterMobileMoneyName(e.target.value) }))}
+                      placeholder="Name on the wallet"
+                      className="input-field"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Provider</label>
+                    <input
+                      value={editForm.mobile_money_provider}
+                      maxLength={MM_PROVIDER_MAX}
+                      onChange={(e) => setEditForm((f) => ({ ...f, mobile_money_provider: filterMobileMoneyProvider(e.target.value) }))}
+                      placeholder="e.g. Mpesa, MTN"
+                      className="input-field"
+                      list="admin-mm-provider"
+                    />
+                    <datalist id="admin-mm-provider">
+                      <option value="Mpesa" />
+                      <option value="MTN" />
+                      <option value="Airtel" />
+                    </datalist>
                   </div>
                   <div className="sm:col-span-2 lg:col-span-3">
                     <label className="text-[10px] font-semibold uppercase tracking-wider text-theme-muted mb-1 block">Email</label>
@@ -808,6 +880,7 @@ export default function WorkersPage() {
       if (accountFilter === 'active' && w.account_banned) return false;
       if (!q) return true;
       return (
+        w.public_code?.toLowerCase().includes(q) ||
         w.display_name.toLowerCase().includes(q) ||
         w.country.toLowerCase().includes(q) ||
         w.pay_tier.toLowerCase().includes(q) ||
@@ -821,12 +894,11 @@ export default function WorkersPage() {
 
   const workerRows = filteredWorkers.map((w) => ({
     id: w.id,
+    public_code: w.public_code || '—',
     name: w.display_name,
     email: w.email || '—',
-    phone: w.phone || '—',
     country: w.country,
     type: WORKER_TYPE_LABELS[w.worker_type] ?? w.worker_type,
-    work_ready: w.work_ready,
     pay_tier: w.pay_tier,
     start_date: new Date(w.start_date).toLocaleDateString(undefined, { year: 'numeric', month: 'short', day: 'numeric' }),
     status: w.status,
@@ -999,17 +1071,17 @@ export default function WorkersPage() {
                 );
               },
             },
+            { key: 'public_code', header: 'Worker ID', render: (r) => (
+              <span className={`font-mono text-xs tracking-wide ${(r.public_code as string) !== '—' ? 'text-emerald-accent' : 'text-theme-muted'}`}>
+                {r.public_code as string}
+              </span>
+            ) },
             { key: 'name', header: 'Name' },
             { key: 'email', header: 'Email' },
-            { key: 'phone', header: 'Phone' },
             { key: 'country', header: 'Country' },
             {
               key: 'type', header: 'Type',
               render: (r) => <WorkerTypeBadge worker={(r as typeof workerRows[number])._worker} />,
-            },
-            {
-              key: 'work_ready', header: 'Work Ready',
-              render: (r) => <WorkReadyBadge ready={Boolean(r.work_ready)} />,
             },
             { key: 'pay_tier', header: 'Pay Tier' },
             {

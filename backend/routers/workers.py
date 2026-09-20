@@ -41,6 +41,7 @@ from services.security_risk import (
     BULK_HARD_MAX,
     after_destructive_bulk,
 )
+from services.worker_public_code import assign_public_code, ensure_public_code
 from services.worker_purge import purge_workers
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
@@ -105,6 +106,11 @@ def _enrich_worker(
     *,
     auth_by_uid: dict[str, dict] | None = None,
 ) -> WorkerResponse:
+    try:
+        ensure_public_code(db, worker)
+    except Exception:
+        # Read paths should still return the profile if allocate fails.
+        pass
     resp = WorkerResponse.model_validate(worker)
     updates: dict = {}
     auth_uid: str | None = None
@@ -234,8 +240,23 @@ def update_my_worker(
             phone_norm = normalize_e164(phone_raw)
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
-    # phone/residence live in auth metadata, not workers columns
-    apply_update(worker, WorkerUpdate(**{k: v for k, v in payload.items() if k in {"username", "display_name", "country"}}))
+    # phone/residence live in auth metadata; mobile-money name/provider on workers
+    apply_update(
+        worker,
+        WorkerUpdate(
+            **{
+                k: v
+                for k, v in payload.items()
+                if k in {
+                    "username",
+                    "display_name",
+                    "country",
+                    "mobile_money_name",
+                    "mobile_money_provider",
+                }
+            }
+        ),
+    )
     db.add(worker)
     db.commit()
     db.refresh(worker)
@@ -433,6 +454,8 @@ def create_worker(
 ):
     worker = Worker(**body.model_dump())
     db.add(worker)
+    db.flush()
+    assign_public_code(db, worker)
     db.commit()
     db.refresh(worker)
     return _enrich_worker(db, worker)

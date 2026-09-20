@@ -50,7 +50,8 @@ export const PORTAL_SIDEBAR_NAV: Record<PortalRole, NavItem[]> = {
     { icon: <Landmark size={18} />, label: 'CEO Command', href: '/leadership/ceo-command' },
     { icon: <BarChart3 size={18} />, label: 'Analytics', href: '/leadership/analytics' },
     { icon: <Zap size={18} />, label: 'Utilization', href: '/leadership/utilization' },
-    { icon: <Monitor size={18} />, label: 'RDP Claim Board', href: '/worker/rdp-claim-board', shortLabel: 'Claim' },
+    { icon: <Monitor size={18} />, label: 'RDP Claim Board', href: '/leadership/rdp-claim-board', shortLabel: 'Claim' },
+    { icon: <History size={18} />, label: 'Session History', href: '/leadership/session-history', shortLabel: 'History' },
     { icon: <DollarSign size={18} />, label: 'Financial Intel', href: '/leadership/financial', shortLabel: 'Financial' },
   ],
 };

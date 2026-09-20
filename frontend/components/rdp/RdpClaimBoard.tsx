@@ -17,6 +17,7 @@ import {
   reserveDesktopTab,
   sendTabToDesktop,
   type MyActiveRdp,
+  type RdpPortal,
 } from '@/lib/rdp';
 
 interface RDPResource {
@@ -32,9 +33,17 @@ interface RDPResource {
 interface RdpClaimBoardProps {
   /** Optional link back to the RDP resources page (admin). */
   resourcesHref?: string;
+  /**
+   * Portal this board is mounted under. Session links stay inside it, so an
+   * executive claiming a desktop is not dropped into the worker shell.
+   */
+  basePath?: RdpPortal;
 }
 
-export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
+export default function RdpClaimBoard({
+  resourcesHref,
+  basePath = '/worker',
+}: RdpClaimBoardProps) {
   const { session, isLoading: authLoading } = useAuth();
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [myActive, setMyActive] = useState<MyActiveRdp | null>(null);
@@ -114,10 +123,10 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
       } else if (result.guacamole_error && !result.guacamole_viewer_path) {
         setInfo(`Claimed, but remote desktop may not open: ${result.guacamole_error}`);
       }
-      sendTabToDesktop(desktopTab, machineId);
+      sendTabToDesktop(desktopTab, machineId, basePath);
       navigated = true;
       setFailedAttempts(0);
-      window.location.assign(`/worker/rdp-session/${machineId}`);
+      window.location.assign(`${basePath}/rdp-session/${machineId}`);
     } catch (e) {
       closeReservedTab(desktopTab);
       const msg = reportError('Claim RDP', e, { machineId });
@@ -126,7 +135,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
         const active = await getMyActiveRdp().catch(() => null);
         if (active?.rdp_resource_id) {
           navigated = true;
-          window.location.assign(`/worker/rdp-session/${active.rdp_resource_id}`);
+          window.location.assign(`${basePath}/rdp-session/${active.rdp_resource_id}`);
         }
       }
       if (!navigated) {
@@ -212,7 +221,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
             You have an open session on <strong>{myActive.nickname}</strong>.
           </p>
           <Link
-            href={`/worker/rdp-session/${myActive.rdp_resource_id}`}
+            href={`${basePath}/rdp-session/${myActive.rdp_resource_id}`}
             className="btn-primary text-sm"
           >
             Resume session
@@ -227,7 +236,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
           <LifeBuoy size={16} className="mt-0.5 shrink-0 text-emerald-accent" />
           <span className="text-theme-muted">
             That has failed {failedAttempts} times. If it keeps happening,{' '}
-            <Link href="/worker/chat" className="font-semibold text-emerald-accent hover:underline">
+            <Link href={`${basePath}/chat`} className="font-semibold text-emerald-accent hover:underline">
               message an administrator
             </Link>{' '}
             and we will look at the machine.
@@ -278,7 +287,7 @@ export default function RdpClaimBoard({ resourcesHref }: RdpClaimBoardProps) {
                 </div>
                 {isMine ? (
                   <Link
-                    href={`/worker/rdp-session/${m.id}`}
+                    href={`${basePath}/rdp-session/${m.id}`}
                     className="btn-primary w-full text-sm text-center block"
                   >
                     Open session

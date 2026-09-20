@@ -36,25 +36,9 @@ import {
   PHONE_DIAL_CODES,
   dialCodeForCountryName,
 } from '@/lib/phone-country-codes';
+import { countryNameList } from '@/lib/countries';
 
 type Step = 'email' | 'code' | 'password' | 'done';
-
-function countryNameList(): string[] {
-  try {
-    const names = new Intl.DisplayNames(['en'], { type: 'region' });
-    const out: string[] = [];
-    for (let i = 65; i <= 90; i += 1) {
-      for (let j = 65; j <= 90; j += 1) {
-        const code = String.fromCharCode(i) + String.fromCharCode(j);
-        const name = names.of(code);
-        if (name && name !== code) out.push(name);
-      }
-    }
-    return out.sort((a, b) => a.localeCompare(b));
-  } catch {
-    return ['Kenya', 'Uganda', 'Tanzania', 'Nigeria', 'Ghana', 'South Africa', 'United Kingdom', 'United States'];
-  }
-}
 
 export default function SignupPage() {
   const { session } = useAuth();
@@ -244,13 +228,7 @@ export default function SignupPage() {
     <AuthPageShell>
       <AuthGlassCard wide={step === 'password'} className="max-h-[88vh] overflow-y-auto">
         <div className="flex flex-col items-center text-center mb-6">
-          <GlobalSolutionsLogo size="md" showText={false} />
-          <h1 className="text-xl sm:text-2xl font-display font-bold mt-3 tracking-tight">
-            Create account
-          </h1>
-          <p className="text-[11px] font-bold uppercase tracking-[0.25em] text-[#0df5c4] mt-1">
-            REMOTE • SMART • GLOBAL
-          </p>
+          <GlobalSolutionsLogo size="md" title="Create account" showOperations={false} />
         </div>
 
         {step === 'email' && (
@@ -415,12 +393,12 @@ export default function SignupPage() {
                     maxLength={12}
                     value={phoneNational}
                     onChange={(e) => { setPhoneNational(filterNationalNumber(e.target.value)); clearField('phone'); }}
-                    placeholder="714516132"
+                    placeholder="712345678"
                     className={`${fieldInput('phone')} flex-1`}
                     aria-required="true"
                   />
                 </div>
-                <p className="mt-1 text-[10px] text-theme-muted">Required. Example Kenya: +254 714516132</p>
+                <p className="mt-1 text-[10px] text-theme-muted">Required. Example: +254 712345678</p>
                 {fieldErrors.phone && <p className="mt-1 text-[11px] text-red-400">{fieldErrors.phone}</p>}
               </div>
               <div>
