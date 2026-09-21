@@ -245,7 +245,7 @@ Full column-level definitions are in [Appendix A](#appendix-a--canonical-schema)
 | :--- | :--- | :--- | :--- |
 | `admin_users` | Read own profile | `role`, `country_scope`, `display_name` | Identity for ops actions |
 | `workers` | Read/write (country-scoped for managers) | All worker columns | FK → `partner_entities`, `admin_users` |
-| `shifts` | Approve/reject/assign RDP | `status`, `approved_by`, `rdp_resource_id`, `rejection_reason` | FK → `workers`, `rdp_resources`, `admin_users` |
+| `shifts` | Approve/reject/assign RDP | `status`, `approved_by`, `rdp_resource_id` | FK → `workers`, `rdp_resources`, `admin_users` |
 | `rdp_resources` | Full ops control | `status`, `machine_health`, `version`, `assigned_worker_id`, credentials-at-rest, `health_notes`, `risk_flags`, `last_health_check_at` | FK → `workers`, `clients` |
 | `allocations` | Read all; force-release; quarantine repair | `release_reason`, `released_at`, `gateway_id`, `connection_generation`, `allocation_status`, `quarantined_at`, `quarantine_reason` | FK → `shifts`, `workers`, `rdp_resources` |
 | `sessions` | Read all; force-release; `admin_notes`; `suspicious` flag | `close_status`, `admin_notes`, `payroll_approval_state`, `suspicious` | FK → `workers`, `allocations`, `rdp_resources` |
@@ -730,7 +730,6 @@ Worker availability submissions and admin-approved schedules.
 | `status` | `shift_status_enum` | NOT NULL | `pending`, `approved`, `rejected`, `cancelled` |
 | `approved_by` | `UUID` | FK → `admin_users.id`, NULL | Approving admin |
 | `approved_at` | `TIMESTAMPTZ` | NULL | Approval timestamp |
-| `rejection_reason` | `TEXT` | NULL | Required when rejected |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Submission time |
 
 ---

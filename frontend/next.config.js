@@ -9,11 +9,17 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['lucide-react', 'framer-motion'],
   },
-  webpack: (config) => {
+  webpack: (config, { dev }) => {
     config.resolve.modules = [
       path.resolve(__dirname, 'node_modules'),
       ...(config.resolve.modules ?? ['node_modules']),
     ];
+    // Webpack's on-disk pack cache corrupts on Windows (failed rename of
+    // *.pack.gz). The dev server then serves HTML that points at chunks that
+    // no longer exist, and the app stays a blank screen. Memory cache avoids that.
+    if (dev) {
+      config.cache = { type: 'memory' };
+    }
     return config;
   },
   async headers() {

@@ -24,17 +24,29 @@ interface Shift {
   rdp_resource_id: string | null;
 }
 
-function formatDt(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: '2-digit', minute: '2-digit',
-  });
+function formatDate(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '—';
+  const weekday = d.toLocaleDateString('en-GB', { weekday: 'short' });
+  const month = d.toLocaleDateString('en-GB', { month: 'short' });
+  return `${weekday} ${d.getDate()} ${month} ${d.getFullYear()}`;
 }
 
-function duration(start: string, end: string): string {
-  const mins = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60000);
-  if (mins < 60) return `${mins}m`;
-  return `${Math.floor(mins / 60)}h ${mins % 60}m`;
+function formatTime(iso: string): string {
+  const d = new Date(iso);
+  if (!Number.isFinite(d.getTime())) return '—';
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function durationHours(start: string, end: string): string {
+  const mins = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 60_000);
+  if (!Number.isFinite(mins) || mins < 0) return '—';
+  if (mins < 60) return `${mins} min`;
+  const hours = mins / 60;
+  const rounded = Number.isInteger(hours) ? hours : Math.round(hours * 10) / 10;
+  return `${rounded} ${rounded === 1 ? 'hr' : 'hrs'}`;
 }
 
 const STATUS_OPTIONS = ['Pending', 'Approved', 'Rejected', 'Cancelled'];
@@ -42,29 +54,53 @@ const STATUS_VALUES: Record<string, string> = {
   Pending: 'pending', Approved: 'approved', Rejected: 'rejected', Cancelled: 'cancelled',
 };
 
-function localDateInputValue(date = new Date()): string {
-  const y = date.getFullYear();
-  const m = String(date.getMonth() + 1).padStart(2, '0');
-  const d = String(date.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+type RangeKey = 'all' | '24h' | '3d' | '7d' | '1m' | 'custom';
+
+const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
+  { key: 'all', label: 'All time' },
+  { key: '24h', label: 'Last 24 hours' },
+  { key: '3d', label: 'Last 3 days' },
+  { key: '7d', label: 'Last 7 days' },
+  { key: '1m', label: 'Last month' },
+  { key: 'custom', label: 'Custom range' },
+];
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+interface Bounds { from: number; to: number }
+
+/**
+ * Window the table should cover, or null for "no limit".
+ *
+ * The rolling options run backwards from now, which is what "last 24 hours"
+ * means — note that excludes shifts scheduled for the future. Custom takes
+ * whole local days, with the end day included.
+ */
+function rangeBounds(key: RangeKey, customFrom: string, customTo: string): Bounds | null {
+  if (key === 'all') return null;
+  if (key === 'custom') {
+    if (!customFrom && !customTo) return null;
+    const from = customFrom ? new Date(`${customFrom}T00:00:00`).getTime() : -Infinity;
+    let to = Infinity;
+    if (customTo) {
+      const end = new Date(`${customTo}T00:00:00`);
+      end.setDate(end.getDate() + 1);
+      to = end.getTime();
+    }
+    return { from, to };
+  }
+  const days = key === '24h' ? 1 : key === '3d' ? 3 : key === '7d' ? 7 : 30;
+  const now = Date.now();
+  return { from: now - days * DAY_MS, to: now };
 }
 
-/** Shift overlaps the selected local calendar day (including overnight spans). */
-function overlapsLocalDay(startIso: string, endIso: string, day: string): boolean {
-  if (!day) return true;
-  const dayStart = new Date(`${day}T00:00:00`).getTime();
-  const dayEnd = new Date(`${day}T00:00:00`);
-  dayEnd.setDate(dayEnd.getDate() + 1);
-  const shiftStart = new Date(startIso).getTime();
-  const shiftEnd = new Date(endIso).getTime();
-  if (!Number.isFinite(shiftStart) || !Number.isFinite(shiftEnd)) return false;
-  return shiftStart < dayEnd.getTime() && shiftEnd > dayStart;
-}
-
-function formatDayLabel(day: string): string {
-  return new Date(`${day}T00:00:00`).toLocaleDateString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric', year: 'numeric',
-  });
+/** True when the shift overlaps the window at all, overnight spans included. */
+function overlapsRange(startIso: string, endIso: string, bounds: Bounds | null): boolean {
+  if (!bounds) return true;
+  const start = new Date(startIso).getTime();
+  const end = new Date(endIso).getTime();
+  if (!Number.isFinite(start) || !Number.isFinite(end)) return false;
+  return start < bounds.to && end > bounds.from;
 }
 
 export default function AdminShiftsPage() {
@@ -74,7 +110,9 @@ export default function AdminShiftsPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [search, setSearch] = useState('');
-  const [day, setDay] = useState('');
+  const [range, setRange] = useState<RangeKey>('all');
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
 
@@ -97,18 +135,23 @@ export default function AdminShiftsPage() {
     return m;
   }, [workers]);
 
+  const bounds = useMemo(
+    () => rangeBounds(range, customFrom, customTo),
+    [range, customFrom, customTo],
+  );
+
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     const sv = statusFilter ? STATUS_VALUES[statusFilter] : '';
     return shifts.filter((s) => {
       if (sv && s.status !== sv) return false;
-      if (!overlapsLocalDay(s.scheduled_start, s.scheduled_end, day)) return false;
+      if (!overlapsRange(s.scheduled_start, s.scheduled_end, bounds)) return false;
       if (!q) return true;
       const w = workerMap[s.worker_id];
       const name = w ? w.display_name.toLowerCase() : s.worker_id;
       return name.includes(q) || s.status.includes(q);
     });
-  }, [shifts, day, statusFilter, search, workerMap]);
+  }, [shifts, bounds, statusFilter, search, workerMap]);
 
   const handleApprove = async (id: string) => {
     setActioning(id);
@@ -143,9 +186,10 @@ export default function AdminShiftsPage() {
     return {
       id: s.id,
       worker: w ? `${w.display_name} (${w.country})` : s.worker_id.slice(0, 8) + '…',
-      start: formatDt(s.scheduled_start),
-      end: formatDt(s.scheduled_end),
-      duration: duration(s.scheduled_start, s.scheduled_end),
+      date: formatDate(s.scheduled_start),
+      start: formatTime(s.scheduled_start),
+      end: formatTime(s.scheduled_end),
+      hours: durationHours(s.scheduled_start, s.scheduled_end),
       status: s.status,
       _raw: s,
     };
@@ -162,41 +206,69 @@ export default function AdminShiftsPage() {
         onFilterChange={(label, value) => { if (label === 'Status') setStatusFilter(value); }}
         filters={[{ label: 'Status', options: STATUS_OPTIONS }]}
       >
-        <div className="flex items-center gap-2">
-          <Calendar size={15} className="text-theme-muted shrink-0" />
-          <label htmlFor="shifts-day" className="sr-only">Day</label>
-          <input
-            id="shifts-day"
-            type="date"
-            value={day}
-            onChange={(e) => setDay(e.target.value)}
-            className="px-3 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 [color-scheme:dark]"
-          />
-          <button
-            type="button"
-            onClick={() => setDay(localDateInputValue())}
-            className={`px-3 py-2.5 rounded-xl text-xs font-semibold border transition-colors ${
-              day === localDateInputValue()
-                ? 'bg-emerald-accent/20 text-emerald-400 border-emerald-accent/40'
-                : 'bg-white/5 text-theme-muted border-white/10 hover:text-white hover:border-white/20'
-            }`}
+        <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="shifts-range" className="sr-only">Date range</label>
+          <select
+            id="shifts-range"
+            value={range}
+            onChange={(e) => setRange(e.target.value as RangeKey)}
+            className="px-4 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
           >
-            Today
-          </button>
-          {day && (
-            <button
-              type="button"
-              onClick={() => setDay('')}
-              className="text-xs text-theme-muted hover:text-white underline underline-offset-2"
-            >
-              All days
-            </button>
+            {RANGE_OPTIONS.map((o) => (
+              <option key={o.key} value={o.key}>{o.label}</option>
+            ))}
+          </select>
+
+          {range === 'custom' && (
+            <>
+              <div className="relative">
+                <Calendar
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent pointer-events-none"
+                />
+                <label htmlFor="shifts-from" className="sr-only">Start date</label>
+                <input
+                  id="shifts-from"
+                  type="date"
+                  value={customFrom}
+                  max={customTo || undefined}
+                  onChange={(e) => setCustomFrom(e.target.value)}
+                  className="pl-9 pr-3 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
+                />
+              </div>
+              <span className="text-xs text-theme-muted">to</span>
+              <div className="relative">
+                <Calendar
+                  size={14}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-emerald-accent pointer-events-none"
+                />
+                <label htmlFor="shifts-to" className="sr-only">End date</label>
+                <input
+                  id="shifts-to"
+                  type="date"
+                  value={customTo}
+                  min={customFrom || undefined}
+                  onChange={(e) => setCustomTo(e.target.value)}
+                  className="pl-9 pr-3 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
+                />
+              </div>
+              {(customFrom || customTo) && (
+                <button
+                  type="button"
+                  onClick={() => { setCustomFrom(''); setCustomTo(''); }}
+                  className="text-xs text-emerald-accent hover:underline"
+                >
+                  Clear dates
+                </button>
+              )}
+            </>
           )}
         </div>
       </FilterBar>
-      {day && (
+      {bounds && (
         <p className="-mt-4 mb-4 text-xs text-theme-muted">
-          Showing {filtered.length} shift{filtered.length === 1 ? '' : 's'} on {formatDayLabel(day)}.
+          Showing {filtered.length} shift{filtered.length === 1 ? '' : 's'} in{' '}
+          {RANGE_OPTIONS.find((o) => o.key === range)?.label.toLowerCase()}.
         </p>
       )}
 
@@ -235,9 +307,10 @@ export default function AdminShiftsPage() {
         <DataTable
           columns={[
             { key: 'worker', header: 'Worker' },
+            { key: 'date', header: 'Date' },
             { key: 'start', header: 'Start' },
             { key: 'end', header: 'End' },
-            { key: 'duration', header: 'Duration' },
+            { key: 'hours', header: 'Hours' },
             {
               key: 'status',
               header: 'Status',
@@ -250,20 +323,26 @@ export default function AdminShiftsPage() {
                 const raw = (r as typeof rows[number])._raw;
                 if (raw.status !== 'pending') return null;
                 return (
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center gap-1.5">
                     <button
-                      className="flex items-center gap-1 text-xs font-semibold text-emerald-accent hover:underline disabled:opacity-40"
+                      type="button"
+                      title="Approve"
+                      aria-label="Approve shift"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-accent hover:bg-emerald-accent/15 disabled:opacity-40 transition-colors"
                       onClick={() => handleApprove(raw.id)}
                       disabled={!!actioning}
                     >
-                      <Check size={13} /> Approve
+                      <Check size={16} strokeWidth={2.5} />
                     </button>
                     <button
-                      className="flex items-center gap-1 text-xs font-semibold text-danger hover:underline disabled:opacity-40"
+                      type="button"
+                      title="Reject"
+                      aria-label="Reject shift"
+                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-danger hover:bg-danger/15 disabled:opacity-40 transition-colors"
                       onClick={() => setRejectingId(raw.id)}
                       disabled={!!actioning}
                     >
-                      <X size={13} /> Reject
+                      <X size={16} strokeWidth={2.5} />
                     </button>
                   </div>
                 );
@@ -271,7 +350,11 @@ export default function AdminShiftsPage() {
             },
           ]}
           data={rows as unknown as Record<string, unknown>[]}
-          emptyMessage={day ? `No shifts on ${formatDayLabel(day)}.` : 'No shifts found.'}
+          emptyMessage={
+            bounds
+              ? `No shifts in ${RANGE_OPTIONS.find((o) => o.key === range)?.label.toLowerCase()}.`
+              : 'No shifts found.'
+          }
         />
       )}
     </div>

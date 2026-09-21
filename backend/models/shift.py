@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -39,10 +39,6 @@ class Shift(SQLModel, table=True):
     approved_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
-    # Retired: rejections no longer capture a reason. The column stays so the
-    # model matches existing databases; nothing reads or writes it, and the API
-    # no longer exposes it. Drop it in a migration if the history is not wanted.
-    rejection_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

@@ -4,6 +4,29 @@ import "./globals.css";
 import Providers from "@/components/theme/Providers";
 import { themeInitScript } from "@/lib/theme/ThemeProvider";
 
+/** Runs before any bundle. A missing /_next chunk used to leave a blank page forever. */
+const chunkRecoveryScript = `
+(function () {
+  var KEY = 'wap_chunk_reload_at';
+  function reload() {
+    try {
+      var last = Number(sessionStorage.getItem(KEY) || 0);
+      if (Date.now() - last < 15000) return;
+      sessionStorage.setItem(KEY, String(Date.now()));
+    } catch (e) {}
+    var url = new URL(location.href);
+    url.searchParams.set('_r', String(Date.now()));
+    location.replace(url.toString());
+  }
+  window.addEventListener('error', function (event) {
+    var target = event.target;
+    if (!target || target === window) return;
+    var src = target.src || target.href || '';
+    if (String(src).indexOf('/_next/static/') !== -1) reload();
+  }, true);
+})();
+`;
+
 const inter = Inter({
   subsets: ["latin"],
   weight: ["400", "500", "600", "700"],
@@ -57,6 +80,7 @@ export default function RootLayout({
     // Hardcoding fought light mode on every React hydration.
     <html lang="en" className={`${inter.variable} ${manrope.variable} ${jetbrains.variable}`} suppressHydrationWarning>
       <head>
+        <script dangerouslySetInnerHTML={{ __html: chunkRecoveryScript }} />
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         <link rel="icon" href="/images/logo-mark.png" type="image/png" sizes="256x256" />
         <link rel="apple-touch-icon" href="/images/logo-mark.png" sizes="256x256" />

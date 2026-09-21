@@ -58,7 +58,7 @@ Workers submit shift availability; admins approve or reject.
 | GET | `/shifts` | user+ | `status`, `upcoming=true` | List shifts. Workers see own; admins see all. Filter by status or upcoming only. |
 | GET | `/shifts/{shift_id}` | user+ | — | Get one shift. Workers can only fetch their own. |
 | POST | `/shifts` | user+ | — | Submit a shift. Workers may only create shifts for themselves. Body: `ShiftCreate`. |
-| PATCH | `/shifts/{shift_id}` | user+ | — | Update a shift. Workers cannot touch `status`, `approved_by`, `approved_at`, or `rejection_reason` — those are admin-only fields. |
+| PATCH | `/shifts/{shift_id}` | user+ | — | Update a shift. Workers cannot touch `status`, `approved_by`, or `approved_at` — those are admin-only fields. |
 
 ---
 
