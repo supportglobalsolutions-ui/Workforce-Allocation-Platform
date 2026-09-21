@@ -2,7 +2,14 @@ interface Column<T> {
   key: keyof T | string;
   header: string;
   render?: (row: T) => React.ReactNode;
+  align?: 'left' | 'center' | 'right';
 }
+
+const ALIGN: Record<'left' | 'center' | 'right', string> = {
+  left: 'text-left',
+  center: 'text-center',
+  right: 'text-right',
+};
 
 interface DataTableProps<T extends Record<string, unknown>> {
   columns: Column<T>[];
@@ -24,7 +31,7 @@ export default function DataTable<T extends Record<string, unknown>>({
               {columns.map((col) => (
                 <th
                   key={String(col.key)}
-                  className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant"
+                  className={`${ALIGN[col.align ?? 'left']} px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant`}
                 >
                   {col.header}
                 </th>
@@ -42,7 +49,7 @@ export default function DataTable<T extends Record<string, unknown>>({
               data.map((row, i) => (
                 <tr key={String(row.id ?? i)} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
                   {columns.map((col) => (
-                    <td key={String(col.key)} className="px-4 py-3 text-brand-on-surface">
+                    <td key={String(col.key)} className={`${ALIGN[col.align ?? 'left']} px-4 py-3 text-brand-on-surface`}>
                       {col.render ? col.render(row) : String(row[col.key as keyof T] ?? '—')}
                     </td>
                   ))}

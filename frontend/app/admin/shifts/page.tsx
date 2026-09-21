@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
-import { Calendar, Check, X } from 'lucide-react';
+import { Calendar, Check, Loader2, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
@@ -54,13 +54,15 @@ const STATUS_VALUES: Record<string, string> = {
   Pending: 'pending', Approved: 'approved', Rejected: 'rejected', Cancelled: 'cancelled',
 };
 
-type RangeKey = 'all' | '24h' | '3d' | '7d' | '1m' | 'custom';
+type RangeKey = 'all' | '24h' | '3d' | '7d' | 'this_week' | 'next_7d' | '1m' | 'custom';
 
 const RANGE_OPTIONS: { key: RangeKey; label: string }[] = [
   { key: 'all', label: 'All time' },
   { key: '24h', label: 'Last 24 hours' },
   { key: '3d', label: 'Last 3 days' },
   { key: '7d', label: 'Last 7 days' },
+  { key: 'this_week', label: 'This week (Mon–Sun)' },
+  { key: 'next_7d', label: 'Next 7 days' },
   { key: '1m', label: 'Last month' },
   { key: 'custom', label: 'Custom range' },
 ];
@@ -69,12 +71,30 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 interface Bounds { from: number; to: number }
 
+/** Midnight at the start of today, local time. */
+function startOfToday(): Date {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+/** `base` moved by whole calendar days (DST-safe, unlike adding DAY_MS). */
+function shiftDays(base: Date, days: number): Date {
+  const d = new Date(base);
+  d.setDate(d.getDate() + days);
+  return d;
+}
+
 /**
  * Window the table should cover, or null for "no limit".
  *
- * The rolling options run backwards from now, which is what "last 24 hours"
- * means — note that excludes shifts scheduled for the future. Custom takes
- * whole local days, with the end day included.
+ * Every window is matched against the shift's *scheduled* time — the day the
+ * worker says they will be working — not when the row was submitted. Because
+ * workers submit ahead (a shift for the whole week can land on Monday), the
+ * backward-looking options run to the END of today rather than to "now", so a
+ * shift scheduled for later today still counts as today. "This week" and
+ * "Next 7 days" deliberately reach into the future for those advance
+ * submissions. Custom takes whole local days, with the end day included.
  */
 function rangeBounds(key: RangeKey, customFrom: string, customTo: string): Bounds | null {
   if (key === 'all') return null;
@@ -89,9 +109,29 @@ function rangeBounds(key: RangeKey, customFrom: string, customTo: string): Bound
     }
     return { from, to };
   }
-  const days = key === '24h' ? 1 : key === '3d' ? 3 : key === '7d' ? 7 : 30;
-  const now = Date.now();
-  return { from: now - days * DAY_MS, to: now };
+
+  const today = startOfToday();
+  const endOfToday = shiftDays(today, 1).getTime();
+
+  switch (key) {
+    case '24h':
+      return { from: Date.now() - DAY_MS, to: endOfToday };
+    case '3d':
+      return { from: shiftDays(today, -2).getTime(), to: endOfToday };
+    case '7d':
+      return { from: shiftDays(today, -6).getTime(), to: endOfToday };
+    case '1m':
+      return { from: shiftDays(today, -29).getTime(), to: endOfToday };
+    case 'this_week': {
+      const weekday = today.getDay(); // 0 = Sunday
+      const monday = shiftDays(today, weekday === 0 ? -6 : 1 - weekday);
+      return { from: monday.getTime(), to: shiftDays(monday, 7).getTime() };
+    }
+    case 'next_7d':
+      return { from: today.getTime(), to: shiftDays(today, 7).getTime() };
+    default:
+      return null;
+  }
 }
 
 /** True when the shift overlaps the window at all, overnight spans included. */
@@ -103,12 +143,18 @@ function overlapsRange(startIso: string, endIso: string, bounds: Bounds | null):
   return start < bounds.to && end > bounds.from;
 }
 
+/** Placeholder that keeps the action columns aligned on already-decided rows. */
+function IdleCell() {
+  return <span className="text-theme-muted/40">—</span>;
+}
+
 export default function AdminShiftsPage() {
   const [shifts, setShifts] = useState<Shift[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
+  const [workerFilter, setWorkerFilter] = useState('');
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
   const [customFrom, setCustomFrom] = useState('');
@@ -135,6 +181,22 @@ export default function AdminShiftsPage() {
     return m;
   }, [workers]);
 
+  /**
+   * Only workers who actually submitted a shift, so the dropdown stays short
+   * and every option is guaranteed to return rows.
+   */
+  const submitters = useMemo(() => {
+    const counts = new Map<string, number>();
+    shifts.forEach((s) => counts.set(s.worker_id, (counts.get(s.worker_id) ?? 0) + 1));
+    return [...counts.entries()]
+      .map(([id, count]) => ({
+        id,
+        name: workerMap[id]?.display_name ?? `${id.slice(0, 8)}…`,
+        count,
+      }))
+      .sort((a, b) => a.name.localeCompare(b.name));
+  }, [shifts, workerMap]);
+
   const bounds = useMemo(
     () => rangeBounds(range, customFrom, customTo),
     [range, customFrom, customTo],
@@ -145,13 +207,17 @@ export default function AdminShiftsPage() {
     const sv = statusFilter ? STATUS_VALUES[statusFilter] : '';
     return shifts.filter((s) => {
       if (sv && s.status !== sv) return false;
+      if (workerFilter && s.worker_id !== workerFilter) return false;
       if (!overlapsRange(s.scheduled_start, s.scheduled_end, bounds)) return false;
       if (!q) return true;
       const w = workerMap[s.worker_id];
       const name = w ? w.display_name.toLowerCase() : s.worker_id;
       return name.includes(q) || s.status.includes(q);
     });
-  }, [shifts, bounds, statusFilter, search, workerMap]);
+  }, [shifts, bounds, statusFilter, workerFilter, search, workerMap]);
+
+  const selectedWorker = submitters.find((w) => w.id === workerFilter) ?? null;
+  const rangeLabel = RANGE_OPTIONS.find((o) => o.key === range)?.label ?? 'All time';
 
   const handleApprove = async (id: string) => {
     setActioning(id);
@@ -207,6 +273,21 @@ export default function AdminShiftsPage() {
         filters={[{ label: 'Status', options: STATUS_OPTIONS }]}
       >
         <div className="flex flex-wrap items-center gap-2">
+          <label htmlFor="shifts-worker" className="sr-only">Worker</label>
+          <select
+            id="shifts-worker"
+            value={workerFilter}
+            onChange={(e) => setWorkerFilter(e.target.value)}
+            className="px-4 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors max-w-[16rem]"
+          >
+            <option value="">All workers ({submitters.length})</option>
+            {submitters.map((w) => (
+              <option key={w.id} value={w.id}>
+                {w.name} — {w.count} shift{w.count === 1 ? '' : 's'}
+              </option>
+            ))}
+          </select>
+
           <label htmlFor="shifts-range" className="sr-only">Date range</label>
           <select
             id="shifts-range"
@@ -265,10 +346,20 @@ export default function AdminShiftsPage() {
           )}
         </div>
       </FilterBar>
-      {bounds && (
-        <p className="-mt-4 mb-4 text-xs text-theme-muted">
-          Showing {filtered.length} shift{filtered.length === 1 ? '' : 's'} in{' '}
-          {RANGE_OPTIONS.find((o) => o.key === range)?.label.toLowerCase()}.
+      {(bounds || workerFilter) && (
+        <p className="-mt-4 mb-4 flex flex-wrap items-center gap-2 text-xs text-theme-muted">
+          <span>
+            Showing {filtered.length} shift{filtered.length === 1 ? '' : 's'}
+            {selectedWorker ? ` for ${selectedWorker.name}` : ''}
+            {bounds ? ` scheduled in ${rangeLabel.toLowerCase()}` : ''}.
+          </span>
+          <button
+            type="button"
+            onClick={() => { setWorkerFilter(''); setRange('all'); setCustomFrom(''); setCustomTo(''); }}
+            className="text-emerald-accent hover:underline"
+          >
+            Clear filters
+          </button>
         </p>
       )}
 
@@ -317,42 +408,58 @@ export default function AdminShiftsPage() {
               render: (r) => <StatusBadge status={r.status as string} />,
             },
             {
-              key: 'actions',
-              header: '',
+              key: 'approve',
+              header: 'Approve',
+              align: 'center',
               render: (r) => {
-                const raw = (r as typeof rows[number])._raw;
-                if (raw.status !== 'pending') return null;
+                const row = r as typeof rows[number];
+                if (row._raw.status !== 'pending') return <IdleCell />;
                 return (
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      type="button"
-                      title="Approve"
-                      aria-label="Approve shift"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-emerald-accent hover:bg-emerald-accent/15 disabled:opacity-40 transition-colors"
-                      onClick={() => handleApprove(raw.id)}
-                      disabled={!!actioning}
-                    >
-                      <Check size={16} strokeWidth={2.5} />
-                    </button>
-                    <button
-                      type="button"
-                      title="Reject"
-                      aria-label="Reject shift"
-                      className="inline-flex h-8 w-8 items-center justify-center rounded-lg text-danger hover:bg-danger/15 disabled:opacity-40 transition-colors"
-                      onClick={() => setRejectingId(raw.id)}
-                      disabled={!!actioning}
-                    >
-                      <X size={16} strokeWidth={2.5} />
-                    </button>
-                  </div>
+                  <button
+                    type="button"
+                    title={`Approve ${row.worker}`}
+                    aria-label={`Approve shift for ${row.worker}`}
+                    className="group inline-flex h-9 w-9 items-center justify-center rounded-xl border border-emerald-accent/40 bg-emerald-accent/10 text-emerald-accent transition-all hover:bg-emerald-accent hover:text-brand-primary-dark hover:shadow-lg hover:shadow-emerald-accent/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-accent/60 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                    onClick={() => handleApprove(row._raw.id)}
+                    disabled={!!actioning}
+                  >
+                    {actioning === row._raw.id ? (
+                      <Loader2 size={16} className="animate-spin" />
+                    ) : (
+                      <Check size={17} strokeWidth={3} />
+                    )}
+                  </button>
+                );
+              },
+            },
+            {
+              key: 'reject',
+              header: 'Reject',
+              align: 'center',
+              render: (r) => {
+                const row = r as typeof rows[number];
+                if (row._raw.status !== 'pending') return <IdleCell />;
+                return (
+                  <button
+                    type="button"
+                    title={`Reject ${row.worker}`}
+                    aria-label={`Reject shift for ${row.worker}`}
+                    className="group inline-flex h-9 w-9 items-center justify-center rounded-xl border border-danger/40 bg-danger/10 text-danger transition-all hover:bg-danger hover:text-white hover:shadow-lg hover:shadow-danger/25 focus:outline-none focus-visible:ring-2 focus-visible:ring-danger/60 active:scale-95 disabled:pointer-events-none disabled:opacity-40"
+                    onClick={() => setRejectingId(row._raw.id)}
+                    disabled={!!actioning}
+                  >
+                    <X size={17} strokeWidth={3} />
+                  </button>
                 );
               },
             },
           ]}
           data={rows as unknown as Record<string, unknown>[]}
           emptyMessage={
-            bounds
-              ? `No shifts in ${RANGE_OPTIONS.find((o) => o.key === range)?.label.toLowerCase()}.`
+            bounds || workerFilter
+              ? `No shifts${selectedWorker ? ` for ${selectedWorker.name}` : ''}`
+                + `${bounds ? ` scheduled in ${rangeLabel.toLowerCase()}` : ''}.`
+                + ' Try a wider date range — shifts submitted for future days sit outside the backward-looking ranges.'
               : 'No shifts found.'
           }
         />
