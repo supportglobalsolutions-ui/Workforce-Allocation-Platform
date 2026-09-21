@@ -836,20 +836,32 @@ Run through these checks to verify 100% operational status:
 ## Routine Maintenance & Updating Code
 
 ### Updating the Backend (Hetzner)
+
+This is the command sequence to use every time the VPS is behind `main`.
+Live repo path on the current host:
+
+`/home/deployer/app/Workforce-Allocation-Platform`
+
 ```bash
 ssh deployer@<YOUR_SERVER_IP>
-cd /home/deployer/app
+
+cd /home/deployer/app/Workforce-Allocation-Platform
 git pull origin main
 
-# Apply database migrations if any changed
 cd backend
 source venv/bin/activate
 pip install -r requirements.txt
 alembic upgrade head
 
-# Restart the service
 sudo systemctl restart workforce-backend
+sudo systemctl status workforce-backend --no-pager
+
+# Confirm migrations and API health
+alembic current
+curl -s http://127.0.0.1:8000/health
 ```
+
+Expect `alembic current` to print a revision ending in `(head)`, and health to return `{"status":"ok"}`.
 
 ### Updating the Frontend (Vercel)
 Any git push to your `main` branch automatically triggers Vercel to build and deploy the `frontend/` directory with zero downtime.
@@ -857,14 +869,14 @@ Any git push to your `main` branch automatically triggers Vercel to build and de
 ### Viewing Live Logs on Hetzner
 ```bash
 # Follow backend FastAPI logs
-journalctl -u workforce-backend -f
+journalctl -u workforce-backend -f --no-pager
 
 # Follow Nginx access / error logs
 sudo tail -f /var/log/nginx/access.log
 sudo tail -f /var/log/nginx/error.log
 
 # Follow Docker container logs
-cd /home/deployer/app/infrastructure
+cd /home/deployer/app/Workforce-Allocation-Platform/infrastructure
 docker compose logs -f guacd
 docker compose logs -f redis
 ```
