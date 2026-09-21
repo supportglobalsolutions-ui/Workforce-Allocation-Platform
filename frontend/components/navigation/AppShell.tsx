@@ -6,6 +6,7 @@ import TopNav from './TopNav';
 import CollapsibleSidebar from './CollapsibleSidebar';
 import SiteFooter from '@/components/layout/SiteFooter';
 import NotificationToast from './NotificationToast';
+import PhoneNumberPrompt from './PhoneNumberPrompt';
 import { PortalRole, SIDEBAR_STORAGE_KEY } from '@/lib/navigation/config';
 
 interface AppShellProps {
@@ -85,7 +86,10 @@ export default function AppShell({ children, role }: AppShellProps) {
         <main className="p-4 sm:p-5 md:p-6 lg:p-8 flex-1 w-full min-w-0 max-w-[1600px] mx-auto">{children}</main>
         <SiteFooter />
         {role === 'worker' && (
-          <NotificationToast profileHref="/worker/profile" />
+          <>
+            <NotificationToast profileHref="/worker/profile" />
+            <PhoneNumberPrompt />
+          </>
         )}
       </div>
     </div>

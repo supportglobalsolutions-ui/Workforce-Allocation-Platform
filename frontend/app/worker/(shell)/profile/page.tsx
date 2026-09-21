@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { useRouter, useSearchParams } from 'next/navigation';
-import { Pencil, X, Check, LayoutDashboard, Star, Wallet } from 'lucide-react';
+import { Pencil, X, Check, LayoutDashboard, Star } from 'lucide-react';
 import { api } from '@/lib/api';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import {
@@ -22,7 +21,6 @@ import {
   MM_PROVIDER_MAX,
   filterMobileMoneyName,
   filterMobileMoneyProvider,
-  hasCompletePayoutDetails,
   validateMobileMoneyName,
   validateMobileMoneyProvider,
 } from '@/lib/mobile-money-fields';
@@ -74,9 +72,6 @@ function Stat({ value, label }: { value: React.ReactNode; label: string }) {
 
 export default function ProfilePage() {
   const { session } = useAuth();
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const needsPayout = searchParams.get('complete') === 'payout';
   const [worker, setWorker] = useState<Worker | null>(null);
   const [countries, setCountries] = useState<string[]>([]);
   const [loading, setLoading] = useState(true);
@@ -113,13 +108,10 @@ export default function ProfilePage() {
       .then((w) => {
         setWorker(w);
         applyWorkerToForm(w);
-        if (needsPayout || !hasCompletePayoutDetails(w)) {
-          setEditing(true);
-        }
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load profile'))
       .finally(() => setLoading(false));
-  }, [needsPayout]);
+  }, []);
 
   // Fetch the picker list only once the form is open — the read-only view
   // shows the saved name and needs no list at all.
@@ -154,14 +146,16 @@ export default function ProfilePage() {
   const handleSave = async () => {
     if (!worker) return;
     const username = form.username.trim().toLowerCase();
-    const fullPhone = composeE164(form.phoneDial, form.phoneNational);
-    const requirePayout = needsPayout || !hasCompletePayoutDetails(worker);
+    const enteredNational = form.phoneNational.trim();
+    const fullPhone = enteredNational ? composeE164(form.phoneDial, form.phoneNational) : '';
     const mmName = filterMobileMoneyName(form.mobileMoneyName).trim();
     const mmProvider = filterMobileMoneyProvider(form.mobileMoneyProvider).trim();
-    const phoneErr = validateE164Phone(fullPhone);
+    // A number already on the account counts as entered. Don't block the
+    // rest of the form, and don't require mobile-money fields to leave.
+    const phoneErr = enteredNational ? validateE164Phone(fullPhone) : '';
     const residenceErr = form.residence.trim() ? validateResidence(form.residence) : '';
-    const mmNameErr = validateMobileMoneyName(mmName, { required: requirePayout });
-    const mmProviderErr = validateMobileMoneyProvider(mmProvider, { required: requirePayout });
+    const mmNameErr = mmName ? validateMobileMoneyName(mmName) : '';
+    const mmProviderErr = mmProvider ? validateMobileMoneyProvider(mmProvider) : '';
     if (phoneErr || residenceErr || mmNameErr || mmProviderErr) {
       setSaveOk(false);
       setSaveError(phoneErr || residenceErr || mmNameErr || mmProviderErr);
@@ -175,7 +169,7 @@ export default function ProfilePage() {
         username: username || undefined,
         display_name: username || undefined,
         country: form.country.trim() || undefined,
-        phone: fullPhone,
+        ...(enteredNational ? { phone: fullPhone } : {}),
         residence: form.residence.trim().replace(/\s+/g, ' ') || undefined,
         mobile_money_name: mmName || null,
         mobile_money_provider: mmProvider || null,
@@ -183,9 +177,12 @@ export default function ProfilePage() {
       setWorker(updated);
       applyWorkerToForm(updated);
       setSaveOk(true);
-      if (hasCompletePayoutDetails(updated)) {
-        setEditing(false);
-        if (needsPayout) router.replace('/worker/profile');
+      setEditing(false);
+      if (enteredNational) {
+        try {
+          localStorage.setItem(`wap_phone_entered:${updated.id}`, '1');
+          localStorage.removeItem('wap_phone_prompt_next');
+        } catch { /* ignore */ }
       }
     } catch (e) {
       const raw = e instanceof Error ? e.message : 'Save failed';
@@ -221,13 +218,22 @@ export default function ProfilePage() {
     year: 'numeric', month: 'long', day: 'numeric',
   });
   const legalName = [worker.first_name, worker.last_name].filter(Boolean).join(' ');
+  let phoneOnFile = Boolean(worker.phone?.trim());
+  if (!phoneOnFile) {
+    try {
+      phoneOnFile = localStorage.getItem(`wap_phone_entered:${worker.id}`) === '1';
+    } catch {
+      phoneOnFile = false;
+    }
+  }
 
   return (
     <div className="max-w-4xl mx-auto pb-10">
-      {(needsPayout || (worker && !hasCompletePayoutDetails(worker))) && (
-        <div className="mb-6 rounded-2xl border border-amber-500/30 bg-amber-500/10 px-5 py-4 flex gap-3 items-center">
-          <Wallet size={20} className="text-amber-400 shrink-0" />
-          <p className="text-sm font-bold text-theme-heading">Add your mobile money details to continue.</p>
+      {!phoneOnFile && (
+        <div className="mb-6 rounded-2xl border border-white/10 bg-white/5 px-5 py-4">
+          <p className="text-sm text-theme-heading">
+            Phone number is not on your profile yet. You can add it here whenever you like — it does not block the rest of the app.
+          </p>
         </div>
       )}
 

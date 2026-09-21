@@ -100,14 +100,21 @@ async function request<T>(
 ): Promise<T> {
   const fetchWith = async (forceRefresh: boolean) => {
     const token = await getToken(forceRefresh);
-    return fetch(`${BASE}${path}`, {
-      method,
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
-    });
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), 20_000);
+    try {
+      return await fetch(`${BASE}${path}`, {
+        method,
+        signal: controller.signal,
+        headers: {
+          'Content-Type': 'application/json',
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
+      });
+    } finally {
+      clearTimeout(timer);
+    }
   };
 
   const attempt = async (forceRefresh: boolean) => {

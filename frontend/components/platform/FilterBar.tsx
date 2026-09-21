@@ -7,6 +7,7 @@ interface FilterBarProps {
   filters?: { label: string; options: string[] }[];
   onSearch?: (value: string) => void;
   onFilterChange?: (label: string, value: string) => void;
+  children?: React.ReactNode;
 }
 
 export default function FilterBar({
@@ -14,6 +15,7 @@ export default function FilterBar({
   filters = [],
   onSearch,
   onFilterChange,
+  children,
 }: FilterBarProps) {
   return (
     <div className="flex flex-col sm:flex-row gap-3 mb-6">
@@ -40,6 +42,7 @@ export default function FilterBar({
           ))}
         </select>
       ))}
+      {children}
     </div>
   );
 }

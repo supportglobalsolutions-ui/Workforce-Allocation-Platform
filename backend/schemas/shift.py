@@ -25,7 +25,6 @@ class ShiftUpdate(SQLModel):
     status:           Optional[ShiftStatusEnum]  = None
     approved_by:      Optional[UUID]            = None
     approved_at:      Optional[datetime]         = None
-    rejection_reason: Optional[str]             = None
 
 
 class ShiftResponse(ShiftBase):
@@ -34,5 +33,4 @@ class ShiftResponse(ShiftBase):
     id:               UUID
     approved_by:      Optional[UUID]
     approved_at:      Optional[datetime]
-    rejection_reason: Optional[str]
     created_at:       datetime

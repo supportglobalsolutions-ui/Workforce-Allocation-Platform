@@ -96,7 +96,7 @@ def update_shift(
     previous_status: ShiftStatusEnum = shift.status
 
     if current_user.get("role") not in STAFF_ROLES:
-        restricted = {"status", "approved_by", "approved_at", "rejection_reason"}
+        restricted = {"status", "approved_by", "approved_at"}
         if restricted & body.model_dump(exclude_unset=True).keys():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,

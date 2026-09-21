@@ -30,14 +30,32 @@ const nextConfig = {
       "form-action 'self'",
     ].join('; ');
 
+    const security = [
+      { key: 'Content-Security-Policy', value: csp },
+      { key: 'X-Content-Type-Options', value: 'nosniff' },
+      { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+      { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+    ];
+
     return [
+      // Hashed build assets are safe to cache forever.
       {
-        source: '/:path*',
+        source: '/_next/static/:path*',
         headers: [
-          { key: 'Content-Security-Policy', value: csp },
-          { key: 'X-Content-Type-Options', value: 'nosniff' },
-          { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
-          { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+          { key: 'Cache-Control', value: 'public, max-age=31536000, immutable' },
+        ],
+      },
+      // HTML/app routes must never keep pointing at deleted chunk hashes after a
+      // hot reload or deploy — that is what leaves pages stuck on the spinner.
+      // Exclude /_next/* so immutable static assets keep their long cache.
+      {
+        source: '/((?!_next/).*)',
+        headers: [
+          ...security,
+          {
+            key: 'Cache-Control',
+            value: 'private, no-cache, no-store, max-age=0, must-revalidate',
+          },
         ],
       },
     ];

@@ -27,6 +27,7 @@ import PeriodFilter from '@/components/platform/PeriodFilter';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { withTimeout } from '@/lib/with-timeout';
 import { enteredPayMinutes, formatHoursLabel, rdpConnectedMinutes } from '@/lib/hours';
 import { coversDate, pickCurrentPeriod, type PeriodLike } from '@/lib/periods';
 
@@ -181,42 +182,61 @@ export default function CeoCommandCenterPage() {
 
   useEffect(() => {
     let cancelled = false;
+    const LOAD_BUDGET_MS = 20_000;
+    const failSafe = window.setTimeout(() => {
+      if (cancelled) return;
+      setErrors((prev) => (
+        prev.includes('Dashboard load timed out. Showing what we have.')
+          ? prev
+          : [...prev, 'Dashboard load timed out. Showing what we have.']
+      ));
+      setLoading(false);
+    }, LOAD_BUDGET_MS);
+
     (async () => {
       setLoading(true);
-      const results = await Promise.allSettled([
-        api.get<Worker[]>('/workers'),
-        api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'),
-        api.get<RdpResource[]>('/rdp'),
-        api.get<LeaderboardEntry[]>('/leaderboard?limit=5'),
-        api.get<QualityScore[]>('/quality/scores'),
-        api.get<Partner[]>('/partners'),
-        api.get<PayrollPeriod[]>('/payroll/periods'),
-        api.get<Client[]>('/clients'),
-      ]);
-      if (cancelled) return;
+      try {
+        const results = await Promise.allSettled([
+          withTimeout(api.get<Worker[]>('/workers'), 15_000, 'workers'),
+          withTimeout(api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'), 15_000, 'sessions'),
+          withTimeout(api.get<RdpResource[]>('/rdp'), 15_000, 'RDP'),
+          withTimeout(api.get<LeaderboardEntry[]>('/leaderboard?limit=5'), 15_000, 'leaderboard'),
+          withTimeout(api.get<QualityScore[]>('/quality/scores'), 15_000, 'quality'),
+          withTimeout(api.get<Partner[]>('/partners'), 15_000, 'partners'),
+          withTimeout(api.get<PayrollPeriod[]>('/payroll/periods'), 15_000, 'payroll periods'),
+          withTimeout(api.get<Client[]>('/clients'), 15_000, 'clients'),
+        ]);
+        if (cancelled) return;
 
-      const fails: string[] = [];
-      const labels = ['workers', 'sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'payroll periods', 'clients'];
-      results.forEach((r, i) => {
-        if (r.status === 'rejected') {
-          fails.push(`${labels[i]}: ${r.reason instanceof Error ? r.reason.message : 'failed'}`);
-        }
-      });
+        const fails: string[] = [];
+        const labels = ['workers', 'sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'payroll periods', 'clients'];
+        results.forEach((r, i) => {
+          if (r.status === 'rejected') {
+            fails.push(`${labels[i]}: ${r.reason instanceof Error ? r.reason.message : 'failed'}`);
+          }
+        });
 
-      const periodRows = settled(results[6], [] as PayrollPeriod[]);
-      setWorkers(settled(results[0], [] as Worker[]));
-      setSessions(settled(results[1], [] as WorkSession[]));
-      setMachines(settled(results[2], [] as RdpResource[]));
-      setLeaderboard(settled(results[3], [] as LeaderboardEntry[]));
-      setScores(settled(results[4], [] as QualityScore[]));
-      setPartners(settled(results[5], [] as Partner[]));
-      setPeriods(periodRows);
-      setClients(settled(results[7], [] as Client[]));
-      setPeriodId(pickCurrentPeriod(periodRows)?.id ?? periodRows[0]?.id ?? '');
-      setErrors(fails);
-      setLoading(false);
+        const periodRows = settled(results[6], [] as PayrollPeriod[]);
+        setWorkers(settled(results[0], [] as Worker[]));
+        setSessions(settled(results[1], [] as WorkSession[]));
+        setMachines(settled(results[2], [] as RdpResource[]));
+        setLeaderboard(settled(results[3], [] as LeaderboardEntry[]));
+        setScores(settled(results[4], [] as QualityScore[]));
+        setPartners(settled(results[5], [] as Partner[]));
+        setPeriods(periodRows);
+        setClients(settled(results[7], [] as Client[]));
+        setPeriodId(pickCurrentPeriod(periodRows)?.id ?? periodRows[0]?.id ?? '');
+        setErrors(fails);
+      } finally {
+        window.clearTimeout(failSafe);
+        if (!cancelled) setLoading(false);
+      }
     })();
-    return () => { cancelled = true; };
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(failSafe);
+    };
   }, []);
 
   useEffect(() => {

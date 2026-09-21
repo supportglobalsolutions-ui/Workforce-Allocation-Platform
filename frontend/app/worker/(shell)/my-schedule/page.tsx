@@ -17,7 +17,6 @@ interface Shift {
   scheduled_start: string;
   scheduled_end: string;
   status: string;
-  rejection_reason: string | null;
 }
 
 const DAYS: { label: string; jsDay: number }[] = [
@@ -218,7 +217,7 @@ export default function MySchedulePage() {
                 <table className="w-full text-sm min-w-[520px]">
                   <thead>
                     <tr className="border-b border-white/5 bg-white/[0.02]">
-                      {['Start', 'End', 'Status', 'Rejection Reason'].map((h) => (
+                      {['Start', 'End', 'Status'].map((h) => (
                         <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">{h}</th>
                       ))}
                     </tr>
@@ -229,7 +228,6 @@ export default function MySchedulePage() {
                         <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_start)}</td>
                         <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_end)}</td>
                         <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
-                        <td className="px-4 py-3 text-theme-muted text-xs">{s.rejection_reason ?? '—'}</td>
                       </tr>
                     ))}
                   </tbody>

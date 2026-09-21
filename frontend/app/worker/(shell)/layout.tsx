@@ -1,15 +1,13 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { usePathname, useRouter } from 'next/navigation';
+import { useRouter } from 'next/navigation';
 import AppShell from '@/components/navigation/AppShell';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
-import { hasCompletePayoutDetails } from '@/lib/mobile-money-fields';
 
 export default function WorkerShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
-  const pathname = usePathname();
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
@@ -30,14 +28,7 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
           router.replace('/worker/setup-username');
           return;
         }
-        // Payout fields are edited on Profile — allow that page, otherwise send there.
-        if (!hasCompletePayoutDetails(w)) {
-          const onProfile = pathname === '/worker/profile' || pathname?.startsWith('/worker/profile/');
-          if (!onProfile) {
-            router.replace('/worker/profile?complete=payout');
-            return;
-          }
-        }
+        // Missing phone or payout details must never trap someone on Profile.
         setReady(true);
       })
       .catch(() => {
@@ -49,7 +40,7 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
       cancelled = true;
       window.clearTimeout(failSafe);
     };
-  }, [router, pathname]);
+  }, [router]);
 
   if (!ready) {
     return (
