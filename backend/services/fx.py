@@ -118,9 +118,12 @@ def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
     """
     1 base = X quote, with the source that produced it.
 
-    Only USD rates have to be maintained: a GBP conversion with no stored row is
-    derived as (1 USD = quote) / (1 USD = GBP), so editing the single USD→GBP
-    number keeps every GBP payout in step.
+    Resolution order:
+    1. Identity when both codes match
+    2. Direct stored pair (manual before API)
+    3. USD pivot so any catalog currency converts to any other:
+       1 A = (1 USD → quote) / (1 USD → base)
+    4. Legacy GBP derivation when only USD rows exist
     """
     base_currency = base_currency.upper()
     quote_currency = quote_currency.upper()
@@ -131,6 +134,29 @@ def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
     if rate is not None:
         return rate, source
 
+    # Inverse of a stored pair: 1 quote = X base → 1 base = 1/X quote
+    inverse, inv_source = _stored_rate(db, quote_currency, base_currency)
+    if inverse is not None and inverse > 0:
+        return Decimal("1") / inverse, inv_source or "derived"
+
+    usd_to_quote: Optional[Decimal]
+    usd_to_base: Optional[Decimal]
+    src_q: Optional[str]
+    src_b: Optional[str]
+
+    if quote_currency == "USD":
+        usd_to_quote, src_q = Decimal("1"), "identity"
+    else:
+        usd_to_quote, src_q = _stored_rate(db, "USD", quote_currency)
+
+    if base_currency == "USD":
+        usd_to_base, src_b = Decimal("1"), "identity"
+    else:
+        usd_to_base, src_b = _stored_rate(db, "USD", base_currency)
+
+    if usd_to_quote is not None and usd_to_base is not None and usd_to_base > 0:
+        return usd_to_quote / usd_to_base, "derived"
+
     if base_currency == "GBP":
         usd_to_quote, _ = _stored_rate(db, "USD", quote_currency)
         usd_to_gbp, _ = _stored_rate(db, "USD", "GBP")
@@ -138,6 +164,19 @@ def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
             return usd_to_quote / usd_to_gbp, "derived"
 
     return None, None
+
+
+def convert_amount(
+    db: Session,
+    amount: Decimal,
+    from_currency: str,
+    to_currency: str,
+) -> tuple[Optional[Decimal], Optional[Decimal], Optional[str]]:
+    """Convert `amount` from → to. Returns (converted, rate, source)."""
+    rate, source = resolve_rate(db, from_currency, to_currency)
+    if rate is None:
+        return None, None, None
+    return amount * rate, rate, source
 
 
 def get_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:

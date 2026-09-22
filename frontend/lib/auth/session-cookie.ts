@@ -84,7 +84,7 @@ export async function syncSessionCookie(idToken: string): Promise<Role> {
   // filesystem routes take precedence over afterFiles rewrites.
   cookieSyncInFlight = (async () => {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 8_000);
+    const timer = setTimeout(() => controller.abort(), 15_000);
     try {
       const res = await fetch('/api/auth/session-token', {
         method: 'POST',

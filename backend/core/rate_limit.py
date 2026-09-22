@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import time
 
 import redis as redis_lib
 from fastapi import HTTPException, Request, status
@@ -10,6 +11,20 @@ from core.config import settings
 from core.redis import get_redis
 
 logger = logging.getLogger(__name__)
+
+# When Redis is unreachable, skip limiting for a while so sign-in / API calls
+# do not pay a connect timeout on every request.
+_REDIS_DOWN_UNTIL = 0.0
+_REDIS_DOWN_COOLDOWN_SECONDS = 30.0
+
+
+def _redis_is_cooled_down() -> bool:
+    return time.monotonic() < _REDIS_DOWN_UNTIL
+
+
+def _mark_redis_down() -> None:
+    global _REDIS_DOWN_UNTIL
+    _REDIS_DOWN_UNTIL = time.monotonic() + _REDIS_DOWN_COOLDOWN_SECONDS
 
 
 def _client_ip(request: Request) -> str:
@@ -36,10 +51,13 @@ def current_rate_count(
     key_suffix: str = "",
 ) -> int:
     """Current counter for this scope (0 if unset or Redis is down)."""
+    if _redis_is_cooled_down():
+        return 0
     try:
         raw = get_redis().get(_rate_key(request, scope, key_suffix))
         return int(raw or 0)
     except (redis_lib.RedisError, TypeError, ValueError):
+        _mark_redis_down()
         return 0
 
 
@@ -56,6 +74,9 @@ def check_rate_limit(
 
     Returns the count after this request when under the limit.
     """
+    if _redis_is_cooled_down():
+        return 0
+
     key = _rate_key(request, scope, key_suffix)
 
     try:
@@ -77,6 +98,7 @@ def check_rate_limit(
     except HTTPException:
         raise
     except redis_lib.RedisError as exc:
+        _mark_redis_down()
         if settings.is_production:
             logger.error("Rate limiter unavailable: %s", exc)
             raise HTTPException(

@@ -47,6 +47,12 @@ class AvailableCurrency(SQLModel):
     usd_rate: Decimal
 
 
+class CurrencyCodeOption(SQLModel):
+    """ISO code + display name for dropdowns (no live rate required)."""
+    code: str
+    name: str
+
+
 class CurrencyUpdate(SQLModel):
     name:      Optional[str]  = None
     symbol:    Optional[str]  = None
@@ -80,3 +86,18 @@ class FxRateResponse(FxRateBase):
     model_config = ConfigDict(from_attributes=True)
     id:         UUID
     created_at: datetime
+
+
+class CurrencyConvertRequest(SQLModel):
+    amount: Decimal
+    from_currency: str
+    to_currency: str
+
+
+class CurrencyConvertResponse(SQLModel):
+    amount: Decimal
+    from_currency: str
+    to_currency: str
+    converted: Decimal
+    rate: Decimal
+    rate_source: Optional[str] = None

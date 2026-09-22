@@ -6,6 +6,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import ConfirmModal from '@/components/platform/ConfirmModal';
 import SpinningDots from '@/components/shared/SpinningDots';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { api } from '@/lib/api';
 
 interface Currency {
@@ -50,6 +51,8 @@ function RateSourceChip({ source }: { source: Currency['usd_rate_source'] }) {
 const PROTECTED = new Set(['USD', 'GBP']);
 
 export default function CurrenciesPage() {
+  const { session } = useAuth();
+  const canManage = session?.authRole === 'super_admin';
   const [currencies, setCurrencies] = useState<Currency[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
@@ -185,9 +188,12 @@ export default function CurrenciesPage() {
               <Coins size={13} className="text-gold-accent" /> Currencies
             </h2>
             <p className="text-[11px] text-theme-muted mt-0.5">
-              One catalog — refresh rates from the API, add currencies, edit rates, or remove.
+              {canManage
+                ? 'One catalog — refresh rates from the API, add currencies, edit rates, or remove. Only Super Admins can change this.'
+                : 'Exchange rates used across finance. Only Super Admins can add, edit, or refresh currencies.'}
             </p>
           </div>
+          {canManage && (
           <div className="flex items-center gap-2">
             <button type="button" onClick={() => setShowAdd((v) => !v)}
               className={`${showAdd ? 'btn-primary' : 'btn-secondary'} text-xs py-1.5 px-3 flex items-center gap-1.5`}>
@@ -198,9 +204,10 @@ export default function CurrenciesPage() {
               <RefreshCw size={12} className={refreshing ? 'animate-spin' : ''} /> Refresh from API
             </button>
           </div>
+          )}
         </div>
 
-        {showAdd && (
+        {canManage && showAdd && (
           <form onSubmit={handleAdd} className="px-4 py-3 border-b border-white/[0.06] flex flex-wrap items-end gap-3 bg-white/[0.02]">
             <div className="flex-1 min-w-[16rem]">
               <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Currency from FX API</label>
@@ -302,18 +309,20 @@ export default function CurrenciesPage() {
                           <span className="inline-flex items-center gap-2">
                             <span className="font-bold tabular-nums text-theme-heading">{fmtExchange(c.usd_rate)}</span>
                             <RateSourceChip source={c.usd_rate_source} />
+                            {canManage && (
                             <button type="button"
                               onClick={() => { setEditingId(c.id); setEditRate(c.usd_rate != null ? String(c.usd_rate) : ''); }}
                               title="Edit rate"
                               className="w-7 h-7 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-theme-heading hover:bg-white/5">
                               <Pencil size={12} />
                             </button>
+                            )}
                           </span>
                         )}
                       </td>
                       <td className="px-4 py-2.5 tabular-nums text-theme-muted whitespace-nowrap">{fmtExchange(c.gbp_rate)}</td>
                       <td className="px-4 py-2.5 text-right">
-                        {canRemove && (
+                        {canManage && canRemove && (
                           <button
                             type="button"
                             onClick={() => setRemoveTarget(c)}

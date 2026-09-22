@@ -79,19 +79,13 @@ def has_login_mfa(uid: str) -> bool:
 
 
 def login_otp_required(admin: AdminUser, auth_role: str) -> bool:
-    """Disabled: every role signs in with a password only.
+    """Require emailed login OTP for admin / executive / super_admin.
 
-    Admins and executives used to confirm each sign-in with an emailed code
-    (`auth_role in PRIVILEGED_ROLES`). That step was dropped by request, so
-    sign-in no longer has a second factor. The rest of this module — issue /
-    verify / resend, and the verification screen in LoginCard — is left wired
-    up, so restoring the gate is a one-line change back to that check.
-
-    This does not touch the separate OTP on destructive admin actions
-    (delete / ban / demote), which still stands.
+    Workers and partners sign in with password only. Destructive admin OTPs
+    (delete / ban / demote) are separate and always stay on.
     """
-    del admin, auth_role
-    return False
+    del admin
+    return auth_role in PRIVILEGED_ROLES
 
 
 def deliver_login_otp_email(

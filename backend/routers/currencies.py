@@ -6,21 +6,26 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import require_admin, require_super_admin, require_user
 from models.currency import Country, Currency, FxRate
 from schemas.currency import (
     AvailableCurrency,
     CountryCreate,
     CountryResponse,
     CountryUpdate,
+    CurrencyCodeOption,
+    CurrencyConvertRequest,
+    CurrencyConvertResponse,
     CurrencyCreate,
     CurrencyResponse,
     CurrencyUpdate,
     FxRateCreate,
     FxRateResponse,
 )
+from services.currency_names import CURRENCY_NAMES, currency_name
 from services.fx import (
     BASE_CURRENCIES,
+    convert_amount,
     fetch_api_rates,
     list_api_quotes,
     resolve_rate,
@@ -72,7 +77,7 @@ def _currency_response(db: Session, currency: Currency) -> CurrencyResponse:
 @router.get("/available", response_model=list[AvailableCurrency])
 def list_available_currencies(
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     """FX API quote codes that are not already in the payout catalog."""
     try:
@@ -82,6 +87,56 @@ def list_available_currencies(
 
     existing = {c.code for c in db.exec(select(Currency)).all()}
     return [q for q in quotes if q["code"] not in existing]
+
+
+@router.get("/codes", response_model=list[CurrencyCodeOption])
+def list_world_currency_codes(
+    _: dict = Depends(require_user),
+):
+    """Every ISO currency name we know — USD and GBP first, then A–Z.
+
+    Used by payment-tier and finance dropdowns so any country currency can be
+    selected without first adding it to the payout catalog.
+    """
+    primary = []
+    for code in ("USD", "GBP"):
+        if code in CURRENCY_NAMES:
+            primary.append(CurrencyCodeOption(code=code, name=CURRENCY_NAMES[code]))
+    rest = [
+        CurrencyCodeOption(code=code, name=name)
+        for code, name in sorted(CURRENCY_NAMES.items())
+        if code not in {"USD", "GBP"}
+    ]
+    return primary + rest
+
+
+@router.post("/convert", response_model=CurrencyConvertResponse)
+def convert_currency_amount(
+    body: CurrencyConvertRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Convert any amount between two currencies (USD pivot when needed)."""
+    if body.amount < 0:
+        raise HTTPException(status_code=400, detail="Amount cannot be negative.")
+    frm = body.from_currency.strip().upper()[:3]
+    to = body.to_currency.strip().upper()[:3]
+    if len(frm) != 3 or len(to) != 3:
+        raise HTTPException(status_code=400, detail="Currency codes must be 3 letters.")
+    converted, rate, source = convert_amount(db, body.amount, frm, to)
+    if converted is None or rate is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No exchange rate available for {frm} → {to}. Refresh rates from the Currencies page.",
+        )
+    return CurrencyConvertResponse(
+        amount=body.amount,
+        from_currency=frm,
+        to_currency=to,
+        converted=converted,
+        rate=rate,
+        rate_source=source,
+    )
 
 
 @router.get("/list", response_model=list[CurrencyResponse])
@@ -102,7 +157,7 @@ def list_currencies(
 def create_currency(
     body: CurrencyCreate,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     code = body.code.strip().upper()[:3]
     if len(code) != 3:
@@ -112,7 +167,7 @@ def create_currency(
 
     currency = Currency(
         code=code,
-        name=body.name.strip(),
+        name=body.name.strip() or currency_name(code),
         symbol=(body.symbol or None),
         is_active=body.is_active,
     )
@@ -131,7 +186,7 @@ def update_currency(
     currency_id: UUID,
     body: CurrencyUpdate,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     """Rename, deactivate, or repoint the `1 USD =` rate for one currency."""
     currency = db.get(Currency, currency_id)
@@ -155,7 +210,7 @@ def update_currency(
 def delete_currency(
     currency_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     """Remove a currency from the payout catalog. USD and GBP cannot be removed."""
     currency = db.get(Currency, currency_id)
@@ -232,7 +287,7 @@ def list_rates(
 def create_manual_rate(
     body: FxRateCreate,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     base = body.base_currency.upper()
     if base not in BASE_CURRENCIES:
@@ -271,7 +326,7 @@ def create_manual_rate(
 @router.post("/rates/refresh")
 def refresh_rates_from_api(
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     """Fetch today's rates from the FX API for USD and GBP bases."""
     stored = fetch_api_rates(db)

@@ -168,14 +168,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         otpPendingRef.current = true;
         const { session: provisional, accessToken } = await withTimeout(
           signInWithPassword(email, password),
-          8000,
+          20000,
         );
         passwordAccepted = true;
         pendingAccessTokenRef.current = accessToken;
 
+        // Workers/partners: finish immediately. Admin / executive / super_admin:
+        // always require the Resend login OTP before the session cookie.
         if (!isPrivilegedLoginRole(provisional.authRole)) {
           try {
-            return await withTimeout(finishLogin(accessToken), 10000);
+            return await withTimeout(finishLogin(accessToken), 20000);
           } catch (finishErr: unknown) {
             // JWT may omit role while the DB still requires admin OTP.
             if (!(finishErr instanceof LoginOtpRequiredError)) throw finishErr;
@@ -189,10 +191,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           resendsRemaining: 5,
         });
 
-        const challenge = await withTimeout(requestLoginOtp(false), 10000);
+        const challenge = await withTimeout(requestLoginOtp(false), 20000);
         if (!challenge.required) {
           setPendingLoginOtp(null);
-          return withTimeout(finishLogin(accessToken), 10000);
+          return withTimeout(finishLogin(accessToken), 20000);
         }
 
         setPendingLoginOtp({
@@ -211,8 +213,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           void signOut();
           return {
             ok: false,
-            error:
-              'Sign-in is taking too long. If this account is still pending approval, you can sign in after an administrator approves it.',
+            error: 'Sign-in is taking too long. Please try again in a moment.',
           };
         }
         if (isBlockedSignIn(err)) {

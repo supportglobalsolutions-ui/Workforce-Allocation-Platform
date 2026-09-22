@@ -6,6 +6,7 @@ from sqlmodel import Session, col, func, or_, select
 
 from core.database import get_db
 from core.permissions import require_admin
+from models.currency import Currency
 from models.enums import RateTypeEnum, WorkerStatusEnum, WorkerTypeEnum
 from models.payment_tier import PaymentTier, hourly_equivalent
 from models.rate_table import RateTableEntry
@@ -18,9 +19,28 @@ from schemas.payment_tier import (
     PaymentTierUnassignResponse,
     PaymentTierUpdate,
 )
+from services.currency_names import currency_name
+from services.fx import store_api_rates_for_codes
 from .deps import get_admin_user
 
 router = APIRouter()
+
+
+def _ensure_currency_for_fx(db: Session, code: str) -> None:
+    """Keep the FX catalog ready so finance can convert this tier's currency."""
+    code = code.upper()[:3]
+    if len(code) != 3:
+        return
+    existing = db.exec(select(Currency).where(Currency.code == code)).first()
+    if not existing:
+        db.add(Currency(code=code, name=currency_name(code), is_active=True))
+        db.flush()
+    if code not in {"USD", "GBP"}:
+        try:
+            store_api_rates_for_codes(db, {code}, commit=False)
+        except Exception:
+            # Tier save must not fail if the FX API is briefly unreachable.
+            pass
 
 
 def _member_counts(db: Session) -> dict[str, int]:
@@ -107,9 +127,11 @@ def create_payment_tier(
         raise HTTPException(status_code=400, detail="A payment tier with this name already exists.")
 
     admin = get_admin_user(db, current_user)
+    currency = body.currency.upper()[:3]
+    _ensure_currency_for_fx(db, currency)
     tier = PaymentTier(
         name=name,
-        currency=body.currency.upper()[:3],
+        currency=currency,
         rate=body.rate,
         unit=body.unit,
         description=body.description,
@@ -145,6 +167,7 @@ def update_payment_tier(
             raise HTTPException(status_code=400, detail="A payment tier with this name already exists.")
     if "currency" in data and data["currency"]:
         data["currency"] = str(data["currency"]).upper()[:3]
+        _ensure_currency_for_fx(db, data["currency"])
     if "rate" in data and data["rate"] is not None and data["rate"] <= 0:
         raise HTTPException(status_code=400, detail="Rate must be positive.")
 

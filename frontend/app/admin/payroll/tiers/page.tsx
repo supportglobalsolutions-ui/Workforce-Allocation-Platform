@@ -6,6 +6,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { worldCurrencies, type WorldCurrency } from '@/lib/world-currencies';
 
 type TierUnit = 'per_hour' | 'per_day' | 'per_week' | 'per_month' | 'per_task';
 
@@ -50,7 +51,7 @@ const emptyForm = {
 export default function PaymentTiersPage() {
   const [tiers, setTiers] = useState<PaymentTier[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
-  const [currencies, setCurrencies] = useState<string[]>(['USD', 'GBP']);
+  const currencies: WorldCurrency[] = useMemo(() => worldCurrencies(), []);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [form, setForm] = useState(emptyForm);
@@ -73,13 +74,10 @@ export default function PaymentTiersPage() {
     Promise.all([
       api.get<PaymentTier[]>('/payment-tiers'),
       api.get<WorkerLite[]>('/workers'),
-      api.get<{ currency_code: string; is_active: boolean }[]>('/currencies/countries').catch(() => [] as { currency_code: string; is_active: boolean }[]),
     ])
-      .then(([t, w, c]) => {
+      .then(([t, w]) => {
         setTiers(t);
         setWorkers(w.filter((x) => x.status === 'active'));
-        const codes = [...new Set(c.filter((x) => x.is_active).map((x) => x.currency_code))];
-        if (codes.length) setCurrencies(codes);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
@@ -453,7 +451,11 @@ export default function PaymentTiersPage() {
               <label className="block">
                 <span className="text-[10px] font-bold uppercase text-theme-muted">Currency *</span>
                 <select value={form.currency} onChange={(e) => setForm((f) => ({ ...f, currency: e.target.value }))} className="input-field mt-1">
-                  {currencies.map((c) => <option key={c} value={c}>{c}</option>)}
+                  {currencies.map((c) => (
+                    <option key={c.code} value={c.code}>
+                      {c.code} - {c.name}
+                    </option>
+                  ))}
                 </select>
               </label>
               <label className="block">
