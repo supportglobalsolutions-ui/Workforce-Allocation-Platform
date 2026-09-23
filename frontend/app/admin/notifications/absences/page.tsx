@@ -67,8 +67,13 @@ export default function AbsenceReportsPage() {
     };
   }, [reports]);
 
-  const renderRow = (r: AbsenceReport) => (
-    <Link
+  const renderRow = (r: AbsenceReport) => {
+    // Older or manually imported rows may not include the JSON array even
+    // though new API responses do. A missing attachment list must not take
+    // down the entire review queue.
+    const attachments = Array.isArray(r.attachment_paths) ? r.attachment_paths : [];
+    return (
+      <Link
       key={r.id}
       href={`/admin/notifications/absences/${r.id}`}
       className="group block rounded-xl border border-white/[0.06] bg-white/[0.02] px-4 py-3.5 transition-all duration-200 hover:border-amber-500/25 hover:bg-amber-500/[0.04]"
@@ -95,13 +100,13 @@ export default function AbsenceReportsPage() {
         </p>
 
         <div className="flex items-center justify-between md:justify-end gap-2">
-          {r.attachment_paths.length > 0 ? (
+          {attachments.length > 0 ? (
             <span
-              title={`${r.attachment_paths.length} file(s) attached`}
+              title={`${attachments.length} file(s) attached`}
               className="inline-flex items-center gap-1 text-[11px] text-theme-muted"
             >
               <Paperclip size={12} />
-              {r.attachment_paths.length}
+              {attachments.length}
             </span>
           ) : (
             <span className="text-[11px] text-theme-muted/60 italic">no evidence</span>
@@ -113,8 +118,9 @@ export default function AbsenceReportsPage() {
           />
         </div>
       </div>
-    </Link>
-  );
+      </Link>
+    );
+  };
 
   const section = (title: string, hint: string, rows: AbsenceReport[]) => (
     <section className="glass-panel rounded-2xl border border-white/5 p-5 md:p-6">
