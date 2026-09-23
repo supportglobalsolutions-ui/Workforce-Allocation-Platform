@@ -690,6 +690,13 @@ def my_payroll_overview(
         if rate_entry is not None:
             rate_amount = rate_entry.amount
             rate_currency = rate_entry.currency
+            local_currency = currency_for_country(db, worker.country)
+            # Workers see the rate they will actually be paid in. The payroll
+            # engine uses the same resolver, including the live FX fallback.
+            fx = payroll_engine._fx_to_local(db, current, local_currency)
+            if fx is not None and fx > 0:
+                rate_amount = payroll_engine._q(rate_entry.amount * fx)
+                rate_currency = local_currency
 
     period_summary = None
     if current:

@@ -8,6 +8,7 @@ from decimal import Decimal
 from typing import Optional
 
 import httpx
+from sqlalchemy import func
 from sqlmodel import Session, select
 
 from core.config import settings
@@ -17,6 +18,29 @@ from services.currency_names import currency_name
 logger = logging.getLogger(__name__)
 
 BASE_CURRENCIES = ("USD", "GBP")
+
+# A safe default for workers whose country is not yet present in the admin
+# catalog. The catalog remains the override: operations can deliberately map a
+# country differently, while new workers are never shown USD merely because an
+# administrator has not added the country row yet.
+DEFAULT_COUNTRY_CURRENCIES = {
+    "kenya": "KES",
+    "uganda": "UGX",
+    "tanzania": "TZS",
+    "rwanda": "RWF",
+    "ethiopia": "ETB",
+    "nigeria": "NGN",
+    "ghana": "GHS",
+    "south africa": "ZAR",
+    "zambia": "ZMW",
+    "zimbabwe": "USD",
+    "malawi": "MWK",
+    "india": "INR",
+    "united kingdom": "GBP",
+    "uk": "GBP",
+    "united states": "USD",
+    "usa": "USD",
+}
 
 
 def fetch_latest_rates(base: str) -> dict[str, Decimal]:
@@ -92,9 +116,43 @@ def store_api_rates_for_codes(db: Session, quote_codes: set[str], *, commit: boo
     return stored
 
 
-def currency_for_country(db: Session, country_name: str) -> str:
-    country = db.exec(select(Country).where(Country.name == country_name)).first()
-    return country.currency_code if country else "USD"
+def currency_for_country(db: Session, country_name: str | None) -> str:
+    """Return the worker's payout currency from their country.
+
+    The admin country catalog takes precedence. Its lookup is deliberately
+    case-insensitive because user profiles can contain ``Kenya`` or ``kenya``.
+    A maintained fallback covers the common workforce countries until an admin
+    adds a catalog row; USD remains the conservative final fallback.
+    """
+    name = (country_name or "").strip()
+    if not name:
+        return "USD"
+    country = db.exec(
+        select(Country).where(func.lower(Country.name) == name.lower())
+    ).first()
+    if country and country.is_active and country.currency_code:
+        return country.currency_code.upper()
+    return DEFAULT_COUNTRY_CURRENCIES.get(name.lower(), "USD")
+
+
+def ensure_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:
+    """Resolve an FX rate, refreshing the needed quote from the FX API once.
+
+    Manual rates remain authoritative because ``resolve_rate`` checks them
+    before API rates. This makes a worker's first payroll calculation usable in
+    their local currency without requiring a separate admin refresh first.
+    """
+    rate, _ = resolve_rate(db, base_currency, quote_currency)
+    if rate is not None:
+        return rate
+    if base_currency.upper() == quote_currency.upper():
+        return Decimal("1")
+    try:
+        store_api_rates_for_codes(db, {quote_currency.upper()}, commit=False)
+    except Exception as exc:
+        logger.warning("FX refresh for %s failed: %s", quote_currency, exc)
+        return None
+    return resolve_rate(db, base_currency, quote_currency)[0]
 
 
 def _stored_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[Optional[Decimal], Optional[str]]:

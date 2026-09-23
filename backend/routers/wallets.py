@@ -19,9 +19,18 @@ router = APIRouter()
 
 
 def _get_or_create_wallet(db: Session, worker: Worker) -> Wallet:
+    local_currency = currency_for_country(db, worker.country)
     wallet = db.exec(select(Wallet).where(Wallet.worker_id == worker.id)).first()
     if not wallet:
-        wallet = Wallet(worker_id=worker.id, currency=currency_for_country(db, worker.country))
+        wallet = Wallet(worker_id=worker.id, currency=local_currency)
+        db.add(wallet)
+        db.commit()
+        db.refresh(wallet)
+    elif Decimal(wallet.balance) == 0 and wallet.currency != local_currency:
+        # A zero-balance wallet has no value to convert, so it can safely adopt
+        # the worker's correct local currency after their profile is updated.
+        wallet.currency = local_currency
+        wallet.updated_at = datetime.now(timezone.utc)
         db.add(wallet)
         db.commit()
         db.refresh(wallet)

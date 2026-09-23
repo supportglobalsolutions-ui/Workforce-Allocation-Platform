@@ -40,7 +40,7 @@ from models.session import Session as WorkSession
 from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
 from services.client_owners import client_owner_name, owner_rollup_key
-from services.fx import currency_for_country, get_rate
+from services.fx import currency_for_country, ensure_rate
 from services.session_evidence import effective_duration_minutes, evidence_hours_for_worker
 
 logger = logging.getLogger(__name__)
@@ -56,7 +56,7 @@ def _fx_to_local(db: Session, period: PayrollPeriod, local_currency: str) -> Opt
     """Base→local conversion rate; 1 when the worker is paid in the base currency."""
     if local_currency == period.currency:
         return Decimal("1")
-    return get_rate(db, period.currency, local_currency)
+    return ensure_rate(db, period.currency, local_currency)
 
 
 def _rate_entry_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[RateTableEntry]:
