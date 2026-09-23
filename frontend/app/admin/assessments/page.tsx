@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertCircle, BarChart3, CheckCircle,
   Clock, Eye, FileQuestion, Film, Image as ImageIcon, Pencil, Plus,
@@ -15,6 +16,14 @@ import {
   fetchTaskAssessments, fetchTaskResults, uploadTaskMedia, deleteTaskMedia,
   type TaskAssessment, type TaskResult, type TaskMedia, type UploadProgress,
 } from '@/lib/task-assessments';
+
+/** Beside the sidebar (see --app-sidebar-offset), above page content. */
+const SHELL_Z = 'z-[35]';
+/** Above detail shell. */
+const NESTED_Z = 'z-[38]';
+/** Full-viewport overlay that starts after the sidebar on desktop. */
+const BESIDE_SIDEBAR =
+  'fixed inset-y-0 right-0 left-0 md:left-[var(--app-sidebar-offset,240px)]';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -55,14 +64,21 @@ function StatusBadge({ active }: { active: boolean }) {
 function ModalShell({
   title, onClose, children,
 }: { title: string; onClose: () => void; children: React.ReactNode }) {
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="modal-overlay fixed inset-0 z-50 flex items-stretch justify-stretch p-0 sm:p-3"
+      className={`modal-overlay ${BESIDE_SIDEBAR} ${SHELL_Z} flex items-stretch justify-stretch p-3 sm:p-4 md:p-5`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="glass-panel rounded-none sm:rounded-2xl border-0 sm:border border-white/10 w-full h-full max-w-none max-h-none flex flex-col overflow-hidden">
+      <div className="glass-modal relative z-10 w-full h-full min-h-0 max-w-none max-h-none flex flex-col overflow-hidden rounded-xl sm:rounded-2xl shadow-2xl">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">
-          <h2 className="text-sm font-bold text-white truncate pr-4">{title}</h2>
+          <h2 className="text-sm font-bold text-theme-heading truncate pr-4">{title}</h2>
           <button type="button" onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors shrink-0">
             <X size={15} />
@@ -72,7 +88,43 @@ function ModalShell({
           {children}
         </div>
       </div>
-    </div>
+    </div>,
+    document.body,
+  );
+}
+
+function NestedModal({
+  title, onClose, children, wide,
+}: {
+  title: string;
+  onClose: () => void;
+  children: React.ReactNode;
+  wide?: boolean;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
+    <div
+      className={`modal-overlay ${BESIDE_SIDEBAR} ${NESTED_Z} flex items-center justify-center p-4`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className={`glass-modal relative z-10 w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} overflow-hidden rounded-2xl shadow-2xl`}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+          <h2 className="text-sm font-bold text-theme-heading">{title}</h2>
+          <button type="button" onClick={onClose}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
+            <X size={15} />
+          </button>
+        </div>
+        {children}
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -129,51 +181,44 @@ function QuestionModal({
   }
 
   return (
-    <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-lg overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
-          <h2 className="text-sm font-bold text-white">{existing ? 'Edit Question' : 'New Question'}</h2>
-          <button type="button" onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"><X size={15} /></button>
+    <NestedModal title={existing ? 'Edit Question' : 'New Question'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
+        <Field label="Question Prompt">
+          <textarea required rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)}
+            placeholder="Type the question here…" className="input-field resize-none" />
+        </Field>
+        <div>
+          <SectionTitle>Answer Options</SectionTitle>
+          <div className="space-y-2">
+            {options.map((opt) => (
+              <div key={opt.key} className="flex items-center gap-2">
+                <button type="button" onClick={() => setCorrect(opt.key)}
+                  className={`w-7 h-7 shrink-0 rounded-full border-2 text-[10px] font-bold transition-colors ${
+                    correct === opt.key ? 'border-emerald-accent bg-emerald-accent/20 text-emerald-400' : 'border-white/20 text-theme-muted hover:border-white/40'
+                  }`}>
+                  {opt.key}
+                </button>
+                <input required value={opt.text} onChange={(e) => setOptionText(opt.key, e.target.value)}
+                  placeholder={`Option ${opt.key}…`} className="input-field flex-1" />
+                {correct === opt.key && <CheckCircle size={14} className="text-emerald-accent shrink-0" />}
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-theme-muted mt-2">Click the letter to mark the correct answer.</p>
         </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4 max-h-[80vh] overflow-y-auto">
-          <Field label="Question Prompt">
-            <textarea required rows={3} value={prompt} onChange={(e) => setPrompt(e.target.value)}
-              placeholder="Type the question here…" className="input-field resize-none" />
-          </Field>
-          <div>
-            <SectionTitle>Answer Options</SectionTitle>
-            <div className="space-y-2">
-              {options.map((opt) => (
-                <div key={opt.key} className="flex items-center gap-2">
-                  <button type="button" onClick={() => setCorrect(opt.key)}
-                    className={`w-7 h-7 shrink-0 rounded-full border-2 text-[10px] font-bold transition-colors ${
-                      correct === opt.key ? 'border-emerald-accent bg-emerald-accent/20 text-emerald-400' : 'border-white/20 text-theme-muted hover:border-white/40'
-                    }`}>
-                    {opt.key}
-                  </button>
-                  <input required value={opt.text} onChange={(e) => setOptionText(opt.key, e.target.value)}
-                    placeholder={`Option ${opt.key}…`} className="input-field flex-1" />
-                  {correct === opt.key && <CheckCircle size={14} className="text-emerald-accent shrink-0" />}
-                </div>
-              ))}
-            </div>
-            <p className="text-[10px] text-theme-muted mt-2">Click the letter to mark the correct answer.</p>
-          </div>
-          <Field label="Marks (all questions must total 100)">
-            <input required type="number" min={0.01} max={100} step="0.01" value={marks} onChange={(e) => setMarks(e.target.value)} className="input-field" />
-          </Field>
-          {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
-          <div className="flex gap-3 justify-end pt-1">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-              {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
-              {existing ? 'Save' : 'Add Question'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <Field label="Marks (all questions must total 100)">
+          <input required type="number" min={0.01} max={100} step="0.01" value={marks} onChange={(e) => setMarks(e.target.value)} className="input-field" />
+        </Field>
+        {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
+        <div className="flex gap-3 justify-end pt-1">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+          <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
+            {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
+            {existing ? 'Save' : 'Add Question'}
+          </button>
+        </div>
+      </form>
+    </NestedModal>
   );
 }
 
@@ -208,50 +253,43 @@ function McqFormModal({
   }
 
   return (
-    <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-md overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
-          <h2 className="text-sm font-bold text-white">{existing ? 'Edit Assessment' : 'New MCQ Assessment'}</h2>
-          <button type="button" onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"><X size={15} /></button>
-        </div>
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Customer Service Basics" className="input-field" /></Field>
-          <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Onboarding, Compliance" className="input-field" /></Field>
-          <Field label="Passing Score (%)"><input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" /></Field>
-          <Field label="Status">
-            <div className="flex items-center gap-3">
-              <Toggle value={active} onChange={setActive} />
-              <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
-            </div>
-            <p className="text-[10px] text-theme-muted mt-1">Activate only when question marks add up to 100.</p>
-          </Field>
-          <Field label="Retakes">
-            <div className="flex items-center gap-3">
-              <Toggle value={retakes} onChange={setRetakes} />
-              <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
-            </div>
-            {retakes && (
-              <>
-                <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)}
-                  className="input-field mt-2" placeholder="Retakes allowed" />
-                <p className="text-[10px] text-theme-muted mt-1">
-                  Number of retakes after the first try. 2 means they can sit the test 3 times.
-                </p>
-              </>
-            )}
-          </Field>
-          {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
-          <div className="flex gap-3 justify-end">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-              {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
-              {existing ? 'Save' : 'Create'}
-            </button>
+    <NestedModal title={existing ? 'Edit Assessment' : 'New MCQ Assessment'} onClose={onClose}>
+      <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Customer Service Basics" className="input-field" /></Field>
+        <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Onboarding, Compliance" className="input-field" /></Field>
+        <Field label="Passing Score (%)"><input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" /></Field>
+        <Field label="Status">
+          <div className="flex items-center gap-3">
+            <Toggle value={active} onChange={setActive} />
+            <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
           </div>
-        </form>
-      </div>
-    </div>
+          <p className="text-[10px] text-theme-muted mt-1">Activate only when question marks add up to 100.</p>
+        </Field>
+        <Field label="Retakes">
+          <div className="flex items-center gap-3">
+            <Toggle value={retakes} onChange={setRetakes} />
+            <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
+          </div>
+          {retakes && (
+            <>
+              <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)}
+                className="input-field mt-2" placeholder="Retakes allowed" />
+              <p className="text-[10px] text-theme-muted mt-1">
+                Number of retakes after the first try. 2 means they can sit the test 3 times.
+              </p>
+            </>
+          )}
+        </Field>
+        {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
+        <div className="flex gap-3 justify-end">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+          <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
+            {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
+            {existing ? 'Save' : 'Create'}
+          </button>
+        </div>
+      </form>
+    </NestedModal>
   );
 }
 
@@ -660,90 +698,83 @@ function TaskFormModal({
   }
 
   return (
-    <div className="modal-overlay fixed inset-0 z-[60] flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-xl max-h-[92vh] flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">
-          <h2 className="text-sm font-bold text-white">{existing ? 'Edit Task Assessment' : 'New Task Assessment'}</h2>
-          <button type="button" onClick={onClose} className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"><X size={15} /></button>
+    <NestedModal title={existing ? 'Edit Task Assessment' : 'New Task Assessment'} onClose={onClose} wide>
+      <form onSubmit={handleSubmit} className="max-h-[calc(92vh-3.5rem)] overflow-y-auto p-5 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Entry Task" className="input-field" /></Field>
+          <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Practical, QA" className="input-field" /></Field>
         </div>
-        <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto p-5 space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Entry Task" className="input-field" /></Field>
-            <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Practical, QA" className="input-field" /></Field>
-          </div>
 
-          <Field label="Task Description">
-            <textarea required rows={3} value={description} onChange={(e) => setDescription(e.target.value)}
-              placeholder="What is this task about? What will workers do?" className="input-field resize-none" />
-          </Field>
+        <Field label="Task Description">
+          <textarea required rows={3} value={description} onChange={(e) => setDescription(e.target.value)}
+            placeholder="What is this task about? What will workers do?" className="input-field resize-none" />
+        </Field>
 
-          <Field label="Instructions">
-            <textarea required rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)}
-              placeholder="Step-by-step instructions for the worker…" className="input-field resize-none" />
-          </Field>
+        <Field label="Instructions">
+          <textarea required rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)}
+            placeholder="Step-by-step instructions for the worker…" className="input-field resize-none" />
+        </Field>
 
-          <Field label="Reference Media (Images / Videos)">
-            <MediaUploader media={media} onChange={setMedia} />
-          </Field>
+        <Field label="Reference Media (Images / Videos)">
+          <MediaUploader media={media} onChange={setMedia} />
+        </Field>
 
-          <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-2">
-                <Timer size={14} className="text-gold-accent" />
-                <span className="text-sm text-white font-medium">Time Limit</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <Toggle value={isTimed} onChange={setIsTimed} />
-                <span className={`text-xs ${isTimed ? 'text-emerald-400' : 'text-theme-muted'}`}>{isTimed ? 'Enabled' : 'Untimed'}</span>
-              </div>
+        <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Timer size={14} className="text-gold-accent" />
+              <span className="text-sm text-white font-medium">Time Limit</span>
             </div>
-            {isTimed && (
-              <div className="flex items-center gap-3">
-                <input type="number" min={1} max={480} value={timeLimit} onChange={(e) => setTimeLimit(e.target.value)}
-                  className="input-field w-24" />
-                <span className="text-sm text-theme-muted">minutes</span>
-              </div>
-            )}
+            <div className="flex items-center gap-2">
+              <Toggle value={isTimed} onChange={setIsTimed} />
+              <span className={`text-xs ${isTimed ? 'text-emerald-400' : 'text-theme-muted'}`}>{isTimed ? 'Enabled' : 'Untimed'}</span>
+            </div>
           </div>
+          {isTimed && (
+            <div className="flex items-center gap-3">
+              <input type="number" min={1} max={480} value={timeLimit} onChange={(e) => setTimeLimit(e.target.value)}
+                className="input-field w-24" />
+              <span className="text-sm text-theme-muted">minutes</span>
+            </div>
+          )}
+        </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <Field label="Passing Score (%)">
-              <input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" />
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Passing Score (%)">
+            <input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" />
+          </Field>
+          <Field label="Status">
+            <div className="flex items-center gap-2 mt-1">
+              <Toggle value={active} onChange={setActive} />
+              <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
+            </div>
+            <p className="text-[10px] text-theme-muted mt-1">Activate when activity marks total 100.</p>
+          </Field>
+          <Field label="Retakes">
+            <div className="flex items-center gap-2 mt-1">
+              <Toggle value={retakes} onChange={setRetakes} />
+              <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
+            </div>
+          </Field>
+          {retakes && (
+            <Field label="Retakes allowed">
+              <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} className="input-field" />
+              <p className="text-[10px] text-theme-muted mt-1">After the first try. 2 means they can sit the test 3 times.</p>
             </Field>
-            <Field label="Status">
-              <div className="flex items-center gap-2 mt-1">
-                <Toggle value={active} onChange={setActive} />
-                <span className={`text-sm ${active ? 'text-emerald-400' : 'text-theme-muted'}`}>{active ? 'Active' : 'Inactive'}</span>
-              </div>
-              <p className="text-[10px] text-theme-muted mt-1">Activate when activity marks total 100.</p>
-            </Field>
-            <Field label="Retakes">
-              <div className="flex items-center gap-2 mt-1">
-                <Toggle value={retakes} onChange={setRetakes} />
-                <span className="text-sm text-theme-muted">{retakes ? 'Allowed' : 'One attempt'}</span>
-              </div>
-            </Field>
-            {retakes && (
-              <Field label="Retakes allowed">
-                <input type="number" min={1} max={9} value={maxAttempts} onChange={(e) => setMaxAttempts(e.target.value)} className="input-field" />
-                <p className="text-[10px] text-theme-muted mt-1">After the first try. 2 means they can sit the test 3 times.</p>
-              </Field>
-            )}
-          </div>
+          )}
+        </div>
 
-          {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
+        {error && <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs"><AlertCircle size={13} /> {error}</div>}
 
-          <div className="flex gap-3 justify-end pt-1">
-            <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-            <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-              {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
-              {existing ? 'Save' : 'Create Task'}
-            </button>
-          </div>
-        </form>
-      </div>
-    </div>
+        <div className="flex gap-3 justify-end pt-1">
+          <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
+          <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
+            {saving ? <SpinningDots size="sm" className="text-emerald-accent" /> : <CheckCircle size={13} />}
+            {existing ? 'Save' : 'Create Task'}
+          </button>
+        </div>
+      </form>
+    </NestedModal>
   );
 }
 

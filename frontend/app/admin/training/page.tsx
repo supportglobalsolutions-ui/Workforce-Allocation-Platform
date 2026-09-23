@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import {
   AlertCircle, ArrowLeft, BookOpen, Check, FileText, GraduationCap,
   Link2, Pencil, PlayCircle, Plus, Star, Trash2, X,
@@ -11,6 +12,11 @@ import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSecti
 import ConfirmModal from '@/components/platform/ConfirmModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+
+/** Beside the sidebar (see --app-sidebar-offset), above page content. */
+const SHELL_Z = 'z-[35]';
+const BESIDE_SIDEBAR =
+  'fixed inset-y-0 right-0 left-0 md:left-[var(--app-sidebar-offset,240px)]';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -149,14 +155,21 @@ function ModuleModal({
     }
   }
 
-  return (
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+
+  return createPortal(
     <div
-      className="fixed inset-0 z-50 flex items-stretch justify-stretch bg-black/60 backdrop-blur-sm p-0 sm:p-3"
+      className={`modal-overlay ${BESIDE_SIDEBAR} ${SHELL_Z} flex p-3 sm:p-4 md:p-5`}
+      role="dialog"
+      aria-modal="true"
+      aria-label={editing ? 'Edit Training Module' : 'New Training Module'}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="glass-panel rounded-none sm:rounded-2xl border-0 sm:border border-white/10 w-full h-full max-w-none flex flex-col overflow-hidden">
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06] shrink-0">
-          <h2 className="text-base font-bold text-white truncate pr-4">
+      <div className="glass-modal relative z-10 w-full h-full min-h-0 max-w-none max-h-none flex flex-col overflow-hidden rounded-xl sm:rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-5 sm:px-8 py-4 border-b border-white/[0.06] shrink-0">
+          <h2 className="text-base font-bold text-theme-heading truncate pr-4">
             {editing ? 'Edit Training Module' : 'New Training Module'}
           </h2>
           <button
@@ -168,7 +181,8 @@ function ModuleModal({
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 sm:p-8 space-y-5 flex-1 overflow-y-auto max-w-4xl mx-auto w-full">
+        <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
+          <div className="flex-1 overflow-y-auto p-5 sm:p-8 space-y-5 w-full">
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Title</label>
             <input
@@ -182,10 +196,10 @@ function ModuleModal({
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Description</label>
             <textarea
-              rows={6} value={form.description}
+              rows={14} value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
               placeholder="What this module covers…"
-              className="input-field resize-y min-h-[8rem]"
+              className="input-field resize-y min-h-[16rem] w-full"
             />
           </div>
 
@@ -247,8 +261,9 @@ function ModuleModal({
               <AlertCircle size={14} /> {error}
             </div>
           )}
+          </div>
 
-          <div className="flex gap-3 justify-end">
+          <div className="flex gap-3 justify-end shrink-0 px-5 sm:px-8 py-4 border-t border-white/[0.06]">
             <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
               {saving ? <SpinningDots size="sm" className="text-white" /> : editing ? <Check size={14} /> : <Plus size={14} />}
@@ -257,7 +272,8 @@ function ModuleModal({
           </div>
         </form>
       </div>
-    </div>
+    </div>,
+    document.body,
   );
 }
 

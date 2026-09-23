@@ -31,6 +31,21 @@ export default function AppShell({ children, role }: AppShellProps) {
     return () => document.body.classList.remove('nav-scroll-lock');
   }, [mobileSidebarOpen]);
 
+  // Keep shell modals aligned beside the sidebar (not under it).
+  useEffect(() => {
+    const applyOffset = () => {
+      const desktop = window.matchMedia('(min-width: 768px)').matches;
+      const offset = !desktop ? '0px' : sidebarCollapsed ? '72px' : '240px';
+      document.documentElement.style.setProperty('--app-sidebar-offset', offset);
+    };
+    applyOffset();
+    window.addEventListener('resize', applyOffset);
+    return () => {
+      window.removeEventListener('resize', applyOffset);
+      document.documentElement.style.removeProperty('--app-sidebar-offset');
+    };
+  }, [sidebarCollapsed]);
+
   const toggleSidebar = () => {
     if (typeof window !== 'undefined' && window.innerWidth < 768) {
       setMobileSidebarOpen((prev) => !prev);
