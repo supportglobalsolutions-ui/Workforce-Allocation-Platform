@@ -55,14 +55,14 @@ export default function WorkerDashboard() {
   const [me, setMe] = useState<Me | null>(null);
   const [hasMandatoryTraining, setHasMandatoryTraining] = useState(false);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const [hasLoadIssue, setHasLoadIssue] = useState(false);
   const [openAbsences, setOpenAbsences] = useState(0);
   const [upcomingShifts, setUpcomingShifts] = useState<AbsenceFormShift[]>([]);
   const [absenceOpen, setAbsenceOpen] = useState(false);
   const [absenceSent, setAbsenceSent] = useState(false);
 
   useEffect(() => {
-    Promise.all([
+    Promise.allSettled([
       api.get<WorkSession[]>('/sessions?limit=200'),
       api.get<QualityScore | null>('/quality/me'),
       api.get<Me>('/workers/me'),
@@ -71,7 +71,16 @@ export default function WorkerDashboard() {
       absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
       api.get<AbsenceFormShift[]>('/shifts?upcoming=true').catch(() => []),
     ])
-      .then(([sessionList, qualityScore, worker, modules, absences, shifts]) => {
+      .then(([sessionsResult, qualityResult, workerResult, modulesResult, absencesResult, shiftsResult]) => {
+        const sessionList = sessionsResult.status === 'fulfilled' ? sessionsResult.value : [];
+        const qualityScore = qualityResult.status === 'fulfilled' ? qualityResult.value : null;
+        const worker = workerResult.status === 'fulfilled' ? workerResult.value : null;
+        const modules = modulesResult.status === 'fulfilled' ? modulesResult.value : [];
+        const absences = absencesResult.status === 'fulfilled'
+          ? absencesResult.value
+          : { pending: 0, flagged_shift_ids: [] };
+        const shifts = shiftsResult.status === 'fulfilled' ? shiftsResult.value : [];
+
         setTotalSessions(sessionList.length);
         setSessions(sessionList.slice(0, 4));
         setQuality(qualityScore);
@@ -81,8 +90,11 @@ export default function WorkerDashboard() {
         );
         setOpenAbsences(absences.pending);
         setUpcomingShifts(shifts);
+        setHasLoadIssue(
+          [sessionsResult, qualityResult, workerResult, modulesResult, absencesResult, shiftsResult]
+            .some((result) => result.status === 'rejected'),
+        );
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
   }, []);
 
@@ -93,20 +105,21 @@ export default function WorkerDashboard() {
       </div>
     );
   }
-  if (error) {
-    return (
-      <div className="glass-panel rounded-2xl border border-danger/20 p-6 max-w-lg">
-        <p className="text-danger text-sm">{error}</p>
-      </div>
-    );
-  }
-
   return (
     <div className="max-w-6xl mx-auto space-y-8 pb-10">
       <PageHeader
         title="Dashboard"
         description={`${totalSessions === 200 ? '200+' : totalSessions} sessions on record`}
       />
+
+      {hasLoadIssue && (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/10 p-4">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0 text-amber-400" />
+          <p className="text-xs text-amber-300">
+            Some dashboard information is temporarily unavailable. Your quick actions are still ready to use; refresh this page in a moment to retry.
+          </p>
+        </div>
+      )}
 
       {me?.work_ready === false && hasMandatoryTraining && (
         <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
