@@ -8,6 +8,7 @@ import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import AbsenceMarker from '@/components/absence/AbsenceMarker';
+import AbsenceReportsButton from '@/components/absence/AbsenceReportsButton';
 import { api } from '@/lib/api';
 import { absenceSummary } from '@/lib/absence-reports';
 
@@ -165,6 +166,7 @@ export default function AdminShiftsPage() {
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
   const [flaggedShiftIds, setFlaggedShiftIds] = useState<Set<string>>(new Set());
+  const [absencesPending, setAbsencesPending] = useState(0);
 
   const reload = () => {
     return Promise.all([
@@ -176,6 +178,7 @@ export default function AdminShiftsPage() {
       setShifts(s);
       setWorkers(w);
       setFlaggedShiftIds(new Set(absences.flagged_shift_ids));
+      setAbsencesPending(absences.pending);
     });
   };
 
@@ -276,6 +279,7 @@ export default function AdminShiftsPage() {
     <div>
       <PageHeader
         title="Shifts"
+        actions={<AbsenceReportsButton count={absencesPending} />}
       />
       <FilterBar
         searchPlaceholder="Search by worker name…"

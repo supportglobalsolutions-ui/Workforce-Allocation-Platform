@@ -9,6 +9,8 @@ import {
 
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
+import ReadableText from '@/components/training/ReadableText';
+import ReadingPane from '@/components/training/ReadingPane';
 import { api } from '@/lib/api';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -130,22 +132,29 @@ function ModuleViewer({
 
       <div className="glass-panel rounded-2xl p-6">
         <div className="flex flex-wrap items-center gap-3">
-          <h2 className="text-lg font-bold text-white tracking-tight">{module.title}</h2>
+          <h2 className="text-xl font-bold text-theme-heading tracking-tight">{module.title}</h2>
           {module.is_mandatory_for_new_workers && (
             <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
               <Star size={10} /> Mandatory
             </span>
           )}
         </div>
-        {module.description && <p className="text-xs text-theme-muted mt-2 whitespace-pre-wrap">{module.description}</p>}
         <p className="text-xs text-emerald-accent font-semibold mt-3">
           {completedIds.length} of {lessons.length} lesson{lessons.length !== 1 ? 's' : ''} completed
         </p>
       </div>
 
-      <div className="grid lg:grid-cols-[280px_1fr] gap-5 items-start">
-        {/* Lesson list */}
-        <div className="glass-panel rounded-2xl p-3 space-y-1">
+      {/* The brief is often the bulk of the material, so it gets the reader
+          treatment rather than being squeezed under the title as fine print. */}
+      {module.description && (
+        <ReadingPane title="About this module">
+          <ReadableText text={module.description} />
+        </ReadingPane>
+      )}
+
+      <div className="grid lg:grid-cols-[260px_1fr] gap-5 items-start">
+        {/* Lesson list — stays put while a long lesson scrolls beside it. */}
+        <div className="glass-panel rounded-2xl p-3 space-y-1 lg:sticky lg:top-4">
           {lessons.map((l, i) => {
             const done = completedIds.includes(l.id);
             const active = l.id === selectedId;
@@ -181,67 +190,24 @@ function ModuleViewer({
         </div>
 
         {/* Lesson content */}
-        <div className="glass-panel rounded-2xl p-6 min-h-[300px] flex flex-col">
-          {selected ? (
-            <>
-              <h3 className="text-base font-bold text-white">{selected.title}</h3>
-              <div className="mt-4 flex-1">
-                {selected.content_type === 'text' && (
-                  <p className="text-sm text-theme-muted whitespace-pre-wrap leading-relaxed">
-                    {selected.content ?? 'No content.'}
-                  </p>
+        {selected ? (
+          <ReadingPane
+            title={selected.title}
+            className="min-h-[320px]"
+            badge={
+              completedIds.includes(selected.id) ? (
+                <span className="inline-flex shrink-0 items-center gap-1 rounded-full border border-emerald-accent/30 bg-emerald-accent/15 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider text-emerald-accent">
+                  <Check size={10} /> Done
+                </span>
+              ) : undefined
+            }
+            footer={
+              <div className="space-y-3">
+                {error && (
+                  <div className="flex items-center gap-2 rounded-xl border border-danger/30 bg-danger/10 p-3 text-xs text-danger">
+                    <AlertCircle size={14} /> {error}
+                  </div>
                 )}
-                {selected.content_type === 'link' && (
-                  selected.media_url ? (
-                    <a
-                      href={selected.media_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-sm font-semibold hover:bg-emerald-accent/20 transition-colors"
-                    >
-                      <ExternalLink size={15} /> Open resource
-                    </a>
-                  ) : <p className="text-sm text-theme-muted">No link provided.</p>
-                )}
-                {selected.content_type === 'video' && (
-                  selected.media_url ? (
-                    <div className="space-y-3">
-                      <video controls src={selected.media_url} className="w-full rounded-xl border border-white/10 bg-black" />
-                      <a
-                        href={selected.media_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1.5 text-xs text-emerald-accent hover:underline"
-                      >
-                        <ExternalLink size={12} /> Open video in a new tab
-                      </a>
-                    </div>
-                  ) : <p className="text-sm text-theme-muted">No video provided.</p>
-                )}
-                {selected.content_type === 'pdf' && (
-                  selected.media_url ? (
-                    <a
-                      href={selected.media_url}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-sm font-semibold hover:bg-emerald-accent/20 transition-colors"
-                    >
-                      <FileText size={15} /> Open PDF
-                    </a>
-                  ) : <p className="text-sm text-theme-muted">No PDF provided.</p>
-                )}
-                {selected.content && selected.content_type !== 'text' && (
-                  <p className="text-xs text-theme-muted whitespace-pre-wrap mt-4">{selected.content}</p>
-                )}
-              </div>
-
-              {error && (
-                <div className="flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs mt-4">
-                  <AlertCircle size={14} /> {error}
-                </div>
-              )}
-
-              <div className="mt-6 pt-4 border-t border-white/[0.06]">
                 {completedIds.includes(selected.id) ? (
                   <p className="inline-flex items-center gap-2 text-sm font-semibold text-emerald-accent">
                     <CheckCircle size={16} /> Lesson completed
@@ -258,11 +224,65 @@ function ModuleViewer({
                   </button>
                 )}
               </div>
-            </>
-          ) : (
-            <p className="text-sm text-theme-muted m-auto">Select a lesson to begin.</p>
-          )}
-        </div>
+            }
+          >
+            <div>
+              {selected.content_type === 'text' && (
+                selected.content
+                  ? <ReadableText text={selected.content} />
+                  : <p className="text-sm text-theme-muted">No content.</p>
+              )}
+              {selected.content_type === 'link' && (
+                selected.media_url ? (
+                  <a
+                    href={selected.media_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-sm font-semibold hover:bg-emerald-accent/20 transition-colors"
+                  >
+                    <ExternalLink size={15} /> Open resource
+                  </a>
+                ) : <p className="text-sm text-theme-muted">No link provided.</p>
+              )}
+              {selected.content_type === 'video' && (
+                selected.media_url ? (
+                  <div className="space-y-3">
+                    <video controls src={selected.media_url} className="w-full rounded-xl border border-white/10 bg-black" />
+                    <a
+                      href={selected.media_url}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 text-xs text-emerald-accent hover:underline"
+                    >
+                      <ExternalLink size={12} /> Open video in a new tab
+                    </a>
+                  </div>
+                ) : <p className="text-sm text-theme-muted">No video provided.</p>
+              )}
+              {selected.content_type === 'pdf' && (
+                selected.media_url ? (
+                  <a
+                    href={selected.media_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30 text-emerald-accent text-sm font-semibold hover:bg-emerald-accent/20 transition-colors"
+                  >
+                    <FileText size={15} /> Open PDF
+                  </a>
+                ) : <p className="text-sm text-theme-muted">No PDF provided.</p>
+              )}
+              {selected.content && selected.content_type !== 'text' && (
+                <div className="mt-5 border-t border-white/[0.06] pt-5">
+                  <ReadableText text={selected.content} />
+                </div>
+              )}
+            </div>
+          </ReadingPane>
+        ) : (
+          <div className="glass-panel flex min-h-[320px] rounded-2xl p-6">
+            <p className="m-auto text-sm text-theme-muted">Select a lesson to begin.</p>
+          </div>
+        )}
       </div>
 
       {hasLinkedAssessment && (
@@ -320,7 +340,7 @@ export default function TrainingPage() {
   }
 
   return (
-    <div className="max-w-5xl mx-auto space-y-6 pb-10">
+    <div className="max-w-6xl mx-auto space-y-6 pb-10">
       <PageHeader
         title="Training"
       />
@@ -353,7 +373,7 @@ export default function TrainingPage() {
           <p className="text-sm text-theme-muted">No training modules assigned yet.</p>
         </div>
       ) : (
-        <div className="grid sm:grid-cols-2 gap-4">
+        <div className="grid sm:grid-cols-2 xl:grid-cols-3 gap-4">
           {modules.map((m) => {
             const total = m.lessons.length;
             const done = (m.completed_lesson_ids ?? []).length;
@@ -370,7 +390,11 @@ export default function TrainingPage() {
                   <ProgressChip status={m.progress_status} />
                 </div>
                 {m.description && (
-                  <p className="text-xs text-theme-muted line-clamp-2 whitespace-pre-wrap">{m.description}</p>
+                  /* Reflowed for the preview — the author's hard wraps would
+                     otherwise eat the two lines the clamp allows. */
+                  <p className="text-xs text-theme-muted line-clamp-2">
+                    {m.description.replace(/\s+/g, ' ').trim()}
+                  </p>
                 )}
                 <div className="flex flex-wrap items-center gap-2">
                   {m.is_mandatory_for_new_workers && (

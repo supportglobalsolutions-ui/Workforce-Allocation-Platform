@@ -24,6 +24,7 @@ import {
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import AbsenceReportsButton from '@/components/absence/AbsenceReportsButton';
 import { absenceSummary } from '@/lib/absence-reports';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
@@ -532,9 +533,14 @@ export default function AdminDashboard() {
             {greeting()}{name ? ` ${name}` : ''} — operations overview.
           </p>
         </div>
-        <span className="shrink-0 px-3 py-1 rounded-full border border-theme bg-theme-card text-[11px] font-semibold text-emerald-accent">
-          {currentPeriod ? `Work period · ${periodBadge}` : periodBadge}
-        </span>
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-2">
+          {/* Gold, because absences are the one thing on this page that has no
+              sidebar item of its own to fall back on. */}
+          <AbsenceReportsButton count={absencesPending} />
+          <span className="px-3 py-1 rounded-full border border-theme bg-theme-card text-[11px] font-semibold text-emerald-accent">
+            {currentPeriod ? `Work period · ${periodBadge}` : periodBadge}
+          </span>
+        </div>
       </div>
 
       <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-8 gap-3">
@@ -557,7 +563,7 @@ export default function AdminDashboard() {
           className="rounded-2xl transition-transform hover:scale-[1.02]"
           title="Review absence reports"
         >
-          <KpiCard compact label="Absences" value={absencesPending} icon={CalendarX} accent="danger" />
+          <KpiCard compact label="Absences" value={absencesPending} icon={CalendarX} accent="gold" />
         </Link>
       </div>
 
