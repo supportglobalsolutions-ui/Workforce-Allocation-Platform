@@ -1,6 +1,6 @@
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field as PydField
 from sqlalchemy.orm import selectinload
 from sqlmodel import Session, select
@@ -105,12 +105,20 @@ def _enrich_worker(
     worker: Worker,
     *,
     auth_by_uid: dict[str, dict] | None = None,
+    assign_code: bool = True,
+    lite: bool = False,
 ) -> WorkerResponse:
-    try:
-        ensure_public_code(db, worker)
-    except Exception:
-        # Read paths should still return the profile if allocate fails.
-        pass
+    """Enrich a worker for API responses.
+
+    lite=True skips Supabase auth lookup, public-code allocation, and RDP join —
+    used by dashboards that only need roster counts / country / status.
+    """
+    if assign_code and not lite:
+        try:
+            ensure_public_code(db, worker)
+        except Exception:
+            # Read paths should still return the profile if allocate fails.
+            pass
     resp = WorkerResponse.model_validate(worker)
     updates: dict = {}
     auth_uid: str | None = None
@@ -127,7 +135,7 @@ def _enrich_worker(
             auth_uid = admin.auth_user_id
             if admin.is_protected:
                 updates["account_protected"] = True
-    if auth_uid:
+    if auth_uid and not lite:
         auth = None
         if auth_by_uid is not None:
             auth = auth_by_uid.get(auth_uid)
@@ -146,12 +154,13 @@ def _enrich_worker(
         if entity:
             updates["partner_entity_name"] = entity.name
             updates["partner_entity_is_self"] = entity.is_self
-    rdp = db.exec(
-        select(RDPResource).where(RDPResource.assigned_worker_id == worker.id)
-    ).first()
-    if rdp:
-        updates["assigned_rdp_id"] = rdp.id
-        updates["assigned_rdp_nickname"] = rdp.nickname
+    if not lite:
+        rdp = db.exec(
+            select(RDPResource).where(RDPResource.assigned_worker_id == worker.id)
+        ).first()
+        if rdp:
+            updates["assigned_rdp_id"] = rdp.id
+            updates["assigned_rdp_nickname"] = rdp.nickname
     if updates:
         resp = resp.model_copy(update=updates)
     return resp
@@ -272,6 +281,10 @@ def update_my_worker(
 
 @router.get("", response_model=list[WorkerResponse])
 def list_workers(
+    lite: bool = Query(
+        False,
+        description="Skip Auth enrich / public-code / RDP — fast roster for dashboards",
+    ),
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
@@ -280,8 +293,16 @@ def list_workers(
         .options(selectinload(Worker.admin_user), selectinload(Worker.partner_entity))
         .order_by(Worker.display_name)
     ).all()
+    if lite:
+        return [
+            _enrich_worker(db, w, assign_code=False, lite=True) for w in workers
+        ]
+    # One Auth Admin listUsers pass for the whole roster (avoids N get_user_by_id).
+    # Do not allocate public codes on list (per-row commits); assign on get/create.
     auth_map = _auth_profile_map()
-    return [_enrich_worker(db, w, auth_by_uid=auth_map) for w in workers]
+    return [
+        _enrich_worker(db, w, auth_by_uid=auth_map, assign_code=False) for w in workers
+    ]
 
 
 @router.post("/phone-format-nudge")

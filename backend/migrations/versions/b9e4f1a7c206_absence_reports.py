@@ -7,6 +7,9 @@ Create Date: 2026-09-22
 ``shift_id`` is nullable on purpose: a worker can declare a date range before
 any shift exists for it. Evidence is optional, so ``attachment_paths`` starts
 empty and only ``reason_text`` is NOT NULL.
+
+Enum types use create_type=False + idempotent CREATE TYPE so a re-run (or
+types left behind by SQLAlchemy metadata) does not fail with DuplicateObject.
 """
 from typing import Sequence, Union
 
@@ -20,6 +23,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 
+# create_type=False: we create enums ourselves; otherwise create_table retries CREATE TYPE.
 ABSENCE_REASON = postgresql.ENUM(
     "illness",
     "family_emergency",
@@ -29,6 +33,7 @@ ABSENCE_REASON = postgresql.ENUM(
     "transport",
     "other",
     name="absence_reason_enum",
+    create_type=False,
 )
 
 ABSENCE_STATUS = postgresql.ENUM(
@@ -37,13 +42,28 @@ ABSENCE_STATUS = postgresql.ENUM(
     "declined",
     "withdrawn",
     name="absence_status_enum",
+    create_type=False,
 )
 
 
 def upgrade() -> None:
-    bind = op.get_bind()
-    ABSENCE_REASON.create(bind, checkfirst=True)
-    ABSENCE_STATUS.create(bind, checkfirst=True)
+    for name, values in [
+        (
+            "absence_reason_enum",
+            "'illness', 'family_emergency', 'bereavement', 'power_outage', "
+            "'internet_outage', 'transport', 'other'",
+        ),
+        (
+            "absence_status_enum",
+            "'pending', 'accepted', 'declined', 'withdrawn'",
+        ),
+    ]:
+        op.execute(f"""
+            DO $$ BEGIN
+                CREATE TYPE {name} AS ENUM ({values});
+            EXCEPTION WHEN duplicate_object THEN NULL;
+            END $$;
+        """)
 
     op.create_table(
         "absence_reports",
@@ -117,6 +137,5 @@ def downgrade() -> None:
     op.drop_index("ix_absence_reports_shift_id", table_name="absence_reports")
     op.drop_index("ix_absence_reports_worker_id", table_name="absence_reports")
     op.drop_table("absence_reports")
-    bind = op.get_bind()
-    ABSENCE_STATUS.drop(bind, checkfirst=True)
-    ABSENCE_REASON.drop(bind, checkfirst=True)
+    op.execute("DROP TYPE IF EXISTS absence_status_enum")
+    op.execute("DROP TYPE IF EXISTS absence_reason_enum")

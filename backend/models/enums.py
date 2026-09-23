@@ -236,8 +236,9 @@ AllocationLifecycleType = sa.Enum(AllocationLifecycleEnum, name="allocation_life
 TunnelStatusType     = sa.Enum(TunnelStatusEnum,        name="tunnel_status_enum",      create_type=True)
 ShiftStatusType      = sa.Enum(ShiftStatusEnum,         name="shift_status_enum",       create_type=True)
 ReleaseReasonType    = sa.Enum(ReleaseReasonEnum,       name="release_reason_enum",     create_type=True)
-AbsenceReasonType    = sa.Enum(AbsenceReasonEnum,       name="absence_reason_enum",     create_type=True)
-AbsenceStatusType    = sa.Enum(AbsenceStatusEnum,       name="absence_status_enum",     create_type=True)
+# create_type=False: Alembic owns these; True can CREATE TYPE before migrate and break upgrade.
+AbsenceReasonType    = sa.Enum(AbsenceReasonEnum,       name="absence_reason_enum",     create_type=False)
+AbsenceStatusType    = sa.Enum(AbsenceStatusEnum,       name="absence_status_enum",     create_type=False)
 SessionTypeType      = sa.Enum(SessionTypeEnum,         name="session_type_enum",       create_type=True)
 SessionCloseType     = sa.Enum(SessionCloseEnum,        name="session_close_enum",      create_type=True)
 PayrollSessionType   = sa.Enum(PayrollSessionEnum,      name="payroll_session_enum",    create_type=True)

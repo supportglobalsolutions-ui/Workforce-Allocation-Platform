@@ -197,7 +197,8 @@ export default function CeoCommandCenterPage() {
       setLoading(true);
       try {
         const results = await Promise.allSettled([
-          withTimeout(api.get<Worker[]>('/workers'), 15_000, 'workers'),
+          // lite skips Auth enrich / public-code / RDP joins — full /workers often timed out → Active=0
+          withTimeout(api.get<Worker[]>('/workers?lite=true'), 20_000, 'workers'),
           withTimeout(api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'), 15_000, 'sessions'),
           withTimeout(api.get<RdpResource[]>('/rdp'), 15_000, 'RDP'),
           withTimeout(api.get<LeaderboardEntry[]>('/leaderboard?limit=5'), 15_000, 'leaderboard'),
@@ -291,6 +292,8 @@ export default function CeoCommandCenterPage() {
     () => sessions.filter((s) => !s.end_time).length,
     [sessions],
   );
+  const workersLoaded = workers.length > 0 || !errors.some((e) => e.startsWith('workers:'));
+  const rosterTotal = workers.length;
   const activeWorkers = useMemo(
     () => workers.filter((w) => w.status === 'active').length,
     [workers],
@@ -477,7 +480,12 @@ export default function CeoCommandCenterPage() {
         {view === 'cards' ? (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-              <KpiCard compact label="Active workers" value={activeWorkers} icon={Users} />
+              <KpiCard
+                compact
+                label="Active on roster"
+                value={workersLoaded ? activeWorkers : '—'}
+                icon={Users}
+              />
               <KpiCard compact label="Live sessions" value={liveSessions} icon={Activity} accent="blue" />
               <KpiCard compact label="Quality" value={qualityIndex ?? '—'} icon={Star} accent="gold" />
               <KpiCard compact label="Work hours" value={formatHoursLabel(periodHours.work)} icon={Clock} />
@@ -485,9 +493,10 @@ export default function CeoCommandCenterPage() {
               <KpiCard compact label="Payouts" value={payoutLabel} icon={DollarSign} accent="gold" />
             </div>
 
-            <div className="grid grid-cols-4 gap-2 sm:gap-3">
-              <MiniStat label="Workers" value={census.workers} />
-              <MiniStat label="RDPs" value={census.rdps} />
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
+              <MiniStat label="On roster" value={workersLoaded ? rosterTotal : 0} />
+              <MiniStat label="With sessions" value={census.workers} />
+              <MiniStat label="RDPs used" value={census.rdps} />
               <MiniStat label="Partners" value={census.partners} />
               <MiniStat label="Owners" value={census.owners} />
             </div>
@@ -495,7 +504,11 @@ export default function CeoCommandCenterPage() {
             <div className="grid lg:grid-cols-2 gap-4">
               <Section title="Workforce by country" icon={Globe2}>
                 {countryViz.length === 0 ? (
-                  <DataAlert>No country data on worker profiles yet.</DataAlert>
+                  <DataAlert>
+                    {workersLoaded
+                      ? 'No country data on worker profiles yet.'
+                      : 'Worker roster did not load — country breakdown unavailable.'}
+                  </DataAlert>
                 ) : (
                   <ul className="space-y-2">
                     {countryViz.map((row) => (
@@ -562,7 +575,12 @@ export default function CeoCommandCenterPage() {
         ) : (
           <>
             <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-3">
-              <KpiCard compact label="Active workers" value={activeWorkers} icon={Users} />
+              <KpiCard
+                compact
+                label="Active on roster"
+                value={workersLoaded ? activeWorkers : '—'}
+                icon={Users}
+              />
               <KpiCard compact label="Live sessions" value={liveSessions} icon={Activity} accent="blue" />
               <KpiCard compact label="Quality" value={qualityIndex ?? '—'} icon={Star} accent="gold" />
               <KpiCard compact label="Work hours" value={formatHoursLabel(periodHours.work)} icon={Clock} />
@@ -574,7 +592,7 @@ export default function CeoCommandCenterPage() {
               <div className="rounded-2xl border border-emerald-accent/15 bg-brand-card p-4 h-[260px]">
                 <p className="text-[10px] font-bold uppercase tracking-wider text-emerald-accent mb-2">By country</p>
                 {countryViz.length === 0 ? (
-                  <DataAlert>No country data.</DataAlert>
+                  <DataAlert>{workersLoaded ? 'No country data.' : 'Roster did not load.'}</DataAlert>
                 ) : (
                   <Bar data={countryChart} options={barOptions} />
                 )}
@@ -597,9 +615,10 @@ export default function CeoCommandCenterPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-2 sm:gap-3">
-              <MiniStat label="Workers" value={census.workers} />
-              <MiniStat label="RDPs" value={census.rdps} />
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
+              <MiniStat label="On roster" value={workersLoaded ? rosterTotal : 0} />
+              <MiniStat label="With sessions" value={census.workers} />
+              <MiniStat label="RDPs used" value={census.rdps} />
               <MiniStat label="Partners" value={census.partners} />
               <MiniStat label="Owners" value={census.owners} />
             </div>
