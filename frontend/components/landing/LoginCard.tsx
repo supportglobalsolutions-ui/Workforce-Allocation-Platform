@@ -11,6 +11,7 @@ import ErrorToast from '@/components/shared/ErrorToast';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { setAuthRoleCookie } from '@/lib/auth/cookies';
 import { ROLE_LANDING } from '@/lib/navigation/config';
+import { portalFromPath } from '@/lib/auth/config';
 import { getAuthErrorMessage } from '@/lib/auth/errors';
 
 interface LoginCardProps {
@@ -46,7 +47,18 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
     if (onSuccess) {
       onSuccess();
     } else {
-      router.replace(ROLE_LANDING[session.primaryPortal]);
+      const returnTo = new URLSearchParams(window.location.search).get('returnTo');
+      // Only accept a local, authorised portal URL. The value originates in
+      // middleware, but validating it here also prevents open redirects.
+      const portal = returnTo ? portalFromPath(returnTo) : null;
+      const canReturn = Boolean(
+        returnTo
+        && returnTo.startsWith('/')
+        && !returnTo.startsWith('//')
+        && portal
+        && session.allowedPortals.includes(portal),
+      );
+      router.replace(canReturn ? returnTo! : ROLE_LANDING[session.primaryPortal]);
     }
   }, [session, router, onSuccess, pendingLoginOtp]);
 
@@ -93,7 +105,8 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
       } else if (onSuccess) {
         onSuccess();
       }
-      // On success without OTP, AuthProvider navigates via finishLogin.
+      // AuthProvider updates the session; the effect above chooses the safe
+      // return page (or the role's normal landing page).
     } catch (err: unknown) {
       setError(getAuthErrorMessage(err));
       noteFailedLogin();

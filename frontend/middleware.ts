@@ -115,6 +115,11 @@ export async function middleware(req: NextRequest) {
   if (!role) {
     const url = req.nextUrl.clone();
     url.pathname = '/login';
+    // A cookie can be absent for one refresh while Supabase still has a valid
+    // browser session. Preserve the exact protected page so the client can
+    // restore the cookie and continue there instead of dropping a super admin
+    // at the CEO landing page.
+    url.searchParams.set('returnTo', `${pathname}${req.nextUrl.search}`);
     return NextResponse.redirect(url);
   }
 

@@ -19,7 +19,7 @@ import {
 import { clearAuthRoleCookie } from './cookies';
 import { getAuthErrorMessage } from './errors';
 import { LoginOtpRequiredError, SessionCookieSyncError } from './session-cookie';
-import { PortalRole, ROLE_LANDING } from '@/lib/navigation/config';
+import { PortalRole } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 import { logoutBlockReason } from '@/lib/logout-guard';
 import { supabase } from '@/lib/supabase';
@@ -141,10 +141,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       pendingAccessTokenRef.current = null;
       setPendingLoginOtp(null);
       setSession(s);
-      router.replace(ROLE_LANDING[s.primaryPortal]);
       return { ok: true as const };
     },
-    [router],
+    [],
   );
 
   const login = useCallback(
