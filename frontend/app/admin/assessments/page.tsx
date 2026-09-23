@@ -590,7 +590,7 @@ function MediaUploader({
     if (!files || files.length === 0) return;
     setError('');
     for (const file of Array.from(files)) {
-      const maxMb = file.type.startsWith('video/') ? 200 : 20;
+      const maxMb = file.type.startsWith('video/') ? 50 : 20;
       if (file.size > maxMb * 1024 * 1024) { setError(`${file.name} exceeds ${maxMb} MB limit.`); continue; }
       try {
         setUploading({ name: file.name, progress: 0 });
