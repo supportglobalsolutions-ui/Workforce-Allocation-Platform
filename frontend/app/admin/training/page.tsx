@@ -13,10 +13,10 @@ import ConfirmModal from '@/components/platform/ConfirmModal';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
-/** Beside the sidebar (see --app-sidebar-offset), above page content. */
-const SHELL_Z = 'z-[35]';
-const BESIDE_SIDEBAR =
-  'fixed inset-y-0 right-0 left-0 md:left-[var(--app-sidebar-offset,240px)]';
+/** Above sidebar. Almost-full-screen with blur — no black scrim. */
+const SHELL_Z = 'z-[100]';
+const BLUR_SCRIM =
+  'fixed inset-0 bg-transparent backdrop-blur-2xl';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -161,7 +161,7 @@ function ModuleModal({
 
   return createPortal(
     <div
-      className={`modal-overlay ${BESIDE_SIDEBAR} ${SHELL_Z} flex p-3 sm:p-4 md:p-5`}
+      className={`${BLUR_SCRIM} ${SHELL_Z} flex p-3 sm:p-4 md:p-6`}
       role="dialog"
       aria-modal="true"
       aria-label={editing ? 'Edit Training Module' : 'New Training Module'}

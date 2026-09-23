@@ -17,13 +17,11 @@ import {
   type TaskAssessment, type TaskResult, type TaskMedia, type UploadProgress,
 } from '@/lib/task-assessments';
 
-/** Beside the sidebar (see --app-sidebar-offset), above page content. */
-const SHELL_Z = 'z-[35]';
-/** Above detail shell. */
-const NESTED_Z = 'z-[38]';
-/** Full-viewport overlay that starts after the sidebar on desktop. */
-const BESIDE_SIDEBAR =
-  'fixed inset-y-0 right-0 left-0 md:left-[var(--app-sidebar-offset,240px)]';
+/** Above sidebar (z-40). Almost-full-screen shells with blur — no black scrim. */
+const SHELL_Z = 'z-[100]';
+const NESTED_Z = 'z-[110]';
+const BLUR_SCRIM =
+  'fixed inset-0 bg-transparent backdrop-blur-2xl';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
 
@@ -70,7 +68,7 @@ function ModalShell({
 
   return createPortal(
     <div
-      className={`modal-overlay ${BESIDE_SIDEBAR} ${SHELL_Z} flex items-stretch justify-stretch p-3 sm:p-4 md:p-5`}
+      className={`${BLUR_SCRIM} ${SHELL_Z} flex items-stretch justify-stretch p-3 sm:p-4 md:p-6`}
       role="dialog"
       aria-modal="true"
       aria-label={title}
@@ -94,12 +92,11 @@ function ModalShell({
 }
 
 function NestedModal({
-  title, onClose, children, wide,
+  title, onClose, children,
 }: {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
-  wide?: boolean;
 }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
@@ -107,21 +104,23 @@ function NestedModal({
 
   return createPortal(
     <div
-      className={`modal-overlay ${BESIDE_SIDEBAR} ${NESTED_Z} flex items-center justify-center p-4`}
+      className={`${BLUR_SCRIM} ${NESTED_Z} flex items-stretch justify-stretch p-3 sm:p-4 md:p-6`}
       role="dialog"
       aria-modal="true"
       aria-label={title}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className={`glass-modal relative z-10 w-full ${wide ? 'max-w-2xl' : 'max-w-lg'} overflow-hidden rounded-2xl shadow-2xl`}>
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06]">
+      <div className="glass-modal relative z-10 w-full h-full min-h-0 flex flex-col overflow-hidden rounded-xl sm:rounded-2xl shadow-2xl">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">
           <h2 className="text-sm font-bold text-theme-heading">{title}</h2>
           <button type="button" onClick={onClose}
             className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
             <X size={15} />
           </button>
         </div>
-        {children}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {children}
+        </div>
       </div>
     </div>,
     document.body,
@@ -698,7 +697,7 @@ function TaskFormModal({
   }
 
   return (
-    <NestedModal title={existing ? 'Edit Task Assessment' : 'New Task Assessment'} onClose={onClose} wide>
+    <NestedModal title={existing ? 'Edit Task Assessment' : 'New Task Assessment'} onClose={onClose}>
       <form onSubmit={handleSubmit} className="max-h-[calc(92vh-3.5rem)] overflow-y-auto p-5 space-y-4">
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Data Entry Task" className="input-field" /></Field>
