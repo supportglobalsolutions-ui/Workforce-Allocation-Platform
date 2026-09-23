@@ -617,7 +617,7 @@ function MediaUploader({
         onClick={() => inputRef.current?.click()}>
         <Upload size={20} className="text-theme-muted mx-auto mb-2" />
         <p className="text-sm text-theme-muted">Drop images / videos here or <span className="text-emerald-accent">click to browse</span></p>
-        <p className="text-[10px] text-theme-muted/60 mt-1">Images up to 20 MB · Videos up to 200 MB</p>
+        <p className="text-[10px] text-theme-muted/60 mt-1">Images up to 20 MB · Videos up to 50 MB</p>
         <input ref={inputRef} type="file" multiple accept="image/*,video/*" className="hidden"
           onChange={(e) => handleFiles(e.target.files)} />
       </div>
@@ -1457,7 +1457,7 @@ export default function AssessmentsPage() {
             <>
               Permanently delete{' '}
               <span className="font-semibold text-theme-heading">{mcqToDelete.title}</span>
-              {' '}and its questions. Worker scores stay on the Scores page with this test name.
+              {' '}and its questions. It disappears from Tests right away; past scores remain on Scores.
             </>
           ) : null
         }
@@ -1493,7 +1493,7 @@ export default function AssessmentsPage() {
             <>
               Permanently delete{' '}
               <span className="font-semibold text-theme-heading">{taskToDelete.title}</span>
-              , its activities, and media. Worker scores stay on the Scores page with this task name.
+              , its activities, and media. It disappears from Tests right away; past scores remain on Scores.
             </>
           ) : null
         }

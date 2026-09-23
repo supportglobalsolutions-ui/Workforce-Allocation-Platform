@@ -90,6 +90,12 @@ export async function uploadTaskMedia(
     });
 
   if (error) {
+    // The bucket is created by scripts/setup_task_media_bucket.py.
+    if (/bucket not found/i.test(error.message)) {
+      throw new Error(
+        'Task media storage is not set up yet. Ask an admin to run the task-media bucket setup.',
+      );
+    }
     throw error;
   }
 
