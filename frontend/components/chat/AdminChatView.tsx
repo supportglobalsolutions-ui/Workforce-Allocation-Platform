@@ -61,7 +61,7 @@ export default function AdminChatView() {
   };
 
   return (
-    <div className="max-w-3xl flex flex-col min-h-[70vh]">
+    <div className="w-full flex flex-col min-h-[70vh]">
       <PageHeader
         title="Chat with admin"
         description="Ask for help with a desktop, account, or anything else. An administrator will reply here."
@@ -69,7 +69,7 @@ export default function AdminChatView() {
 
       {error && <p className="text-danger text-sm mb-3">{error}</p>}
 
-      <div className="glass-panel flex-1 flex flex-col min-h-[420px] overflow-hidden">
+      <div className="glass-panel w-full max-w-3xl self-center flex-1 flex flex-col min-h-[420px] overflow-hidden">
         <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading ? (
             <p className="text-theme-muted text-sm animate-pulse">Loading conversation…</p>
