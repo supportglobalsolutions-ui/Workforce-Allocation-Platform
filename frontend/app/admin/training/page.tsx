@@ -151,24 +151,24 @@ function ModuleModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-stretch justify-stretch bg-black/60 backdrop-blur-sm p-0 sm:p-3"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
     >
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-lg max-h-[90vh] overflow-y-auto">
-        <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <h2 className="text-base font-bold text-white">
+      <div className="glass-panel rounded-none sm:rounded-2xl border-0 sm:border border-white/10 w-full h-full max-w-none flex flex-col overflow-hidden">
+        <div className="flex items-center justify-between p-5 border-b border-white/[0.06] shrink-0">
+          <h2 className="text-base font-bold text-white truncate pr-4">
             {editing ? 'Edit Training Module' : 'New Training Module'}
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors"
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors shrink-0"
           >
             <X size={16} />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
+        <form onSubmit={handleSubmit} className="p-5 sm:p-8 space-y-5 flex-1 overflow-y-auto max-w-4xl mx-auto w-full">
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Title</label>
             <input
@@ -182,10 +182,10 @@ function ModuleModal({
           <div>
             <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5 block">Description</label>
             <textarea
-              rows={3} value={form.description}
+              rows={6} value={form.description}
               onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))}
               placeholder="What this module covers…"
-              className="input-field resize-none"
+              className="input-field resize-y min-h-[8rem]"
             />
           </div>
 
