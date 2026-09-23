@@ -9,6 +9,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from .enums import WorkerStatusEnum, WorkerStatusType, WorkerTypeEnum, WorkerTypeType
 
 if TYPE_CHECKING:
+    from .absence_report import AbsenceReport
     from .admin_users import AdminUser
     from .allocation import Allocation
     from .mcq import McqResult
@@ -95,6 +96,10 @@ class Worker(SQLModel, table=True):
     shifts: list["Shift"] = Relationship(
         back_populates="worker",
         sa_relationship_kwargs={"foreign_keys": "[Shift.worker_id]"},
+    )
+    absence_reports: list["AbsenceReport"] = Relationship(
+        back_populates="worker",
+        sa_relationship_kwargs={"foreign_keys": "[AbsenceReport.worker_id]"},
     )
     allocations: list["Allocation"] = Relationship(back_populates="worker")
     sessions: list["Session"] = Relationship(back_populates="worker")

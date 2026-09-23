@@ -246,7 +246,11 @@ export default function SessionDetailPanel({
           </p>
           <SessionImageGallery
             sessionId={session.id}
-            initialUrls={session.image_urls}
+            initialUrls={
+              (session.image_urls ?? []).length > 0
+                ? session.image_urls
+                : [session.start_image_url, session.end_image_url].filter(Boolean) as string[]
+            }
             label="Session screenshot"
             onChanged={(paths) => onImagesChanged(session.id, paths)}
             readOnly={!allowUpload}

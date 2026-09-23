@@ -13,6 +13,10 @@ export const STATUS_COLORS: Record<string, string> = {
   approved: 'bg-success/20 text-success border-success/30',
   inactive: 'bg-white/10 text-white/50 border-white/10',
   suspended: 'bg-danger/20 text-danger border-danger/30',
+  // absence reports
+  accepted: 'bg-success/20 text-success border-success/30',
+  declined: 'bg-danger/20 text-danger border-danger/30',
+  withdrawn: 'bg-white/10 text-white/50 border-white/10',
 };
 
 export const STATUS_LABELS: Record<string, string> = {
@@ -30,4 +34,7 @@ export const STATUS_LABELS: Record<string, string> = {
   approved: 'Approved',
   inactive: 'Inactive',
   suspended: 'Suspended',
+  accepted: 'Accepted',
+  declined: 'Declined',
+  withdrawn: 'Withdrawn',
 };

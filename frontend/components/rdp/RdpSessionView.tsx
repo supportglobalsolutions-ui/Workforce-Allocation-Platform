@@ -45,6 +45,7 @@ export default function RdpSessionView({ rdpId, basePath = '/worker' }: RdpSessi
   const [seconds, setSeconds] = useState(0);
   const [startedAtMs, setStartedAtMs] = useState<number | null>(null);
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [imageUrls, setImageUrls] = useState<string[]>([]);
 
   useEffect(() => {
     api.get<RDPResource>(`/rdp/${rdpId}`)
@@ -60,12 +61,13 @@ export default function RdpSessionView({ rdpId, basePath = '/worker' }: RdpSessi
         if (active?.session_id) setSessionId(active.session_id);
         // Prefer server start time so a refresh does not reset the timer.
         if (active?.session_id) {
-          api.get<{ start_time?: string }>(`/sessions/${active.session_id}`)
+          api.get<{ start_time?: string; image_urls?: string[] | null }>(`/sessions/${active.session_id}`)
             .then((s) => {
               if (s.start_time) {
                 const ms = new Date(s.start_time).getTime();
                 if (Number.isFinite(ms)) setStartedAtMs(ms);
               }
+              setImageUrls(s.image_urls ?? []);
             })
             .catch(() => { /* keep local clock */ });
         }
@@ -221,7 +223,9 @@ export default function RdpSessionView({ rdpId, basePath = '/worker' }: RdpSessi
           </p>
           <SessionImageGallery
             sessionId={sessionId}
+            initialUrls={imageUrls}
             label="Session screenshot"
+            onChanged={setImageUrls}
           />
         </div>
       )}

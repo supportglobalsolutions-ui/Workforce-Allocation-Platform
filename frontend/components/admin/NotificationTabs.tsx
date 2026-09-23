@@ -3,10 +3,11 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Inbox, MessageSquare, Send } from 'lucide-react';
+import { AlertTriangle, Inbox, MessageSquare, Send } from 'lucide-react';
 
 import { contactUnreadCount } from '@/lib/contact';
 import { chatThreadsUnread } from '@/lib/chat';
+import { absenceSummary } from '@/lib/absence-reports';
 
 /**
  * Sub-navigation for the Notifications section.
@@ -19,16 +20,19 @@ export default function NotificationTabs() {
   const pathname = usePathname();
   const [unread, setUnread] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
+  const [absencesPending, setAbsencesPending] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
     Promise.all([
       contactUnreadCount().catch(() => ({ unread: 0 })),
       chatThreadsUnread().catch(() => ({ unread: 0, messages: 0 })),
-    ]).then(([contact, chat]) => {
+      absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
+    ]).then(([contact, chat, absences]) => {
       if (cancelled) return;
       setUnread(contact.unread);
       setChatUnread(chat.unread);
+      setAbsencesPending(absences.pending);
     });
     return () => { cancelled = true; };
   }, [pathname]);
@@ -37,10 +41,11 @@ export default function NotificationTabs() {
     { href: '/admin/notifications', label: 'Notification Center', icon: Send, badge: 0 },
     { href: '/admin/notifications/inbox', label: 'Enquiries inbox', icon: Inbox, badge: unread },
     { href: '/admin/notifications/chat', label: 'Worker chat', icon: MessageSquare, badge: chatUnread },
+    { href: '/admin/notifications/absences', label: 'Absence reports', icon: AlertTriangle, badge: absencesPending },
   ];
 
   return (
-    <div className="flex items-center gap-1 mb-6 bg-white/5 rounded-xl p-1 w-fit">
+    <div className="flex flex-wrap items-center gap-1 mb-6 bg-white/5 rounded-xl p-1 w-fit max-w-full">
       {tabs.map((t) => {
         const active = pathname === t.href;
         const Icon = t.icon;

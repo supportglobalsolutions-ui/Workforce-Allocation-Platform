@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
   AlertCircle, BarChart3, CheckCircle, ChevronRight,
-  Clock, Eye, FileQuestion, Film, Image as ImageIcon, Plus,
+  Clock, Eye, FileQuestion, Film, Image as ImageIcon, Pencil, Plus,
   Settings, Timer, Trash2, Upload, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
@@ -842,6 +842,7 @@ function TaskDetailModal({
   const [actMarks, setActMarks] = useState('');
   const [actSaving, setActSaving] = useState(false);
   const [actErr, setActErr] = useState('');
+  const [editingAct, setEditingAct] = useState<TaskActivity | null>(null);
 
   const loadR = useCallback(async () => {
     setRLoading(true); setRError('');
@@ -915,31 +916,76 @@ function TaskDetailModal({
                 <div key={a.id} className="flex items-center gap-2 glass-panel rounded-xl p-3 border border-white/[0.06]">
                   <p className="text-sm text-white flex-1">{a.prompt}</p>
                   <span className="text-xs text-gold-accent">{Number(a.max_marks).toFixed(1)}</span>
+                  <button
+                    type="button"
+                    title="Edit activity"
+                    onClick={() => {
+                      setEditingAct(a);
+                      setActPrompt(a.prompt);
+                      setActMarks(String(a.max_marks));
+                      setActErr('');
+                    }}
+                    className="text-theme-muted hover:text-white"
+                  >
+                    <Pencil size={12} />
+                  </button>
                   <button type="button" onClick={async () => {
                     await api.delete(`/task-assessments/activities/${a.id}`);
                     setActivities((p) => p.filter((x) => x.id !== a.id));
+                    if (editingAct?.id === a.id) {
+                      setEditingAct(null);
+                      setActPrompt('');
+                      setActMarks('');
+                    }
                   }} className="text-theme-muted hover:text-red-400"><Trash2 size={12} /></button>
                 </div>
               ))}
               <form className="space-y-2" onSubmit={async (e) => {
                 e.preventDefault(); setActSaving(true); setActErr('');
                 try {
-                  const created = await api.post<TaskActivity>(`/task-assessments/${localA.id}/activities`, {
-                    prompt: actPrompt, max_marks: Number(actMarks), sort_order: activities.length,
-                  });
-                  setActivities((p) => [...p, created]);
+                  if (editingAct) {
+                    const updated = await api.patch<TaskActivity>(`/task-assessments/activities/${editingAct.id}`, {
+                      prompt: actPrompt,
+                      max_marks: Number(actMarks),
+                    });
+                    setActivities((p) => p.map((x) => (x.id === updated.id ? updated : x)));
+                    setEditingAct(null);
+                  } else {
+                    const created = await api.post<TaskActivity>(`/task-assessments/${localA.id}/activities`, {
+                      prompt: actPrompt, max_marks: Number(actMarks), sort_order: activities.length,
+                    });
+                    setActivities((p) => [...p, created]);
+                  }
                   setActPrompt(''); setActMarks('');
                 } catch (err: unknown) { setActErr(err instanceof Error ? err.message : 'Failed.'); }
                 finally { setActSaving(false); }
               }}>
-                <Field label="New activity">
+                <Field label={editingAct ? 'Edit activity' : 'New activity'}>
                   <input required value={actPrompt} onChange={(e) => setActPrompt(e.target.value)} className="input-field" placeholder="What the worker must do" />
                 </Field>
                 <Field label="Max marks">
                   <input required type="number" min={0.01} max={100} step="0.01" value={actMarks} onChange={(e) => setActMarks(e.target.value)} className="input-field" />
                 </Field>
                 {actErr && <p className="text-xs text-red-400">{actErr}</p>}
-                <button type="submit" disabled={actSaving} className="btn-primary text-xs py-1.5 px-3">Add activity</button>
+                <div className="flex items-center gap-2">
+                  <button type="submit" disabled={actSaving} className="btn-primary text-xs py-1.5 px-3">
+                    {editingAct ? 'Save activity' : 'Add activity'}
+                  </button>
+                  {editingAct && (
+                    <button
+                      type="button"
+                      className="btn-secondary text-xs py-1.5 px-3"
+                      onClick={() => {
+                        setEditingAct(null);
+                        setActPrompt('');
+                        setActMarks('');
+                        setActErr('');
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
               </form>
             </div>
           )}

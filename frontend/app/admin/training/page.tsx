@@ -86,20 +86,34 @@ const CONTENT_ICON: Record<string, typeof FileText> = {
   pdf: FileText,
 };
 
-// ── New Module modal ───────────────────────────────────────────────────────────
+// ── New / Edit Module modal ────────────────────────────────────────────────────
 
 function ModuleModal({
+  existing,
   mcqSets,
   tasks,
   onClose,
   onSaved,
 }: {
+  existing?: TrainingModule | null;
   mcqSets: McqSetOption[];
   tasks: TaskOption[];
   onClose: () => void;
   onSaved: () => void;
 }) {
-  const [form, setForm] = useState<ModuleForm>(EMPTY_MODULE_FORM);
+  const editing = Boolean(existing);
+  const [form, setForm] = useState<ModuleForm>(() =>
+    existing
+      ? {
+          title: existing.title,
+          description: existing.description ?? '',
+          is_mandatory_for_new_workers: existing.is_mandatory_for_new_workers,
+          is_active: existing.is_active,
+          mcq_set_id: existing.mcq_set_id ?? '',
+          task_assessment_id: existing.task_assessment_id ?? '',
+        }
+      : EMPTY_MODULE_FORM,
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -107,19 +121,29 @@ function ModuleModal({
     e.preventDefault();
     setSaving(true);
     setError(null);
+    const body = {
+      title: form.title.trim(),
+      description: form.description.trim() || null,
+      mcq_set_id: form.mcq_set_id || null,
+      task_assessment_id: form.task_assessment_id || null,
+      is_mandatory_for_new_workers: form.is_mandatory_for_new_workers,
+      is_active: form.is_active,
+    };
     try {
-      await api.post('/training/modules', {
-        title: form.title.trim(),
-        description: form.description.trim() || undefined,
-        mcq_set_id: form.mcq_set_id || undefined,
-        task_assessment_id: form.task_assessment_id || undefined,
-        is_mandatory_for_new_workers: form.is_mandatory_for_new_workers,
-        is_active: form.is_active,
-      });
+      if (existing) {
+        await api.patch(`/training/modules/${existing.id}`, body);
+      } else {
+        await api.post('/training/modules', {
+          ...body,
+          description: body.description || undefined,
+          mcq_set_id: body.mcq_set_id || undefined,
+          task_assessment_id: body.task_assessment_id || undefined,
+        });
+      }
       onSaved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to create module');
+      setError(err instanceof Error ? err.message : editing ? 'Failed to update module' : 'Failed to create module');
     } finally {
       setSaving(false);
     }
@@ -132,7 +156,9 @@ function ModuleModal({
     >
       <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-lg max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-white/[0.06]">
-          <h2 className="text-base font-bold text-white">New Training Module</h2>
+          <h2 className="text-base font-bold text-white">
+            {editing ? 'Edit Training Module' : 'New Training Module'}
+          </h2>
           <button
             type="button"
             onClick={onClose}
@@ -225,8 +251,8 @@ function ModuleModal({
           <div className="flex gap-3 justify-end">
             <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
             <button type="submit" disabled={saving} className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-60">
-              {saving ? <SpinningDots size="sm" className="text-white" /> : <Plus size={14} />}
-              Create Module
+              {saving ? <SpinningDots size="sm" className="text-white" /> : editing ? <Check size={14} /> : <Plus size={14} />}
+              {editing ? 'Save Changes' : 'Create Module'}
             </button>
           </div>
         </form>
@@ -376,6 +402,7 @@ function ModuleDetail({
   tasks,
   onBack,
   onChanged,
+  onRequestEdit,
   onRequestDelete,
 }: {
   module: TrainingModule;
@@ -383,6 +410,7 @@ function ModuleDetail({
   tasks: TaskOption[];
   onBack: () => void;
   onChanged: () => void;
+  onRequestEdit: () => void;
   onRequestDelete: () => void;
 }) {
   const lessons = [...(module.lessons ?? [])].sort((a, b) => a.sort_order - b.sort_order);
@@ -446,14 +474,24 @@ function ModuleDetail({
               </span>
             )}
           </div>
-          <button
-            type="button"
-            onClick={onRequestDelete}
-            className="inline-flex items-center gap-1.5 text-xs font-semibold py-1.5 px-3 rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
-            title="Delete module"
-          >
-            <Trash2 size={13} /> Delete module
-          </button>
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onRequestEdit}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold py-1.5 px-3 rounded-lg text-theme-muted hover:text-white border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+              title="Edit module"
+            >
+              <Pencil size={13} /> Edit module
+            </button>
+            <button
+              type="button"
+              onClick={onRequestDelete}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold py-1.5 px-3 rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
+              title="Delete module"
+            >
+              <Trash2 size={13} /> Delete module
+            </button>
+          </div>
         </div>
         {module.description && <p className="text-xs text-theme-muted mt-2 whitespace-pre-wrap">{module.description}</p>}
 
@@ -600,6 +638,7 @@ export default function AdminTrainingPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [showCreate, setShowCreate] = useState(false);
+  const [editingModule, setEditingModule] = useState<TrainingModule | null>(null);
   const [openModuleId, setOpenModuleId] = useState<string | null>(null);
   const [togglingId, setTogglingId] = useState<string | null>(null);
   const [moduleToDelete, setModuleToDelete] = useState<TrainingModule | null>(null);
@@ -689,6 +728,7 @@ export default function AdminTrainingPage() {
           tasks={tasks}
           onBack={() => setOpenModuleId(null)}
           onChanged={loadModules}
+          onRequestEdit={() => setEditingModule(openModule)}
           onRequestDelete={() => setModuleToDelete(openModule)}
         />
       ) : modules.length === 0 ? (
@@ -737,6 +777,14 @@ export default function AdminTrainingPage() {
                     <div className="flex items-center gap-2">
                       <button
                         type="button"
+                        onClick={() => setEditingModule(m)}
+                        title={`Edit ${m.title}`}
+                        className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-white border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+                      >
+                        <Pencil size={13} />
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setOpenModuleId(m.id)}
                         className="btn-secondary text-xs py-1.5 px-3"
                       >
@@ -764,6 +812,16 @@ export default function AdminTrainingPage() {
           mcqSets={mcqSets}
           tasks={tasks}
           onClose={() => setShowCreate(false)}
+          onSaved={loadModules}
+        />
+      )}
+
+      {editingModule && (
+        <ModuleModal
+          existing={editingModule}
+          mcqSets={mcqSets}
+          tasks={tasks}
+          onClose={() => setEditingModule(null)}
           onSaved={loadModules}
         />
       )}

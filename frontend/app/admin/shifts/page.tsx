@@ -1,12 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { Calendar, Check, Loader2, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AbsenceMarker from '@/components/absence/AbsenceMarker';
 import { api } from '@/lib/api';
+import { absenceSummary } from '@/lib/absence-reports';
 
 interface Worker {
   id: string;
@@ -161,12 +164,19 @@ export default function AdminShiftsPage() {
   const [customTo, setCustomTo] = useState('');
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [actioning, setActioning] = useState<string | null>(null);
+  const [flaggedShiftIds, setFlaggedShiftIds] = useState<Set<string>>(new Set());
 
   const reload = () => {
     return Promise.all([
       api.get<Shift[]>('/shifts'),
       api.get<Worker[]>('/workers'),
-    ]).then(([s, w]) => { setShifts(s); setWorkers(w); });
+      // Additive marker — never let it break the shifts table.
+      absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
+    ]).then(([s, w, absences]) => {
+      setShifts(s);
+      setWorkers(w);
+      setFlaggedShiftIds(new Set(absences.flagged_shift_ids));
+    });
   };
 
   useEffect(() => {
@@ -257,6 +267,7 @@ export default function AdminShiftsPage() {
       end: formatTime(s.scheduled_end),
       hours: durationHours(s.scheduled_start, s.scheduled_end),
       status: s.status,
+      absence: flaggedShiftIds.has(s.id),
       _raw: s,
     };
   });
@@ -406,6 +417,21 @@ export default function AdminShiftsPage() {
               key: 'status',
               header: 'Status',
               render: (r) => <StatusBadge status={r.status as string} />,
+            },
+            {
+              key: 'absence',
+              header: 'Absence',
+              render: (r) =>
+                r.absence ? (
+                  <Link
+                    href="/admin/notifications/absences"
+                    title="Absence reported — open the review queue"
+                  >
+                    <AbsenceMarker />
+                  </Link>
+                ) : (
+                  <span className="text-theme-muted/50">—</span>
+                ),
             },
             {
               key: 'approve',

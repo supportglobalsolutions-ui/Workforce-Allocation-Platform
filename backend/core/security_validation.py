@@ -90,3 +90,34 @@ def validate_session_image_url(url: str) -> str:
         return value
 
     raise ValueError("Image URL must be a Supabase Storage link for this project")
+
+
+#: Evidence a worker may attach to an absence report.
+ABSENCE_ATTACHMENT_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png")
+
+
+def validate_absence_attachment_path(path: str) -> str:
+    """Allow only bucket-relative objects with an evidence file extension.
+
+    Unlike session screenshots there is no legacy URL form to honour — this
+    bucket was private from the start, so a full URL is always a mistake or an
+    attempt to point us off-site.
+
+    The bytes are uploaded straight from the browser to Supabase, so this
+    checks the *path*, not the content. Real MIME enforcement belongs in the
+    bucket policy; this is the same trust model session evidence runs on.
+    """
+    value = path.strip()
+    if not value:
+        raise ValueError("Attachment path is required")
+
+    parsed = urlparse(value)
+    if parsed.scheme or parsed.netloc:
+        raise ValueError("Attachment must be a storage path, not a URL")
+    if value.startswith("/") or "\\" in value or ".." in value:
+        raise ValueError("Attachment path is invalid")
+    if not _STORAGE_OBJECT_PATH.match(value):
+        raise ValueError("Attachment path is invalid")
+    if not value.lower().endswith(ABSENCE_ATTACHMENT_EXTENSIONS):
+        raise ValueError("Attachment must be a PDF, JPG, JPEG or PNG file")
+    return value

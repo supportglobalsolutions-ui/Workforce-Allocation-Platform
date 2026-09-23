@@ -116,6 +116,46 @@ def assign_rdp_for_approved_shift(db: Session, shift: Shift, *, commit: bool = F
     )
 
 
+def release_rdp_for_cancelled_shift(db: Session, shift: Shift, *, commit: bool = False) -> bool:
+    """Hand back a machine that was only ever *reserved* for a cancelled shift.
+
+    The mirror of :func:`assign_rdp_for_approved_shift`, and deliberately just
+    as narrow: it frees the resource only when it is still sitting in
+    ``assigned`` for this worker with no open allocation. A machine that has
+    moved on to active/idle is being worked on right now, so releasing it from
+    here would pull the rug out from under a live session — that case is left
+    to the normal allocation lifecycle and stays visible to the admin.
+
+    Returns True when the machine was actually freed.
+    """
+    if not shift.rdp_resource_id:
+        return False
+
+    resource = db.get(RDPResource, shift.rdp_resource_id)
+    if not resource or resource.status != RdpStatusEnum.assigned:
+        return False
+    if resource.assigned_worker_id != shift.worker_id:
+        return False
+
+    open_alloc = db.exec(
+        select(Allocation).where(
+            Allocation.rdp_resource_id == resource.id,
+            Allocation.released_at.is_(None),
+        )
+    ).first()
+    if open_alloc:
+        return False
+
+    transition_rdp_status(
+        db,
+        resource,
+        RdpStatusEnum.online_free,
+        assigned_worker_id=None,
+        commit=commit,
+    )
+    return True
+
+
 def find_claimable_shift(
     db: Session,
     *,

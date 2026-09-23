@@ -9,6 +9,7 @@ from sqlmodel import Field, Relationship, SQLModel
 from .enums import ShiftStatusEnum, ShiftStatusType
 
 if TYPE_CHECKING:
+    from .absence_report import AbsenceReport
     from .admin_users import AdminUser
     from .allocation import Allocation
     from .rdp_machine import RDPResource
@@ -58,3 +59,7 @@ class Shift(SQLModel, table=True):
         sa_relationship_kwargs={"foreign_keys": "[Shift.approved_by]"},
     )
     allocation: Optional["Allocation"] = Relationship(back_populates="shift", sa_relationship_kwargs={"uselist": False})
+    absence_reports: list["AbsenceReport"] = Relationship(
+        back_populates="shift",
+        sa_relationship_kwargs={"foreign_keys": "[AbsenceReport.shift_id]"},
+    )

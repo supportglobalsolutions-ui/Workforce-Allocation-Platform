@@ -1,10 +1,14 @@
 'use client';
 
+import Link from 'next/link';
 import { useEffect, useState } from 'react';
-import { Calendar, CheckSquare, Square } from 'lucide-react';
+import { AlertTriangle, Calendar, CheckSquare, PencilLine, Square } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AbsenceMarker from '@/components/absence/AbsenceMarker';
+import AbsenceReportModal from '@/components/absence/AbsenceReportModal';
 import { api } from '@/lib/api';
+import { isOpenAbsence, listAbsenceReports, type AbsenceReport } from '@/lib/absence-reports';
 
 interface Worker {
   id: string;
@@ -46,6 +50,15 @@ interface DayRow {
   endTime: string;
 }
 
+/** Only open reports mark a shift; a withdrawn one leaves the row free again. */
+function indexOpenReports(reports: AbsenceReport[]): Map<string, AbsenceReport> {
+  const map = new Map<string, AbsenceReport>();
+  for (const r of reports) {
+    if (r.shift_id && isOpenAbsence(r)) map.set(r.shift_id, r);
+  }
+  return map;
+}
+
 function formatShiftTime(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
     weekday: 'short', month: 'short', day: 'numeric',
@@ -60,6 +73,9 @@ export default function MySchedulePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  /** shift id → the open report covering it, so a flagged row can link to it. */
+  const [reportByShift, setReportByShift] = useState<Map<string, AbsenceReport>>(new Map());
+  const [absenceShift, setAbsenceShift] = useState<Shift | null>(null);
   const [days, setDays] = useState<DayRow[]>(
     DAYS.map(({ jsDay }) => ({
       enabled: false,
@@ -73,8 +89,16 @@ export default function MySchedulePage() {
     Promise.all([
       api.get<Worker>('/workers/me'),
       api.get<Shift[]>('/shifts?upcoming=true'),
+      // The worker's own reports — additive, never blocks the page. Fetched
+      // whole rather than as a summary because each flagged row links to its
+      // report so the worker can amend it instead of filing a second one.
+      listAbsenceReports().catch(() => [] as AbsenceReport[]),
     ])
-      .then(([w, s]) => { setWorker(w); setShifts(s); })
+      .then(([w, s, reports]) => {
+        setWorker(w);
+        setShifts(s);
+        setReportByShift(indexOpenReports(reports));
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
   }, []);
@@ -205,9 +229,19 @@ export default function MySchedulePage() {
 
           {/* Upcoming shifts */}
           <section>
-            <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted mb-3">
-              Upcoming shifts
-            </h2>
+            <div className="mb-3 flex items-center justify-between gap-3">
+              <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted">
+                Upcoming shifts
+              </h2>
+              {/* The absence surface lives off the schedule, not in the sidebar. */}
+              <Link
+                href="/worker/absences"
+                className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 transition-colors hover:text-amber-300"
+              >
+                <AlertTriangle size={12} />
+                My absence reports
+              </Link>
+            </div>
             {shifts.length === 0 ? (
               <div className="glass-panel rounded-2xl border border-dashed border-white/10 px-4 py-10 text-center">
                 <p className="text-sm text-theme-muted">No upcoming shifts scheduled.</p>
@@ -217,19 +251,51 @@ export default function MySchedulePage() {
                 <table className="w-full text-sm min-w-[520px]">
                   <thead>
                     <tr className="border-b border-white/5 bg-white/[0.02]">
-                      {['Start', 'End', 'Status'].map((h) => (
+                      {['Start', 'End', 'Status', 'Absence'].map((h) => (
                         <th key={h} className="text-left px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-brand-on-surface-variant">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
-                    {shifts.map((s) => (
-                      <tr key={s.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
-                        <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_start)}</td>
-                        <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_end)}</td>
-                        <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
-                      </tr>
-                    ))}
+                    {shifts.map((s) => {
+                      const reported = reportByShift.get(s.id);
+                      return (
+                        <tr key={s.id} className="border-b border-white/[0.03] hover:bg-white/[0.02]">
+                          <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_start)}</td>
+                          <td className="px-4 py-3 text-brand-on-surface">{formatShiftTime(s.scheduled_end)}</td>
+                          <td className="px-4 py-3"><StatusBadge status={s.status} /></td>
+                          <td className="px-4 py-3">
+                            {reported ? (
+                              /* Already reported — the row leads to the report
+                                 itself, so a second thought becomes an amend
+                                 rather than a second submission. */
+                              <Link
+                                href={`/worker/absences/${reported.id}`}
+                                className="inline-flex items-center gap-2 group"
+                                title="Open your report for this shift"
+                              >
+                                <AbsenceMarker title="You reported an absence for this shift" />
+                                {reported.status === 'pending' && (
+                                  <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-400 group-hover:text-amber-300">
+                                    <PencilLine size={12} />
+                                    Amend
+                                  </span>
+                                )}
+                              </Link>
+                            ) : (
+                              <button
+                                type="button"
+                                onClick={() => setAbsenceShift(s)}
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold text-amber-400 hover:text-amber-300 transition-colors"
+                              >
+                                <AlertTriangle size={13} />
+                                Can&apos;t attend
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -237,6 +303,28 @@ export default function MySchedulePage() {
           </section>
         </>
       )}
+
+      {/* Same template as the dashboard, with this shift locked in. */}
+      <AbsenceReportModal
+        open={absenceShift !== null}
+        lockedShift={absenceShift}
+        onClose={() => setAbsenceShift(null)}
+        onSubmitted={(report) => {
+          // If the shift was already flagged, the form caught a duplicate and
+          // amended the existing report instead — say so rather than claiming
+          // a new one was filed.
+          const amended = report.shift_id ? reportByShift.has(report.shift_id) : false;
+          if (report.shift_id) {
+            setReportByShift((prev) => new Map(prev).set(report.shift_id!, report));
+          }
+          setAbsenceShift(null);
+          setSuccess(
+            amended
+              ? 'Your existing absence report was updated — nothing was submitted twice.'
+              : 'Absence reported — an admin will review it. You can amend it from this list until it is reviewed.',
+          );
+        }}
+      />
     </div>
   );
 }

@@ -13,6 +13,7 @@ from core.supabase_auth import is_auth_ready
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
 from routers import (
+    absence_reports,
     assessments, audit, auth, chat, clients, communications, contact, currencies, intelligence, leaderboard,
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
     settings as platform_settings, task_assessments, training, uptime_kuma, wallets, workers,
@@ -244,6 +245,7 @@ app.include_router(training.router, prefix="/training", tags=["training"])
 app.include_router(communications.router, prefix="/communications", tags=["communications"])
 app.include_router(platform_settings.router, prefix="/settings", tags=["settings"])
 app.include_router(shifts.router, prefix="/shifts", tags=["shifts"])
+app.include_router(absence_reports.router, prefix="/absence-reports", tags=["absence-reports"])
 app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(payroll.router, prefix="/payroll", tags=["payroll"])

@@ -19,11 +19,12 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut, Line, PolarArea, Radar } from 'react-chartjs-2';
 import {
-  Activity, AlertTriangle, Clock, DollarSign, Server, TrendingUp, Users,
+  Activity, AlertTriangle, CalendarX, Clock, DollarSign, Server, TrendingUp, Users,
 } from 'lucide-react';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { absenceSummary } from '@/lib/absence-reports';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
 import { dateToYmd, pickCurrentPeriod } from '@/lib/periods';
@@ -209,6 +210,7 @@ export default function AdminDashboard() {
   const [lineItems, setLineItems] = useState<PayrollLineItem[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [absencesPending, setAbsencesPending] = useState(0);
 
   useEffect(() => {
     api.get<{ username: string | null }>('/workers/me')
@@ -223,8 +225,10 @@ export default function AdminDashboard() {
       api.get<PayrollLineItem[]>('/payroll/line-items'),
       api.get<PayrollPeriod[]>('/payroll/periods'),
       api.get<AuditLog[]>('/audit?limit=10'),
+      // Additive tile — a failure here must not blank the command center.
+      absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
     ])
-      .then(([w, s, m, q, items, per, logs]) => {
+      .then(([w, s, m, q, items, per, logs, absences]) => {
         setWorkers(w);
         setSessions(s);
         setMachines(m);
@@ -232,6 +236,7 @@ export default function AdminDashboard() {
         setLineItems(items);
         setPeriods(per);
         setAuditLogs(logs);
+        setAbsencesPending(absences.pending);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
@@ -532,7 +537,7 @@ export default function AdminDashboard() {
         </span>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-8 gap-3">
         <KpiCard compact label="Workers Online" value={workersOnline} icon={Users} />
         <KpiCard compact label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
         <KpiCard compact label="Machines Online" value={machinesOnline} icon={Server} />
@@ -545,6 +550,15 @@ export default function AdminDashboard() {
         <KpiCard compact label="Logged Hours" value={loggedHoursLabel} icon={Clock} />
         <KpiCard compact label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
         <KpiCard compact label="Payroll Pending" value={payrollPending} icon={DollarSign} accent="gold" />
+        {/* Straight to the review queue — the tile is the only entry point on
+            this page, since absences deliberately get no sidebar item. */}
+        <Link
+          href="/admin/notifications/absences"
+          className="rounded-2xl transition-transform hover:scale-[1.02]"
+          title="Review absence reports"
+        >
+          <KpiCard compact label="Absences" value={absencesPending} icon={CalendarX} accent="danger" />
+        </Link>
       </div>
 
       {/* Charts */}

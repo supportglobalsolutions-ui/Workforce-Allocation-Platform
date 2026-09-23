@@ -7,7 +7,10 @@ import { AlertTriangle, ChevronRight, Clock, Monitor, Play, Star, Trophy, Wallet
 import PageHeader from '@/components/platform/PageHeader';
 import KpiCard from '@/components/platform/KpiCard';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AbsenceReportModal from '@/components/absence/AbsenceReportModal';
+import type { AbsenceFormShift } from '@/components/absence/AbsenceReportForm';
 import { api } from '@/lib/api';
+import { absenceSummary } from '@/lib/absence-reports';
 
 interface WorkSession {
   id: string;
@@ -53,6 +56,10 @@ export default function WorkerDashboard() {
   const [hasMandatoryTraining, setHasMandatoryTraining] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [openAbsences, setOpenAbsences] = useState(0);
+  const [upcomingShifts, setUpcomingShifts] = useState<AbsenceFormShift[]>([]);
+  const [absenceOpen, setAbsenceOpen] = useState(false);
+  const [absenceSent, setAbsenceSent] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -60,8 +67,11 @@ export default function WorkerDashboard() {
       api.get<QualityScore | null>('/quality/me'),
       api.get<Me>('/workers/me'),
       api.get<TrainingModuleSummary[]>('/training/my-modules'),
+      // Absence widgets are additive — a failure here must not blank the page.
+      absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
+      api.get<AbsenceFormShift[]>('/shifts?upcoming=true').catch(() => []),
     ])
-      .then(([sessionList, qualityScore, worker, modules]) => {
+      .then(([sessionList, qualityScore, worker, modules, absences, shifts]) => {
         setTotalSessions(sessionList.length);
         setSessions(sessionList.slice(0, 4));
         setQuality(qualityScore);
@@ -69,6 +79,8 @@ export default function WorkerDashboard() {
         setHasMandatoryTraining(
           modules.some((m) => m.is_mandatory_for_new_workers)
         );
+        setOpenAbsences(absences.pending);
+        setUpcomingShifts(shifts);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
       .finally(() => setLoading(false));
@@ -108,6 +120,36 @@ export default function WorkerDashboard() {
         </div>
       )}
 
+      {absenceSent && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-emerald-accent/10 border border-emerald-accent/30">
+          <AlertTriangle size={18} className="text-emerald-accent shrink-0 mt-0.5" />
+          <p className="text-xs text-emerald-accent">
+            <span className="font-bold">Absence reported</span> — an admin will review it
+            and you will get the decision in your notifications. Need to change
+            something?{' '}
+            <Link href="/worker/absences" className="font-bold underline hover:no-underline">
+              Amend it here
+            </Link>
+            .
+          </p>
+        </div>
+      )}
+
+      {openAbsences > 0 && (
+        <div className="flex items-start gap-3 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+          <AlertTriangle size={18} className="text-amber-400 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-400">
+            <span className="font-bold">
+              {openAbsences} absence report{openAbsences > 1 ? 's' : ''} awaiting review
+            </span>{' '}
+            — you can still amend anything not yet reviewed.{' '}
+            <Link href="/worker/absences" className="font-bold underline hover:no-underline">
+              Open my reports
+            </Link>
+          </p>
+        </div>
+      )}
+
       {/* KPI metrics */}
       <section aria-label="Performance metrics">
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 md:gap-5">
@@ -136,7 +178,7 @@ export default function WorkerDashboard() {
         <div className="flex items-center justify-between mb-4">
           <h2 className="text-xs font-bold uppercase tracking-widest text-theme-muted">Quick actions</h2>
         </div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 md:gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <Link
             href="/worker/rdp-claim-board"
             className="group glass-panel glass-panel-hover rounded-2xl border border-white/5 p-5 flex items-center gap-4 transition-all duration-300"
@@ -176,6 +218,22 @@ export default function WorkerDashboard() {
             </span>
             <ChevronRight size={16} className="shrink-0 text-theme-muted opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0" />
           </Link>
+          {/* Opens the shared absence template with nothing pre-selected — the
+              worker can still pick a shift inside, or leave it unattached. */}
+          <button
+            type="button"
+            onClick={() => setAbsenceOpen(true)}
+            className="group glass-panel glass-panel-hover rounded-2xl border border-white/5 p-5 flex items-center gap-4 text-left transition-all duration-300"
+          >
+            <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-amber-500/20 bg-amber-500/10 text-amber-400 transition-transform duration-300 group-hover:scale-105">
+              <AlertTriangle size={20} />
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block text-sm font-bold text-white">Report absence</span>
+              <span className="block text-xs text-theme-muted mt-0.5 truncate">Can&apos;t attend? Tell an admin</span>
+            </span>
+            <ChevronRight size={16} className="shrink-0 text-theme-muted opacity-0 -translate-x-1 transition-all duration-300 group-hover:opacity-100 group-hover:translate-x-0" />
+          </button>
         </div>
       </section>
 
@@ -278,6 +336,17 @@ export default function WorkerDashboard() {
           </div>
         )}
       </section>
+
+      <AbsenceReportModal
+        open={absenceOpen}
+        shifts={upcomingShifts}
+        onClose={() => setAbsenceOpen(false)}
+        onSubmitted={() => {
+          setAbsenceOpen(false);
+          setAbsenceSent(true);
+          setOpenAbsences((n) => n + 1);
+        }}
+      />
     </div>
   );
 }

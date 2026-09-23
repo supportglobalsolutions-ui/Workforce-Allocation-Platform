@@ -266,6 +266,7 @@ export default function SessionHistoryView() {
     status: s.close_status ?? 'pending',
     start_image_url: s.start_image_url,
     end_image_url: s.end_image_url,
+    image_urls: s.image_urls,
     image_start_at: s.image_start_at,
     image_end_at: s.image_end_at,
     evidence_complete: s.evidence_complete,
@@ -372,6 +373,9 @@ export default function SessionHistoryView() {
       <SessionDetailPanel
         session={selectedSession && selectedFull ? {
           ...selectedSession,
+          image_urls: selectedFull.image_urls ?? selectedSession.image_urls,
+          start_image_url: selectedFull.start_image_url ?? selectedSession.start_image_url,
+          end_image_url: selectedFull.end_image_url ?? selectedSession.end_image_url,
           image_start_at: selectedFull.image_start_at,
           image_end_at: selectedFull.image_end_at,
           evidence_complete: selectedFull.evidence_complete,

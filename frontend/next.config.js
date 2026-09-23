@@ -1,6 +1,34 @@
 /** @type {import('next').NextConfig} */
 const path = require('path');
 
+/**
+ * Origins the RDP viewer may fetch/WebSocket to (Guacamole token mint + tunnel).
+ * Backend join tickets return GUACAMOLE_PUBLIC_URL at runtime, so CSP must list
+ * those hosts up front — otherwise connect-src blocks guac.gsdeck.com.
+ */
+function guacamoleCspOrigins() {
+  const candidates = [
+    process.env.NEXT_PUBLIC_GUACAMOLE_URL,
+    process.env.GUACAMOLE_PUBLIC_URL,
+    'https://guac.gsdeck.com',
+    'http://localhost:8080',
+    'http://127.0.0.1:8080',
+  ].filter(Boolean);
+
+  const origins = new Set();
+  for (const raw of candidates) {
+    try {
+      const href = String(raw).includes('://') ? String(raw) : `https://${raw}`;
+      const u = new URL(href);
+      origins.add(`${u.protocol}//${u.host}`);
+      origins.add(u.protocol === 'https:' ? `wss://${u.host}` : `ws://${u.host}`);
+    } catch {
+      /* skip bad env values */
+    }
+  }
+  return [...origins].join(' ');
+}
+
 const nextConfig = {
   reactStrictMode: true,
   poweredByHeader: false,
@@ -23,14 +51,16 @@ const nextConfig = {
     return config;
   },
   async headers() {
+    const guac = guacamoleCspOrigins();
     const csp = [
       "default-src 'self'",
       "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
       "style-src 'self' 'unsafe-inline'",
       "img-src 'self' data: blob: https://*.supabase.co https://images.unsplash.com",
-      "connect-src 'self' https://*.supabase.co wss://*.supabase.co wss: ws:",
+      // Guacamole token + websocket tunnel must be allowed explicitly.
+      `connect-src 'self' https://*.supabase.co wss://*.supabase.co ${guac} wss: ws:`,
       "font-src 'self' data:",
-      "frame-src 'self'",
+      `frame-src 'self' ${guac}`,
       "object-src 'none'",
       "base-uri 'self'",
       "form-action 'self'",

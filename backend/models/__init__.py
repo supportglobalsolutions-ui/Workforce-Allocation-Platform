@@ -11,6 +11,7 @@ from .enums import (  # noqa: F401
     PaymentTierUnitEnum, PayrollPeriodStatusEnum, IndicatorInputEnum, TicketStatusEnum,
     TaskResultStatusEnum, ClientContractStatusEnum, ClientOwnerTypeEnum,
     WalletTxTypeEnum, TrainingProgressEnum,
+    AbsenceReasonEnum, AbsenceStatusEnum,
 )
 from .admin_users  import AdminUser                                                           # noqa: F401
 from .partner      import PartnerEntity, PartnerArrangement, PartnerClientOverride            # noqa: F401
@@ -20,6 +21,7 @@ from .rdp_machine  import RDPResource, RDPResourceWorker                        
 from .contact_message import ContactMessage                                                    # noqa: F401
 from .chat import ChatThread, ChatMessage                                                      # noqa: F401
 from .shift        import Shift                                                               # noqa: F401
+from .absence_report import AbsenceReport, MAX_ABSENCE_ATTACHMENTS                            # noqa: F401
 from .allocation   import Allocation                                                          # noqa: F401
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary                   # noqa: F401
 from .session      import Session                                                             # noqa: F401
