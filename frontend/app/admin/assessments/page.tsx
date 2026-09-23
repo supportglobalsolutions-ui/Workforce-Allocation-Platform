@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import {
-  AlertCircle, BarChart3, CheckCircle, ChevronRight,
+  AlertCircle, BarChart3, CheckCircle,
   Clock, Eye, FileQuestion, Film, Image as ImageIcon, Pencil, Plus,
   Settings, Timer, Trash2, Upload, X,
 } from 'lucide-react';
@@ -56,17 +56,21 @@ function ModalShell({
   title, onClose, children,
 }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (
-    <div className="modal-overlay fixed inset-0 z-50 flex items-center justify-center p-4"
-      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="glass-panel rounded-2xl border border-white/10 w-full max-w-2xl max-h-[90vh] flex flex-col">
+    <div
+      className="modal-overlay fixed inset-0 z-50 flex items-stretch justify-stretch p-0 sm:p-3"
+      onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}
+    >
+      <div className="glass-panel rounded-none sm:rounded-2xl border-0 sm:border border-white/10 w-full h-full max-w-none max-h-none flex flex-col overflow-hidden">
         <div className="flex items-center justify-between px-5 py-4 border-b border-white/[0.06] shrink-0">
-          <h2 className="text-sm font-bold text-white">{title}</h2>
+          <h2 className="text-sm font-bold text-white truncate pr-4">{title}</h2>
           <button type="button" onClick={onClose}
-            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors">
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-theme-muted hover:text-white hover:bg-white/5 transition-colors shrink-0">
             <X size={15} />
           </button>
         </div>
-        {children}
+        <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+          {children}
+        </div>
       </div>
     </div>
   );
@@ -1185,6 +1189,8 @@ export default function AssessmentsPage() {
   const [mcqError,   setMcqError]   = useState('');
   const [showMcqCreate, setShowMcqCreate] = useState(false);
   const [selectedMcq,   setSelectedMcq]   = useState<AssessmentSet | null>(null);
+  const [mcqToDelete, setMcqToDelete] = useState<AssessmentSet | null>(null);
+  const [deletingMcq, setDeletingMcq] = useState(false);
 
   // Task state
   const [tasks,       setTasks]       = useState<TaskAssessment[]>([]);
@@ -1192,6 +1198,8 @@ export default function AssessmentsPage() {
   const [taskError,   setTaskError]   = useState('');
   const [showTaskCreate, setShowTaskCreate] = useState(false);
   const [selectedTask,   setSelectedTask]   = useState<TaskAssessment | null>(null);
+  const [taskToDelete, setTaskToDelete] = useState<TaskAssessment | null>(null);
+  const [deletingTask, setDeletingTask] = useState(false);
 
   async function loadMcq() {
     setMcqLoading(true); setMcqError('');
@@ -1276,19 +1284,38 @@ export default function AssessmentsPage() {
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Attempts</th>
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Pass %</th>
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Status</th>
-                  <th className="px-4 py-3 w-10" />
+                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {mcqSets.map((s) => (
-                  <tr key={s.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => setSelectedMcq(s)}>
+                  <tr key={s.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
                     <td className="px-4 py-3"><p className="text-white font-medium">{s.title}</p></td>
                     <td className="px-4 py-3 text-xs text-theme-muted hidden sm:table-cell">{s.category}</td>
                     <td className="px-4 py-3 text-center text-white font-bold tabular-nums">{s.question_count}</td>
                     <td className="px-4 py-3 text-center text-white tabular-nums hidden md:table-cell">{s.result_count}</td>
                     <td className="px-4 py-3 text-center text-theme-muted text-xs hidden md:table-cell">{Number(s.passing_score_pct).toFixed(0)}% to pass</td>
                     <td className="px-4 py-3 text-center"><StatusBadge active={s.is_active} /></td>
-                    <td className="px-4 py-3 text-right"><ChevronRight size={14} className="text-theme-muted" /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          title="View / edit assessment"
+                          onClick={() => setSelectedMcq(s)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-white border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title={`Delete ${s.title}`}
+                          onClick={() => setMcqToDelete(s)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1313,12 +1340,12 @@ export default function AssessmentsPage() {
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Timer</th>
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Submissions</th>
                   <th className="text-center px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Status</th>
-                  <th className="px-4 py-3 w-10" />
+                  <th className="text-right px-4 py-3 text-[10px] font-bold uppercase tracking-wider text-theme-muted w-28">Actions</th>
                 </tr>
               </thead>
               <tbody>
                 {tasks.map((t) => (
-                  <tr key={t.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors cursor-pointer" onClick={() => setSelectedTask(t)}>
+                  <tr key={t.id} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
                     <td className="px-4 py-3">
                       <p className="text-white font-medium">{t.title}</p>
                       <p className="text-[10px] text-theme-muted mt-0.5 line-clamp-1">{t.description}</p>
@@ -1340,7 +1367,26 @@ export default function AssessmentsPage() {
                     </td>
                     <td className="px-4 py-3 text-center text-white tabular-nums hidden md:table-cell">{t.result_count}</td>
                     <td className="px-4 py-3 text-center"><StatusBadge active={t.is_active} /></td>
-                    <td className="px-4 py-3 text-right"><ChevronRight size={14} className="text-theme-muted" /></td>
+                    <td className="px-4 py-3">
+                      <div className="flex items-center justify-end gap-1.5">
+                        <button
+                          type="button"
+                          title="View / edit task"
+                          onClick={() => setSelectedTask(t)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-white border border-white/10 bg-white/[0.03] hover:bg-white/[0.06] transition-colors"
+                        >
+                          <Eye size={14} />
+                        </button>
+                        <button
+                          type="button"
+                          title={`Delete ${t.title}`}
+                          onClick={() => setTaskToDelete(t)}
+                          className="w-8 h-8 inline-flex items-center justify-center rounded-lg text-theme-muted hover:text-danger border border-white/10 bg-white/[0.03] hover:bg-danger/10 hover:border-danger/30 transition-colors"
+                        >
+                          <Trash2 size={13} />
+                        </button>
+                      </div>
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -1372,6 +1418,78 @@ export default function AssessmentsPage() {
           onUpdated={(u) => { setTasks((p) => p.map((t) => t.id === u.id ? { ...t, ...u } : t)); setSelectedTask((p) => p ? { ...p, ...u } : p); }}
           onDeleted={(id) => { setTasks((p) => p.filter((t) => t.id !== id)); setSelectedTask(null); }} />
       )}
+
+      <ConfirmModal
+        open={!!mcqToDelete}
+        title="Delete this assessment?"
+        body={
+          mcqToDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{mcqToDelete.title}</span>
+              {' '}and its questions. Worker scores stay on the Scores page with this test name.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete assessment"
+        tone="danger"
+        icon={Trash2}
+        busy={deletingMcq}
+        onCancel={() => { if (!deletingMcq) setMcqToDelete(null); }}
+        onConfirm={() => {
+          if (!mcqToDelete) return;
+          void (async () => {
+            setDeletingMcq(true);
+            try {
+              await api.delete(`/assessments/${mcqToDelete.id}`);
+              setMcqSets((p) => p.filter((s) => s.id !== mcqToDelete.id));
+              setSelectedMcq((p) => (p?.id === mcqToDelete.id ? null : p));
+              setMcqToDelete(null);
+            } catch (e: unknown) {
+              setMcqError(e instanceof Error ? e.message : 'Failed to delete assessment.');
+              setMcqToDelete(null);
+            } finally {
+              setDeletingMcq(false);
+            }
+          })();
+        }}
+      />
+
+      <ConfirmModal
+        open={!!taskToDelete}
+        title="Delete this task assessment?"
+        body={
+          taskToDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{taskToDelete.title}</span>
+              , its activities, and media. Worker scores stay on the Scores page with this task name.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete task"
+        tone="danger"
+        icon={Trash2}
+        busy={deletingTask}
+        onCancel={() => { if (!deletingTask) setTaskToDelete(null); }}
+        onConfirm={() => {
+          if (!taskToDelete) return;
+          void (async () => {
+            setDeletingTask(true);
+            try {
+              await api.delete(`/task-assessments/${taskToDelete.id}`);
+              setTasks((p) => p.filter((t) => t.id !== taskToDelete.id));
+              setSelectedTask((p) => (p?.id === taskToDelete.id ? null : p));
+              setTaskToDelete(null);
+            } catch (e: unknown) {
+              setTaskError(e instanceof Error ? e.message : 'Failed to delete task.');
+              setTaskToDelete(null);
+            } finally {
+              setDeletingTask(false);
+            }
+          })();
+        }}
+      />
     </div>
   );
 }
