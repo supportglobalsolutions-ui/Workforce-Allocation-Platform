@@ -278,8 +278,9 @@ def submit_assessment(
     now = datetime.now(timezone.utc)
     try:
         if existing:
-            for ans in list(existing.answers or []):
-                db.delete(ans)
+            # Clear via the relationship so delete-orphan removes rows without
+            # leaving deleted instances attached (breaks retake commits).
+            existing.answers = []
             db.flush()
             existing.score_pct = score_pct
             existing.passed = score_pct >= Decimal(s.passing_score_pct)
