@@ -111,3 +111,13 @@ class WorkerResponse(WorkerBase):
     partner_entity_is_self: Optional[bool] = None
     assigned_rdp_id: Optional[UUID] = None
     assigned_rdp_nickname: Optional[str] = None
+
+
+class WorkerRosterItem(SQLModel):
+    """Minimal worker row for executive dashboards (counts / country / partner)."""
+
+    id: UUID
+    status: WorkerStatusEnum
+    country: str
+    partner_entity_id: Optional[UUID] = None
+    partner_entity_name: Optional[str] = None

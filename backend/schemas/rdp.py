@@ -1,11 +1,25 @@
 from datetime import datetime
+from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, field_validator
 from sqlmodel import SQLModel
 
 from models.enums import RdpStatusEnum
+
+#: Admin may set any Outlier-style budget in this range (hours).
+DAILY_LIMIT_HOURS_MIN = Decimal("0.5")
+DAILY_LIMIT_HOURS_MAX = Decimal("24")
+
+
+def validate_daily_limit_hours(value: Decimal | float | int | str) -> Decimal:
+    hours = Decimal(str(value))
+    if hours < DAILY_LIMIT_HOURS_MIN or hours > DAILY_LIMIT_HOURS_MAX:
+        raise ValueError(
+            f"daily_limit_hours must be between {DAILY_LIMIT_HOURS_MIN} and {DAILY_LIMIT_HOURS_MAX}"
+        )
+    return hours.quantize(Decimal("0.01"))
 
 
 class RDPResourceBase(SQLModel):
@@ -20,6 +34,14 @@ class RDPResourceBase(SQLModel):
     risk_flags:              list[Any]      = []
     monitor_host:            Optional[str]    = None
     monitor_port:            Optional[int]    = 3389
+    daily_limit_hours:       Decimal = Decimal("12")
+
+    @field_validator("daily_limit_hours", mode="before")
+    @classmethod
+    def _limit_hours(cls, v):  # noqa: N805
+        if v is None:
+            return Decimal("12")
+        return validate_daily_limit_hours(v)
 
 
 class GuacamoleCredentials(SQLModel):
@@ -55,8 +77,16 @@ class RDPResourceUpdate(GuacamoleCredentials):
     risk_flags:              Optional[list[Any]]     = None
     monitor_host:            Optional[str]           = None
     monitor_port:            Optional[int]           = None
+    daily_limit_hours:       Optional[Decimal]       = None
     # Replaces the machine's audience wholesale. None leaves it untouched.
     allowed_worker_ids:      Optional[list[UUID]]    = None
+
+    @field_validator("daily_limit_hours", mode="before")
+    @classmethod
+    def _limit_hours(cls, v):  # noqa: N805
+        if v is None:
+            return None
+        return validate_daily_limit_hours(v)
 
 
 class RdpAllowedWorker(SQLModel):
@@ -82,6 +112,15 @@ class RDPResourceResponse(RDPResourceBase):
     # Admin-only: who this machine is offered to on the claim board.
     allowed_worker_ids:   list[UUID] = []
     allowed_workers:      list[RdpAllowedWorker] = []
+    # Outlier-style day budget (reported on-image time in the current EAT window).
+    used_minutes_today:      int = 0
+    remaining_minutes_today: int = 0
+    window_starts_at:        Optional[datetime] = None
+    window_ends_at:          Optional[datetime] = None
+    # Active reservation locking this machine right now (if any).
+    reserved_for_worker_id:   Optional[UUID] = None
+    reserved_for_worker_name: Optional[str] = None
+    reservation_ends_at:      Optional[datetime] = None
 
 
 class RdpForceReleaseBody(SQLModel):
@@ -100,6 +139,26 @@ class RdpProvisionResult(SQLModel):
     created:                 bool = False
     provisioned:             bool = False
     error:                   Optional[str] = None
+
+
+class RdpClaimReservationCreate(SQLModel):
+    worker_id: UUID
+    starts_at: datetime
+    ends_at: datetime
+
+
+class RdpClaimReservationResponse(SQLModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: UUID
+    rdp_resource_id: UUID
+    worker_id: UUID
+    worker_name: Optional[str] = None
+    rdp_nickname: Optional[str] = None
+    starts_at: datetime
+    ends_at: datetime
+    created_at: Optional[datetime] = None
+    cancelled_at: Optional[datetime] = None
 
 
 class RdpJoinTicket(SQLModel):

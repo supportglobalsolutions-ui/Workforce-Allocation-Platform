@@ -1,4 +1,6 @@
 import logging
+from datetime import datetime, timezone
+from decimal import Decimal
 from uuid import UUID
 
 import redis as redis_lib
@@ -13,16 +15,20 @@ from core.redis import get_redis
 from services.rdp_degraded import is_datastore_error
 from models.allocation import Allocation
 from models.enums import RdpStatusEnum
-from models.rdp_machine import RDPResource
+from models.rdp_machine import RDPClaimReservation, RDPResource
 from models.session import Session as WorkSession
+from models.worker import Worker
 from schemas.rdp import (
     CREDENTIAL_FIELDS,
     RDPResourceCreate,
     RDPResourceResponse,
+    RdpClaimReservationCreate,
+    RdpClaimReservationResponse,
     RdpForceReleaseBody,
     RdpJoinTicket,
 )
 from services import rdp_join_ticket
+from services.rdp_day_budget import reservations_overlap
 from services.rdp_gateway import issue_join_ticket
 from services.rdp_engine import (
     claim as engine_claim,
@@ -32,6 +38,7 @@ from services.rdp_engine import (
 from services.rdp_state import (
     list_visible_rdp_resources,
     require_worker_visible_or_staff,
+    worker_may_see_resource,
 )
 from services.rdp_support import (
     close_open_sessions_for_rdp,
@@ -197,6 +204,173 @@ def get_rdp_resource(
         viewer=current_user,
         viewer_worker_id=caller_worker_id,
     )
+
+
+def _reservation_response(db: Session, row: RDPClaimReservation) -> RdpClaimReservationResponse:
+    worker = db.get(Worker, row.worker_id)
+    resource = db.get(RDPResource, row.rdp_resource_id)
+    return RdpClaimReservationResponse(
+        id=row.id,
+        rdp_resource_id=row.rdp_resource_id,
+        worker_id=row.worker_id,
+        worker_name=worker.display_name if worker else None,
+        rdp_nickname=resource.nickname if resource else None,
+        starts_at=row.starts_at,
+        ends_at=row.ends_at,
+        created_at=row.created_at,
+        cancelled_at=row.cancelled_at,
+    )
+
+
+@router.get("/reservations/mine", response_model=list[RdpClaimReservationResponse])
+def list_my_reservations(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    """Upcoming (and active) claim schedules for the current worker."""
+    worker = get_worker_for_user(db, current_user)
+    now = datetime.now(timezone.utc)
+    rows = db.exec(
+        select(RDPClaimReservation)
+        .where(
+            RDPClaimReservation.worker_id == worker.id,
+            RDPClaimReservation.cancelled_at.is_(None),
+            RDPClaimReservation.ends_at > now,
+        )
+        .order_by(RDPClaimReservation.starts_at)
+    ).all()
+    return [_reservation_response(db, r) for r in rows]
+
+
+@router.get("/{rdp_id}/reservations", response_model=list[RdpClaimReservationResponse])
+def list_rdp_reservations(
+    rdp_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    resource = db.get(RDPResource, rdp_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="RDP resource not found")
+    caller_worker_id = viewer_worker_id(db, current_user)
+    require_worker_visible_or_staff(
+        db, resource, viewer=current_user, viewer_worker_id=caller_worker_id
+    )
+    now = datetime.now(timezone.utc)
+    is_staff = current_user.get("role") in STAFF_ROLES
+    q = select(RDPClaimReservation).where(
+        RDPClaimReservation.rdp_resource_id == rdp_id,
+        RDPClaimReservation.cancelled_at.is_(None),
+        RDPClaimReservation.ends_at > now,
+    )
+    if not is_staff and caller_worker_id:
+        q = q.where(RDPClaimReservation.worker_id == caller_worker_id)
+    rows = db.exec(q.order_by(RDPClaimReservation.starts_at)).all()
+    return [_reservation_response(db, r) for r in rows]
+
+
+@router.post(
+    "/{rdp_id}/reservations",
+    response_model=RdpClaimReservationResponse,
+    status_code=status.HTTP_201_CREATED,
+)
+def create_rdp_reservation(
+    rdp_id: UUID,
+    body: RdpClaimReservationCreate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    resource = db.get(RDPResource, rdp_id)
+    if not resource:
+        raise HTTPException(status_code=404, detail="RDP resource not found")
+
+    is_staff = current_user.get("role") in STAFF_ROLES
+    caller_worker = None
+    try:
+        caller_worker = get_worker_for_user(db, current_user)
+    except HTTPException:
+        if not is_staff:
+            raise
+
+    if not is_staff:
+        if not caller_worker or not worker_may_see_resource(db, resource, caller_worker.id):
+            raise HTTPException(status_code=403, detail="You cannot schedule this desktop.")
+        if body.worker_id != caller_worker.id:
+            raise HTTPException(
+                status_code=403,
+                detail="Workers may only create claim schedules for themselves.",
+            )
+    else:
+        target = db.get(Worker, body.worker_id)
+        if not target:
+            raise HTTPException(status_code=404, detail="Worker not found")
+
+    starts = body.starts_at
+    ends = body.ends_at
+    if starts.tzinfo is None:
+        starts = starts.replace(tzinfo=timezone.utc)
+    if ends.tzinfo is None:
+        ends = ends.replace(tzinfo=timezone.utc)
+    if ends <= starts:
+        raise HTTPException(status_code=422, detail="ends_at must be after starts_at.")
+
+    limit_hours = Decimal(str(resource.daily_limit_hours or 12))
+    max_seconds = float(limit_hours) * 3600
+    if (ends - starts).total_seconds() > max_seconds + 1:
+        raise HTTPException(
+            status_code=422,
+            detail=f"Reservation cannot exceed this desktop's daily limit ({limit_hours}h).",
+        )
+
+    if reservations_overlap(db, rdp_id, starts, ends):
+        raise HTTPException(
+            status_code=409,
+            detail="That time overlaps another claim schedule on this desktop.",
+        )
+
+    created_by = None
+    if is_staff:
+        try:
+            admin = get_admin_user(db, current_user)
+            created_by = admin.id
+        except Exception:
+            created_by = None
+
+    row = RDPClaimReservation(
+        rdp_resource_id=rdp_id,
+        worker_id=body.worker_id,
+        starts_at=starts,
+        ends_at=ends,
+        created_by=created_by,
+    )
+    db.add(row)
+    db.commit()
+    db.refresh(row)
+    return _reservation_response(db, row)
+
+
+@router.delete("/{rdp_id}/reservations/{reservation_id}", status_code=status.HTTP_200_OK)
+def cancel_rdp_reservation(
+    rdp_id: UUID,
+    reservation_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_user),
+):
+    row = db.get(RDPClaimReservation, reservation_id)
+    if not row or row.rdp_resource_id != rdp_id:
+        raise HTTPException(status_code=404, detail="Reservation not found")
+    if row.cancelled_at:
+        return {"cancelled": True, "id": str(row.id)}
+
+    is_staff = current_user.get("role") in STAFF_ROLES
+    if not is_staff:
+        worker = get_worker_for_user(db, current_user)
+        if row.worker_id != worker.id:
+            raise HTTPException(status_code=403, detail="You can only cancel your own schedules.")
+
+    row.cancelled_at = datetime.now(timezone.utc)
+    db.add(row)
+    db.commit()
+    return {"cancelled": True, "id": str(row.id)}
 
 
 @router.post("/{rdp_id}/claim", status_code=status.HTTP_201_CREATED)

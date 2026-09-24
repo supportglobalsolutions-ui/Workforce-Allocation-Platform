@@ -10,7 +10,11 @@ from sqlmodel import SQLModel
 class McqAssessmentSetBase(SQLModel):
     title:             str
     category:          str
+    description:       str = ""
+    instructions:      str = ""
     passing_score_pct: Decimal
+    is_timed:          bool = False
+    time_limit_minutes: Optional[int] = None
     is_active:         bool = True
     allow_retakes:     bool = False
     max_attempts:      int = 1
@@ -22,12 +26,16 @@ class McqAssessmentSetCreate(McqAssessmentSetBase):
 
 
 class McqAssessmentSetUpdate(SQLModel):
-    title:             Optional[str]     = None
-    category:          Optional[str]     = None
-    passing_score_pct: Optional[Decimal] = None
-    is_active:         Optional[bool]    = None
-    allow_retakes:     Optional[bool]    = None
-    max_attempts:      Optional[int]     = None
+    title:              Optional[str]     = None
+    category:           Optional[str]     = None
+    description:        Optional[str]     = None
+    instructions:       Optional[str]     = None
+    passing_score_pct:  Optional[Decimal] = None
+    is_timed:           Optional[bool]    = None
+    time_limit_minutes: Optional[int]     = None
+    is_active:          Optional[bool]    = None
+    allow_retakes:      Optional[bool]    = None
+    max_attempts:       Optional[int]     = None
 
 
 class McqAssessmentSetResponse(McqAssessmentSetBase):

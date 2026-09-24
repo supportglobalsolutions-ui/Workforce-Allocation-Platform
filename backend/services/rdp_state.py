@@ -188,10 +188,16 @@ def validate_worker_may_claim(
     worker_id: UUID,
     *,
     shift_id: UUID | None = None,
+    viewer_role: str | None = None,
 ) -> Shift | None:
     """
     Raise HTTPException if worker cannot claim. Returns matched shift when assigned flow.
     """
+    from core.permissions import STAFF_ROLES
+    from services.rdp_day_budget import assert_reservation_allows_claim
+
+    is_staff = viewer_role in STAFF_ROLES
+
     if resource.status == RdpStatusEnum.maintenance:
         # Quarantine / unconfirmed-close hold — never leak status enum names.
         from services.rdp_quarantine import WORKER_CHECKED_MESSAGE
@@ -207,15 +213,22 @@ def validate_worker_may_claim(
             detail=f"RDP resource is not claimable (status={resource.status.value})",
         )
 
+    # Active claim schedule locks the seat to one worker (staff may override).
+    assert_reservation_allows_claim(
+        db, resource, worker_id, is_staff=is_staff
+    )
+
     if resource.status == RdpStatusEnum.online_free:
         return None
 
     if resource.status == RdpStatusEnum.assigned:
-        if resource.assigned_worker_id != worker_id:
+        if resource.assigned_worker_id != worker_id and not is_staff:
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail="This machine is assigned to another worker",
             )
+        if is_staff and resource.assigned_worker_id != worker_id:
+            return None
         shift = find_claimable_shift(
             db, worker_id=worker_id, rdp_id=resource.id, shift_id=shift_id
         )

@@ -17,7 +17,7 @@ from .admin_users  import AdminUser                                             
 from .partner      import PartnerEntity, PartnerArrangement, PartnerClientOverride            # noqa: F401
 from .worker       import Worker                                                              # noqa: F401
 from .client       import Client, ClientPeriodEarning, ClientRevenueAgreement                 # noqa: F401
-from .rdp_machine  import RDPResource, RDPResourceWorker                                      # noqa: F401
+from .rdp_machine  import RDPResource, RDPResourceWorker, RDPClaimReservation                 # noqa: F401
 from .contact_message import ContactMessage                                                    # noqa: F401
 from .chat import ChatThread, ChatMessage                                                      # noqa: F401
 from .shift        import Shift                                                               # noqa: F401

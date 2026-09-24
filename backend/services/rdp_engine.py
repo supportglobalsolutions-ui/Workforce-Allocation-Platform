@@ -309,7 +309,7 @@ def claim(
 
     try:
         approved_shift = validate_worker_may_claim(
-            db, resource, worker.id, shift_id=shift_id
+            db, resource, worker.id, shift_id=shift_id, viewer_role=viewer_role
         )
     except HTTPException as exc:
         return RdpOutcome(
@@ -320,6 +320,19 @@ def claim(
         )
     if approved_shift:
         shift_id = approved_shift.id
+
+    if not staff_claim:
+        from services.rdp_day_budget import assert_worker_may_use_budget
+
+        try:
+            assert_worker_may_use_budget(db, resource, is_staff=False)
+        except HTTPException as exc:
+            return RdpOutcome(
+                ok=False,
+                code="day_budget_exhausted",
+                friendly=str(exc.detail),
+                http_status=exc.status_code,
+            )
 
     preflight = preflight_fn(resource)
     if not preflight["ok"]:

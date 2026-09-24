@@ -60,6 +60,8 @@ interface MachineForm {
   rdp_password: string;
   rdp_domain: string;
   guacamole_connection_id: string;
+  /** Outlier-style reported-time pool (hours). Free-form 0.5–24. */
+  daily_limit_hours: string;
 }
 
 const EMPTY_FORM: MachineForm = {
@@ -74,6 +76,7 @@ const EMPTY_FORM: MachineForm = {
   rdp_password: '',
   rdp_domain: '',
   guacamole_connection_id: '',
+  daily_limit_hours: '12',
 };
 
 function formFromMachine(m: RdpResource): MachineForm {
@@ -89,11 +92,13 @@ function formFromMachine(m: RdpResource): MachineForm {
     rdp_password: '',
     rdp_domain: '',
     guacamole_connection_id: m.guacamole_connection_id ?? '',
+    daily_limit_hours: String(m.daily_limit_hours ?? 12),
   };
 }
 
 function bodyFromForm(form: MachineForm) {
   const monitorPort = form.monitor_port.trim() ? Number(form.monitor_port) : 3389;
+  const limitHours = Number(form.daily_limit_hours);
   return {
     nickname: form.nickname.trim(),
     country: form.country.trim(),
@@ -103,6 +108,7 @@ function bodyFromForm(form: MachineForm) {
     monitor_host: form.monitor_host.trim() || null,
     monitor_port: monitorPort,
     guacamole_connection_id: form.guacamole_connection_id.trim() || null,
+    daily_limit_hours: Number.isFinite(limitHours) ? limitHours : 12,
     ...(form.rdp_username.trim() ? { rdp_username: form.rdp_username.trim() } : {}),
     ...(form.rdp_password ? { rdp_password: form.rdp_password } : {}),
     ...(form.rdp_domain.trim() ? { rdp_domain: form.rdp_domain.trim() } : {}),
@@ -398,6 +404,42 @@ export default function RdpManagementPage() {
           </p>
         </div>
 
+        <div className="block sm:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-theme-muted mb-1.5 block">
+            Daily limit (hours)
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <input
+              type="number"
+              min={0.5}
+              max={24}
+              step={0.5}
+              required
+              value={form.daily_limit_hours}
+              onChange={(e) => setForm((f) => ({ ...f, daily_limit_hours: e.target.value }))}
+              placeholder="12"
+              className={`${fieldClass} max-w-[8rem]`}
+            />
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, daily_limit_hours: '4' }))}
+              className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white hover:border-emerald-accent/40"
+            >
+              4h
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, daily_limit_hours: '12' }))}
+              className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white hover:border-emerald-accent/40"
+            >
+              12h
+            </button>
+          </div>
+          <p className="text-[11px] text-theme-muted mt-1.5">
+            Shared reported on-image pool for this machine. Resets at 10:00 EAT. Use any value 0.5–24 (e.g. short-expiry accounts at 4h).
+          </p>
+        </div>
+
         <EntityPickerModal
           open={clientOpen}
           title="Select client account"
@@ -685,6 +727,12 @@ export default function RdpManagementPage() {
                   {live && (
                     <p className="text-[11px] text-red-300/90 truncate pl-4">
                       Live · {m.assigned_worker_name || 'In use'}
+                    </p>
+                  )}
+                  {!live && (
+                    <p className="text-[11px] text-white/50 truncate pl-4">
+                      Limit {Number(m.daily_limit_hours ?? 12)}h/day ·{' '}
+                      {Math.max(0, Math.round(m.remaining_minutes_today ?? Number(m.daily_limit_hours ?? 12) * 60))}m left
                     </p>
                   )}
                 </div>

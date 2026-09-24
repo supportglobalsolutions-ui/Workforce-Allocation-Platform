@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, String, Text, text
+from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -44,6 +45,56 @@ class RDPResourceWorker(SQLModel, table=True):
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+
+
+class RDPClaimReservation(SQLModel, table=True):
+    """Holds an RDP seat for a worker during a time window (claim schedules)."""
+
+    __tablename__ = "rdp_claim_reservations"
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    rdp_resource_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("rdp_resources.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    worker_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("workers.id", ondelete="CASCADE"),
+            nullable=False,
+            index=True,
+        ),
+    )
+    starts_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    ends_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    created_by: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(
+            PGUUID(as_uuid=True),
+            ForeignKey("admin_users.id", ondelete="SET NULL"),
+            nullable=True,
+        ),
+    )
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+    cancelled_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+
+    rdp_resource: Optional["RDPResource"] = Relationship(back_populates="claim_reservations")
+    worker: Optional["Worker"] = Relationship(
+        sa_relationship_kwargs={"foreign_keys": "[RDPClaimReservation.worker_id]"},
     )
 
 
@@ -115,6 +166,11 @@ class RDPResource(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), nullable=False, server_default=text("now()")),
     )
+    # Outlier-style shared daily pool (hours). Admin-configurable per machine.
+    daily_limit_hours: Decimal = Field(
+        default=Decimal("12"),
+        sa_column=Column(Numeric(4, 2), nullable=False, server_default=text("12")),
+    )
 
     # Relationships
     assigned_worker: Optional["Worker"] = Relationship(
@@ -132,4 +188,7 @@ class RDPResource(SQLModel, table=True):
     sessions: list["Session"] = Relationship(
         back_populates="rdp_resource",
         sa_relationship_kwargs={"foreign_keys": "[Session.rdp_resource_id]"},
+    )
+    claim_reservations: list["RDPClaimReservation"] = Relationship(
+        back_populates="rdp_resource",
     )

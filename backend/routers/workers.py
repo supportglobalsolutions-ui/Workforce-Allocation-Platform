@@ -28,7 +28,13 @@ from models.notification import Notification
 from models.partner import PartnerEntity
 from models.rdp_machine import RDPResource
 from models.worker import Worker
-from schemas.worker import WorkerAdminUpdate, WorkerCreate, WorkerResponse, WorkerUpdate
+from schemas.worker import (
+    WorkerAdminUpdate,
+    WorkerCreate,
+    WorkerResponse,
+    WorkerRosterItem,
+    WorkerUpdate,
+)
 from services.admin_otp import (
     PURPOSE_DELETE_WORKERS,
     bulk_delete_target_id,
@@ -110,8 +116,8 @@ def _enrich_worker(
 ) -> WorkerResponse:
     """Enrich a worker for API responses.
 
-    lite=True skips Supabase auth lookup, public-code allocation, and RDP join —
-    used by dashboards that only need roster counts / country / status.
+    lite=True skips Supabase auth lookup, public-code allocation, admin email,
+    and RDP join — used by dashboards that only need roster counts / country / status.
     """
     if assign_code and not lite:
         try:
@@ -122,38 +128,40 @@ def _enrich_worker(
     resp = WorkerResponse.model_validate(worker)
     updates: dict = {}
     auth_uid: str | None = None
-    admin_row = worker.admin_user
-    if admin_row:
-        updates["email"] = admin_row.email
-        auth_uid = admin_row.auth_user_id
-        if admin_row.is_protected:
-            updates["account_protected"] = True
-    elif worker.admin_user_id:
-        admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
-        if admin:
-            updates["email"] = admin.email
-            auth_uid = admin.auth_user_id
-            if admin.is_protected:
+    if not lite:
+        admin_row = worker.admin_user
+        if admin_row:
+            updates["email"] = admin_row.email
+            auth_uid = admin_row.auth_user_id
+            if admin_row.is_protected:
                 updates["account_protected"] = True
-    if auth_uid and not lite:
-        auth = None
-        if auth_by_uid is not None:
-            auth = auth_by_uid.get(auth_uid)
-        else:
-            try:
-                auth = user_to_dict(get_auth_user(auth_uid))
-            except Exception:
-                auth = None
-        _apply_auth_profile(updates, auth)
+        elif worker.admin_user_id:
+            admin = db.exec(select(AdminUser).where(AdminUser.id == worker.admin_user_id)).first()
+            if admin:
+                updates["email"] = admin.email
+                auth_uid = admin.auth_user_id
+                if admin.is_protected:
+                    updates["account_protected"] = True
+        if auth_uid:
+            auth = None
+            if auth_by_uid is not None:
+                auth = auth_by_uid.get(auth_uid)
+            else:
+                try:
+                    auth = user_to_dict(get_auth_user(auth_uid))
+                except Exception:
+                    auth = None
+            _apply_auth_profile(updates, auth)
     if worker.partner_entity_id:
         entity = worker.partner_entity
-        if entity is None:
+        if entity is None and not lite:
             entity = db.exec(
                 select(PartnerEntity).where(PartnerEntity.id == worker.partner_entity_id)
             ).first()
         if entity:
             updates["partner_entity_name"] = entity.name
-            updates["partner_entity_is_self"] = entity.is_self
+            if not lite:
+                updates["partner_entity_is_self"] = entity.is_self
     if not lite:
         rdp = db.exec(
             select(RDPResource).where(RDPResource.assigned_worker_id == worker.id)
@@ -288,20 +296,55 @@ def list_workers(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    if lite:
+        # Partner name only — skip admin_user selectinload (CEO roster does not need email).
+        workers = db.exec(
+            select(Worker)
+            .options(selectinload(Worker.partner_entity))
+            .order_by(Worker.display_name)
+        ).all()
+        return [
+            _enrich_worker(db, w, assign_code=False, lite=True) for w in workers
+        ]
     workers = db.exec(
         select(Worker)
         .options(selectinload(Worker.admin_user), selectinload(Worker.partner_entity))
         .order_by(Worker.display_name)
     ).all()
-    if lite:
-        return [
-            _enrich_worker(db, w, assign_code=False, lite=True) for w in workers
-        ]
     # One Auth Admin listUsers pass for the whole roster (avoids N get_user_by_id).
     # Do not allocate public codes on list (per-row commits); assign on get/create.
     auth_map = _auth_profile_map()
     return [
         _enrich_worker(db, w, auth_by_uid=auth_map, assign_code=False) for w in workers
+    ]
+
+
+@router.get("/roster", response_model=list[WorkerRosterItem])
+def list_worker_roster(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Lean roster for CEO / ops dashboards — one JOIN, no Auth or RDP enrich."""
+    rows = db.exec(
+        select(
+            Worker.id,
+            Worker.status,
+            Worker.country,
+            Worker.partner_entity_id,
+            PartnerEntity.name,
+        )
+        .outerjoin(PartnerEntity, PartnerEntity.id == Worker.partner_entity_id)
+        .order_by(Worker.display_name)
+    ).all()
+    return [
+        WorkerRosterItem(
+            id=row[0],
+            status=row[1],
+            country=row[2],
+            partner_entity_id=row[3],
+            partner_entity_name=row[4],
+        )
+        for row in rows
     ]
 
 

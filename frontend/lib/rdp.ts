@@ -202,7 +202,42 @@ export interface RdpResource {
   /** Admin-only: workers this machine is offered to on the claim board. */
   allowed_worker_ids?: string[];
   allowed_workers?: { id: string; name: string }[];
+  /** Outlier-style day budget (reported on-image time). */
+  daily_limit_hours?: number;
+  used_minutes_today?: number;
+  remaining_minutes_today?: number;
+  window_starts_at?: string | null;
+  window_ends_at?: string | null;
+  reserved_for_worker_id?: string | null;
+  reserved_for_worker_name?: string | null;
+  reservation_ends_at?: string | null;
 }
+
+export interface RdpClaimReservation {
+  id: string;
+  rdp_resource_id: string;
+  worker_id: string;
+  worker_name?: string | null;
+  rdp_nickname?: string | null;
+  starts_at: string;
+  ends_at: string;
+  created_at?: string | null;
+  cancelled_at?: string | null;
+}
+
+export const listMyRdpReservations = () =>
+  api.get<RdpClaimReservation[]>('/rdp/reservations/mine');
+
+export const listRdpReservations = (rdpId: string) =>
+  api.get<RdpClaimReservation[]>(`/rdp/${rdpId}/reservations`);
+
+export const createRdpReservation = (
+  rdpId: string,
+  body: { worker_id: string; starts_at: string; ends_at: string },
+) => api.post<RdpClaimReservation>(`/rdp/${rdpId}/reservations`, body);
+
+export const cancelRdpReservation = (rdpId: string, reservationId: string) =>
+  api.delete<{ cancelled: boolean }>(`/rdp/${rdpId}/reservations/${reservationId}`);
 
 /** Write-only password (+ optional username/domain) for Guacamole sync. */
 export interface RdpCredentials {
@@ -224,6 +259,7 @@ export interface RdpResourceCreateBody extends RdpCredentials {
   guacamole_connection_id?: string | null;
   health_notes?: string | null;
   allowed_worker_ids?: string[];
+  daily_limit_hours?: number;
 }
 
 export interface RdpResourceUpdateBody extends RdpCredentials {
@@ -237,6 +273,7 @@ export interface RdpResourceUpdateBody extends RdpCredentials {
   health_notes?: string | null;
   /** Replaces the audience wholesale; omit to leave it unchanged. */
   allowed_worker_ids?: string[];
+  daily_limit_hours?: number;
 }
 
 export interface RdpProvisionResult {

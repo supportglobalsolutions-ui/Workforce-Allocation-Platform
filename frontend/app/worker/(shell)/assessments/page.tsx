@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   AlertCircle, ArrowLeft, Award, CheckCircle, ChevronDown, ChevronUp,
   ClipboardList, Clock, ExternalLink, Plus, Send, Trash2, XCircle,
@@ -8,6 +8,7 @@ import {
 
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
+import { FormattedTextView } from '@/components/shared/FormattedTextField';
 import { api } from '@/lib/api';
 import { reportError } from '@/lib/errors';
 
@@ -17,6 +18,10 @@ interface AvailableAssessment {
   id: string;
   title: string;
   category: string | null;
+  description?: string;
+  instructions?: string;
+  is_timed?: boolean;
+  time_limit_minutes?: number | null;
   passing_score_pct: number;
   question_count: number;
   best_score_pct: number | null;
@@ -129,17 +134,30 @@ function McqTakeView({
   const [submitting, setSubmitting] = useState(false);
   const [result, setResult] = useState<SubmitResult | null>(null);
   const [usedAttempts, setUsedAttempts] = useState(assessment.attempts);
+  const [secondsLeft, setSecondsLeft] = useState<number | null>(null);
+  const answersRef = useRef(answers);
+  const submittingRef = useRef(false);
   const cap = assessment.max_attempts ?? 1;
   const retakesAllowed = assessment.retakes_allowed ?? Math.max(0, cap - 1);
   const canRetake = usedAttempts < cap && (assessment.allow_retakes || usedAttempts === 0);
+  const timed = Boolean(assessment.is_timed && assessment.time_limit_minutes);
 
   const inProgress = !result && !loading && questions.length > 0;
+
+  useEffect(() => { answersRef.current = answers; }, [answers]);
 
   function loadQuestions() {
     setLoading(true);
     setError(null);
     api.get<TakeQuestion[]>(`/assessments/${assessment.id}/take`)
-      .then((qs) => setQuestions([...qs].sort((a, b) => a.sort_order - b.sort_order)))
+      .then((qs) => {
+        setQuestions([...qs].sort((a, b) => a.sort_order - b.sort_order));
+        if (timed && assessment.time_limit_minutes) {
+          setSecondsLeft(Math.max(1, assessment.time_limit_minutes) * 60);
+        } else {
+          setSecondsLeft(null);
+        }
+      })
       .catch((e) => {
         setQuestions([]);
         setError(reportError('Load assessment', e));
@@ -162,26 +180,45 @@ function McqTakeView({
 
   const answeredCount = Object.keys(answers).length;
 
+  async function handleSubmit(opts?: { force?: boolean; fromTimer?: boolean }) {
+    if (submittingRef.current) return;
+    if (!opts?.force && answeredCount < questions.length) return;
+    submittingRef.current = true;
+    setSubmitting(true);
+    setError(null);
+    try {
+      const res = await api.post<SubmitResult>(`/assessments/${assessment.id}/submit`, {
+        answers: answersRef.current,
+      });
+      setUsedAttempts((n) => n + 1);
+      setResult(res);
+      setSecondsLeft(null);
+      onFinished();
+    } catch (e) {
+      setError(reportError('Submit assessment', e));
+    } finally {
+      submittingRef.current = false;
+      setSubmitting(false);
+    }
+  }
+
+  // Countdown — auto-submit whatever is answered when time hits zero.
+  useEffect(() => {
+    if (!inProgress || secondsLeft == null) return;
+    if (secondsLeft <= 0) {
+      void handleSubmit({ force: true, fromTimer: true });
+      return;
+    }
+    const id = window.setTimeout(() => setSecondsLeft((s) => (s == null ? s : s - 1)), 1000);
+    return () => window.clearTimeout(id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [inProgress, secondsLeft]);
+
   function handleBack() {
     if (inProgress && answeredCount > 0) {
       if (!window.confirm('Leave this assessment? Your answers will be discarded.')) return;
     }
     onExit();
-  }
-
-  async function handleSubmit() {
-    setSubmitting(true);
-    setError(null);
-    try {
-      const res = await api.post<SubmitResult>(`/assessments/${assessment.id}/submit`, { answers });
-      setUsedAttempts((n) => n + 1);
-      setResult(res);
-      onFinished();
-    } catch (e) {
-      setError(reportError('Submit assessment', e));
-    } finally {
-      setSubmitting(false);
-    }
   }
 
   function handleRetake() {
@@ -193,6 +230,11 @@ function McqTakeView({
     setAnswers({});
     loadQuestions();
   }
+
+  const timerLabel = secondsLeft == null
+    ? null
+    : `${String(Math.floor(secondsLeft / 60)).padStart(2, '0')}:${String(secondsLeft % 60).padStart(2, '0')}`;
+  const timerUrgent = secondsLeft != null && secondsLeft <= 60;
 
   return (
     <div className="max-w-3xl mx-auto space-y-5">
@@ -210,13 +252,26 @@ function McqTakeView({
             <h2 className="text-lg font-bold text-white tracking-tight">{assessment.title}</h2>
             <p className="text-xs text-theme-muted mt-1">
               {assessment.question_count} question{assessment.question_count !== 1 ? 's' : ''} · pass at {assessment.passing_score_pct}%
+              {timed && assessment.time_limit_minutes ? ` · ${assessment.time_limit_minutes} min limit` : ''}
             </p>
           </div>
-          {inProgress && (
-            <span className="text-xs font-bold text-emerald-accent bg-emerald-accent/10 border border-emerald-accent/30 rounded-full px-3 py-1">
-              {answeredCount} / {questions.length} answered
-            </span>
-          )}
+          <div className="flex flex-wrap items-center gap-2">
+            {inProgress && timerLabel && (
+              <span className={`inline-flex items-center gap-1.5 text-xs font-bold rounded-full px-3 py-1 border tabular-nums ${
+                timerUrgent
+                  ? 'text-danger bg-danger/10 border-danger/30'
+                  : 'text-gold-accent bg-gold-accent/10 border-gold-accent/30'
+              }`}>
+                <Clock size={12} />
+                {timerLabel}
+              </span>
+            )}
+            {inProgress && (
+              <span className="text-xs font-bold text-emerald-accent bg-emerald-accent/10 border border-emerald-accent/30 rounded-full px-3 py-1">
+                {answeredCount} / {questions.length} answered
+              </span>
+            )}
+          </div>
         </div>
 
         {inProgress && (
@@ -225,6 +280,23 @@ function McqTakeView({
               className="h-full rounded-full bg-emerald-accent transition-all duration-300"
               style={{ width: `${questions.length ? (answeredCount / questions.length) * 100 : 0}%` }}
             />
+          </div>
+        )}
+
+        {(assessment.description || assessment.instructions) && !result && (
+          <div className="mt-5 space-y-4 border-t border-white/[0.06] pt-4">
+            {assessment.description ? (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gold-accent mb-1.5">Description</p>
+                <FormattedTextView html={assessment.description} />
+              </div>
+            ) : null}
+            {assessment.instructions ? (
+              <div>
+                <p className="text-[10px] font-bold uppercase tracking-widest text-gold-accent mb-1.5">Instructions</p>
+                <FormattedTextView html={assessment.instructions} />
+              </div>
+            ) : null}
           </div>
         )}
       </div>
@@ -306,7 +378,7 @@ function McqTakeView({
           {questions.length > 0 && (
             <button
               type="button"
-              onClick={handleSubmit}
+              onClick={() => void handleSubmit()}
               disabled={submitting || answeredCount < questions.length}
               className="btn-primary w-full flex items-center justify-center gap-2 disabled:opacity-50"
             >
@@ -641,6 +713,11 @@ export default function AssessmentCenterPage() {
                       {a.category && (
                         <span className="inline-flex px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-blue-500/20 text-blue-400 border border-blue-500/30">
                           {a.category}
+                        </span>
+                      )}
+                      {a.is_timed && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-gold-accent/20 text-gold-accent border border-gold-accent/30">
+                          <Clock size={10} /> Timed{a.time_limit_minutes ? ` · ${a.time_limit_minutes} min` : ''}
                         </span>
                       )}
                       {a.passed && (

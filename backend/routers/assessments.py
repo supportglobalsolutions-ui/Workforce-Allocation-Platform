@@ -61,6 +61,10 @@ class AvailableAssessment(BaseModel):
     id: UUID
     title: str
     category: str
+    description: str = ""
+    instructions: str = ""
+    is_timed: bool = False
+    time_limit_minutes: int | None = None
     passing_score_pct: float
     question_count: int
     best_score_pct: float | None = None
@@ -206,6 +210,10 @@ def list_available_assessments(
             id=s.id,
             title=s.title,
             category=s.category,
+            description=s.description or "",
+            instructions=s.instructions or "",
+            is_timed=bool(s.is_timed),
+            time_limit_minutes=s.time_limit_minutes,
             passing_score_pct=float(s.passing_score_pct),
             question_count=len(questions),
             best_score_pct=float(row.score_pct) if row else None,
@@ -376,7 +384,11 @@ def create_assessment(
     s = McqAssessmentSet(
         title=body.title,
         category=body.category,
+        description=body.description or "",
+        instructions=body.instructions or "",
         passing_score_pct=body.passing_score_pct if body.passing_score_pct is not None else 70,
+        is_timed=bool(body.is_timed) if body.is_timed is not None else False,
+        time_limit_minutes=body.time_limit_minutes if body.is_timed else None,
         is_active=False,
         allow_retakes=body.allow_retakes or False,
         max_attempts=body.max_attempts or 1,
@@ -411,6 +423,8 @@ def update_assessment(
     if not s:
         raise HTTPException(status_code=404, detail="Assessment not found.")
     apply_update(s, body)
+    if body.is_timed is False:
+        s.time_limit_minutes = None
     if s.is_active:
         require_marks_total_100(_question_marks(s.id, db), "MCQ")
     db.add(s)

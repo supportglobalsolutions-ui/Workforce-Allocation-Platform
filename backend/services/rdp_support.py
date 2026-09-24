@@ -207,8 +207,31 @@ def rdp_response(
     that they themselves hold it, but not which colleague is on it. Pass
     `viewer` to apply that masking — omitting it returns the full record.
     """
+    from services.rdp_day_budget import active_reservation, budget_for_rdp
+
     resp = RDPResourceResponse.model_validate(resource)
     is_admin = viewer is None or viewer.get("role") in STAFF_ROLES
+
+    budget = budget_for_rdp(db, resource)
+    resp.used_minutes_today = budget.used_minutes
+    resp.remaining_minutes_today = budget.remaining_minutes
+    resp.window_starts_at = budget.window_start
+    resp.window_ends_at = budget.window_end
+
+    reservation = active_reservation(db, resource.id)
+    if reservation:
+        resp.reserved_for_worker_id = reservation.worker_id
+        resp.reservation_ends_at = reservation.ends_at
+        if is_admin or (
+            viewer_worker_id is not None and reservation.worker_id == viewer_worker_id
+        ):
+            holder = db.get(Worker, reservation.worker_id)
+            resp.reserved_for_worker_name = holder.display_name if holder else None
+        else:
+            resp.reserved_for_worker_name = "Reserved"
+            # Hide the other worker's id from peers.
+            if viewer_worker_id is None or reservation.worker_id != viewer_worker_id:
+                resp.reserved_for_worker_id = None
 
     if is_admin:
         resp.rdp_username = resource.rdp_username

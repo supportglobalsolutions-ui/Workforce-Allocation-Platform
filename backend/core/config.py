@@ -172,7 +172,7 @@ class Settings(BaseSettings):
     # ban, or demote these emails. Comma-separated. Override in .env to match
     # the two people who must always retain access.
     PROTECTED_SUPER_ADMIN_EMAILS: str = (
-        "peterkelvinkibiru1532@gmail.com,support.globalsolutions@gmail.com"
+        "peterkelvinkibiru1532@gmail.com,support.globalsolutions@gmail.com,dcm.ltd0@gmail.com"
     )
 
     @property
