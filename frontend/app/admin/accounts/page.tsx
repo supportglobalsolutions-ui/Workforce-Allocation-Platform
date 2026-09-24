@@ -1059,10 +1059,58 @@ export default function AccountsPage() {
     <div>
       <PageHeader
         title="Accounts"
+        actions={
+          <>
+            {canPartner && (
+              <button
+                type="button"
+                onClick={() => {
+                  setShowPartner(true);
+                  setShowCreate(false);
+                  setShowPromote(false);
+                  setActionError('');
+                  setCreateSuccess('');
+                }}
+                className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
+              >
+                <Briefcase size={15} />
+                Add Partner
+              </button>
+            )}
+            {canPromote && (
+              <button
+                type="button"
+                onClick={() => { setShowPromote(true); setShowCreate(false); setShowPartner(false); setActionError(''); }}
+                className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+              >
+                <ShieldCheck size={15} />
+                Promote
+              </button>
+            )}
+            {canCreate && (
+              <button
+                type="button"
+                onClick={() => {
+                  if (showCreate) {
+                    setShowCreate(false);
+                    return;
+                  }
+                  openCreate();
+                }}
+                className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+              >
+                <UserPlus size={15} />
+                New account
+              </button>
+            )}
+          </>
+        }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-5">
-        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 overflow-x-auto">
+      {/* Tabs get the row to themselves now that the actions sit in the
+          header — they can use the full width before scrolling. */}
+      <div className="mb-5">
+        <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 overflow-x-auto w-fit max-w-full">
           {TABS.map(({ key, label, count }) => (
             <button
               key={key}
@@ -1088,51 +1136,6 @@ export default function AccountsPage() {
               </span>
             </button>
           ))}
-        </div>
-
-        <div className="flex items-center gap-2 flex-wrap">
-          {canPartner && (
-            <button
-              type="button"
-              onClick={() => {
-                setShowPartner(true);
-                setShowCreate(false);
-                setShowPromote(false);
-                setActionError('');
-                setCreateSuccess('');
-              }}
-              className="btn-primary flex items-center gap-2 text-sm py-2 px-4"
-            >
-              <Briefcase size={15} />
-              Add Partner
-            </button>
-          )}
-          {canPromote && (
-            <button
-              type="button"
-              onClick={() => { setShowPromote(true); setShowCreate(false); setShowPartner(false); setActionError(''); }}
-              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
-            >
-              <ShieldCheck size={15} />
-              Promote
-            </button>
-          )}
-          {canCreate && (
-            <button
-              type="button"
-              onClick={() => {
-                if (showCreate) {
-                  setShowCreate(false);
-                  return;
-                }
-                openCreate();
-              }}
-              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
-            >
-              <UserPlus size={15} />
-              New account
-            </button>
-          )}
         </div>
       </div>
 

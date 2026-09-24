@@ -19,7 +19,7 @@ import {
 } from 'chart.js';
 import { Bar, Doughnut, Line, PolarArea, Radar } from 'react-chartjs-2';
 import {
-  Activity, AlertTriangle, CalendarX, Clock, DollarSign, Server, TrendingUp, Users,
+  Activity, CalendarX, Clock, DollarSign, Server, TrendingUp, Users,
 } from 'lucide-react';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -84,11 +84,6 @@ interface AuditLog {
   target_type: string;
   target_id: string;
   created_at: string;
-}
-
-interface PayrollLineItem {
-  id: string;
-  exception_flags: unknown[];
 }
 
 interface PayrollPeriod {
@@ -208,7 +203,6 @@ export default function AdminDashboard() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [machines, setMachines] = useState<RDPResource[]>([]);
   const [scores, setScores] = useState<QualityScore[]>([]);
-  const [lineItems, setLineItems] = useState<PayrollLineItem[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
   const [absencesPending, setAbsencesPending] = useState(0);
@@ -218,29 +212,46 @@ export default function AdminDashboard() {
       .then((w) => setUsername(w.username))
       .catch(() => {});
 
-    Promise.all([
-      api.get<Worker[]>('/workers'),
+    let cancelled = false;
+    Promise.allSettled([
+      // lite: dashboard only needs status/country — full /workers Auth enrich often times out
+      api.get<Worker[]>('/workers?lite=true'),
       api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'),
       api.get<RDPResource[]>('/rdp'),
       api.get<QualityScore[]>('/quality/scores'),
-      api.get<PayrollLineItem[]>('/payroll/line-items'),
       api.get<PayrollPeriod[]>('/payroll/periods'),
       api.get<AuditLog[]>('/audit?limit=10'),
       // Additive tile — a failure here must not blank the command center.
       absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
     ])
-      .then(([w, s, m, q, items, per, logs, absences]) => {
-        setWorkers(w);
-        setSessions(s);
-        setMachines(m);
-        setScores(q);
-        setLineItems(items);
-        setPeriods(per);
-        setAuditLogs(logs);
-        setAbsencesPending(absences.pending);
+      .then((results) => {
+        if (cancelled) return;
+        const [w, s, m, q, per, logs, absences] = results;
+        const fails: string[] = [];
+        const take = <T,>(r: PromiseSettledResult<T>, label: string, fallback: T): T => {
+          if (r.status === 'fulfilled') return r.value;
+          fails.push(label);
+          return fallback;
+        };
+        setWorkers(take(w, 'workers', [] as Worker[]));
+        setSessions(take(s, 'sessions', [] as WorkSession[]));
+        setMachines(take(m, 'machines', [] as RDPResource[]));
+        setScores(take(q, 'quality', [] as QualityScore[]));
+        setPeriods(take(per, 'payroll', [] as PayrollPeriod[]));
+        setAuditLogs(take(logs, 'audit', [] as AuditLog[]));
+        setAbsencesPending(
+          take(absences, 'absences', { pending: 0, flagged_shift_ids: [] as string[] }).pending,
+        );
+        // Only blank the page when *everything* failed — otherwise show what we have.
+        if (fails.length === results.length) {
+          setError('We’re having trouble connecting right now. Please wait a moment and try again.');
+        } else {
+          setError(null);
+        }
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load dashboard'))
-      .finally(() => setLoading(false));
+      .finally(() => { if (!cancelled) setLoading(false); });
+
+    return () => { cancelled = true; };
   }, []);
 
   const currentPeriod = useMemo(() => pickCurrentPeriod(periods) ?? null, [periods]);
@@ -248,7 +259,6 @@ export default function AdminDashboard() {
   const workersOnline = workers.filter((w) => w.status === 'active').length;
   const activeSessions = sessions.filter((s) => !s.end_time).length;
   const machinesOnline = machines.filter((m) => !['offline', 'maintenance'].includes(m.status)).length;
-  const exceptions = lineItems.filter((i) => (i.exception_flags?.length ?? 0) > 0).length;
   const payrollPending = periods.filter((p) => ['open', 'calculated', 'approved'].includes(p.status)).length;
 
   const qualityAvg = useMemo(() => {
@@ -274,7 +284,7 @@ export default function AdminDashboard() {
   // ── Chart data ───────────────────────────────────────────────────────────────
 
   const kpiBarData: ChartData<'bar'> = useMemo(() => ({
-    labels: ['Workers', 'Sessions', 'Machines', 'Quality %', 'Exceptions', 'Payroll', 'Hours'],
+    labels: ['Workers', 'Sessions', 'Machines', 'Quality %', 'Payroll', 'Absences', 'Hours'],
     datasets: [{
       label: 'Live snapshot',
       data: [
@@ -282,16 +292,16 @@ export default function AdminDashboard() {
         activeSessions,
         machinesOnline,
         qualityAvg ?? 0,
-        exceptions,
         payrollPending,
+        absencesPending,
         Number(loggedHoursLabel.replace(/,/g, '')) || 0,
       ],
-      backgroundColor: [EMERALD, BLUE, PURPLE, GOLD, RED, '#FBBF24', '#67E8F9'],
+      backgroundColor: [EMERALD, BLUE, PURPLE, GOLD, '#FBBF24', GOLD, '#67E8F9'],
       borderRadius: 8,
       borderSkipped: false,
       maxBarThickness: 36,
     }],
-  }), [workersOnline, activeSessions, machinesOnline, qualityAvg, exceptions, payrollPending, loggedHoursLabel]);
+  }), [workersOnline, activeSessions, machinesOnline, qualityAvg, payrollPending, absencesPending, loggedHoursLabel]);
 
   const workersDoughnut: ChartData<'doughnut'> = useMemo(() => {
     const counts = countBy(workers, (w) => w.status);
@@ -543,7 +553,7 @@ export default function AdminDashboard() {
         </div>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-8 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-7 gap-3">
         <KpiCard compact label="Workers Online" value={workersOnline} icon={Users} />
         <KpiCard compact label="Active Sessions" value={activeSessions} icon={Activity} accent="blue" />
         <KpiCard compact label="Machines Online" value={machinesOnline} icon={Server} />
@@ -554,16 +564,21 @@ export default function AdminDashboard() {
           icon={TrendingUp}
         />
         <KpiCard compact label="Logged Hours" value={loggedHoursLabel} icon={Clock} />
-        <KpiCard compact label="Exceptions" value={exceptions} icon={AlertTriangle} accent="danger" />
-        <KpiCard compact label="Payroll Pending" value={payrollPending} icon={DollarSign} accent="gold" />
-        {/* Straight to the review queue — the tile is the only entry point on
-            this page, since absences deliberately get no sidebar item. */}
+        <KpiCard compact label="Payroll Pending" value={payrollPending} icon={DollarSign} accent="blue" />
+        {/* Gold = theme secondary — only absences entry on this page (no sidebar item). */}
         <Link
           href="/admin/notifications/absences"
           className="rounded-2xl transition-transform hover:scale-[1.02]"
           title="Review absence reports"
         >
-          <KpiCard compact label="Absences" value={absencesPending} icon={CalendarX} accent="gold" />
+          <KpiCard
+            compact
+            label="Absences"
+            value={absencesPending}
+            icon={CalendarX}
+            accent="gold"
+            highlight
+          />
         </Link>
       </div>
 

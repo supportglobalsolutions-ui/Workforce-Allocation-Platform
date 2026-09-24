@@ -1,7 +1,11 @@
 'use client';
 
 import { Suspense, useEffect, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { Eye, Pencil, Plus, Trash2 } from 'lucide-react';
+
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -56,6 +60,9 @@ function TestsBody() {
   const [editId, setEditId] = useState<string | null>(null);
   const [editScore, setEditScore] = useState('');
   const [saving, setSaving] = useState(false);
+  const [toDelete, setToDelete] = useState<Sitting | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     setLoading(true);
@@ -75,16 +82,15 @@ function TestsBody() {
       .finally(() => setLoading(false));
   }, []);
 
+  // Only live assessments — never rehydrate cards from orphan ledger rows
+  // left after an MCQ/task was deleted (source_id survives SET NULL).
   const sittings = useMemo(() => {
-    const map = new Map<string, Sitting>();
-    for (const s of mcq) map.set(`mcq:${s.id}`, { key: `mcq:${s.id}`, title: s.title, kind: 'mcq', source_id: s.id });
-    for (const t of tasks) map.set(`task:${t.id}`, { key: `task:${t.id}`, title: t.title, kind: 'task', source_id: t.id });
-    for (const r of rows) {
-      const key = `${r.kind}:${r.source_id}`;
-      if (!map.has(key)) map.set(key, { key, title: r.title, kind: r.kind, source_id: r.source_id });
-    }
-    return Array.from(map.values()).sort((a, b) => a.title.localeCompare(b.title));
-  }, [rows, mcq, tasks]);
+    const list: Sitting[] = [
+      ...mcq.map((s) => ({ key: `mcq:${s.id}`, title: s.title, kind: 'mcq' as const, source_id: s.id })),
+      ...tasks.map((t) => ({ key: `task:${t.id}`, title: t.title, kind: 'task' as const, source_id: t.id })),
+    ];
+    return list.sort((a, b) => a.title.localeCompare(b.title));
+  }, [mcq, tasks]);
 
   const selected = sittings.find((s) => s.key === sitting) ?? null;
   const results = useMemo(
@@ -112,12 +118,62 @@ function TestsBody() {
     }
   }
 
+  /** Open the sitting's scores here. */
+  function openTest(s: Sitting) {
+    router.push(`/admin/assessments/scores/tests?test=${encodeURIComponent(s.key)}`);
+  }
+
+  /** Hand off to the Assessment Builder, which owns the editing UI. */
+  function editTest(s: Sitting) {
+    const param = s.kind === 'mcq' ? 'mcq' : 'task';
+    router.push(`/admin/assessments?${param}=${encodeURIComponent(s.source_id)}`);
+  }
+
+  async function confirmDelete() {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      const path = toDelete.kind === 'mcq'
+        ? `/assessments/${toDelete.source_id}`
+        : `/task-assessments/${toDelete.source_id}`;
+      await api.delete(path);
+      if (toDelete.kind === 'mcq') {
+        setMcq((prev) => prev.filter((s) => s.id !== toDelete.source_id));
+      } else {
+        setTasks((prev) => prev.filter((t) => t.id !== toDelete.source_id));
+      }
+      if (sitting === toDelete.key) {
+        router.push('/admin/assessments/scores/tests');
+      }
+      setToDelete(null);
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : 'Failed to delete.');
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   return (
     <div>
       <PageHeader
         title="Tests"
+        description="Every live MCQ and task sitting. Create new ones on Assessments."
+        actions={
+          <Link
+            href="/admin/assessments"
+            className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2"
+          >
+            <Plus size={15} />
+            Add assessment
+          </Link>
+        }
       />
       <AdminSectionTabs tabs={QUALITY_TABS} />
+
+      {deleteError && (
+        <p className="mb-3 text-sm text-danger">{deleteError}</p>
+      )}
 
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" /></div>
@@ -128,28 +184,97 @@ function TestsBody() {
           {sittings.map((s) => {
             const n = rows.filter((r) => `${r.kind}:${r.source_id}` === s.key).length;
             return (
-              <button
+              <div
                 key={s.key}
-                type="button"
-                onClick={() => router.push(`/admin/assessments/scores/tests?test=${encodeURIComponent(s.key)}`)}
-                className="glass-panel rounded-2xl border border-white/5 p-4 text-left hover:border-emerald-accent/30"
+                className="glass-panel rounded-2xl border border-white/5 p-4 flex items-start gap-3 hover:border-emerald-accent/30"
               >
-                <p className="text-sm font-semibold text-white">{s.title}</p>
-                <p className="text-xs text-theme-muted mt-1 uppercase">{s.kind} · {n} scored</p>
-              </button>
+                <button
+                  type="button"
+                  onClick={() => openTest(s)}
+                  className="min-w-0 flex-1 text-left"
+                >
+                  <p className="text-sm font-semibold text-white">{s.title}</p>
+                  <p className="text-xs text-theme-muted mt-1 uppercase">{s.kind} · {n} scored</p>
+                </button>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {/* Opens the sitting on this page — scores, who has sat it,
+                      who has not. */}
+                  <button
+                    type="button"
+                    title={`View ${s.title}`}
+                    aria-label={`View ${s.title}`}
+                    onClick={() => openTest(s)}
+                    className="w-9 h-9 inline-flex items-center justify-center rounded-xl border border-white/10 bg-white/[0.03] text-theme-muted hover:text-white hover:bg-white/[0.06] transition-colors"
+                  >
+                    <Eye size={15} />
+                  </button>
+                  {/* Hands off to the Assessment Builder's own editor rather
+                      than growing a second one here. */}
+                  <button
+                    type="button"
+                    title={`Edit ${s.title}`}
+                    aria-label={`Edit ${s.title}`}
+                    onClick={() => editTest(s)}
+                    className="w-9 h-9 inline-flex items-center justify-center rounded-xl border border-emerald-accent/25 bg-emerald-accent/10 text-emerald-accent hover:bg-emerald-accent/20 transition-colors"
+                  >
+                    <Pencil size={15} />
+                  </button>
+                  <button
+                    type="button"
+                    title={`Delete ${s.title}`}
+                    aria-label={`Delete ${s.title}`}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setDeleteError('');
+                      setToDelete(s);
+                    }}
+                    className="w-9 h-9 inline-flex items-center justify-center rounded-xl border border-danger/25 bg-danger/10 text-danger hover:bg-danger/20 transition-colors"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </div>
             );
           })}
-          {sittings.length === 0 && <p className="p-6 text-sm text-theme-muted">No tests yet.</p>}
+          {sittings.length === 0 && (
+            <div className="sm:col-span-2 glass-panel rounded-2xl border border-dashed border-white/10 p-8 text-center space-y-3">
+              <p className="text-sm text-theme-muted">No live tests yet.</p>
+              <Link href="/admin/assessments" className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2">
+                <Plus size={15} />
+                Add assessment
+              </Link>
+            </div>
+          )}
         </div>
       ) : (
         <>
-          <button
-            type="button"
-            onClick={() => router.push('/admin/assessments/scores/tests')}
-            className="text-xs text-theme-muted hover:text-white mb-4"
-          >
-            ← All tests
-          </button>
+          <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+            <button
+              type="button"
+              onClick={() => router.push('/admin/assessments/scores/tests')}
+              className="text-xs text-theme-muted hover:text-white"
+            >
+              ← All tests
+            </button>
+            <div className="flex flex-wrap items-center gap-2">
+              <button
+                type="button"
+                onClick={() => editTest(selected)}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-emerald-accent/25 bg-emerald-accent/10 px-3 py-1.5 text-xs font-semibold text-emerald-accent hover:bg-emerald-accent/20"
+              >
+                <Pencil size={13} />
+                Edit test
+              </button>
+              <button
+                type="button"
+                onClick={() => { setDeleteError(''); setToDelete(selected); }}
+                className="inline-flex items-center gap-1.5 rounded-xl border border-danger/25 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger hover:bg-danger/20"
+              >
+                <Trash2 size={13} />
+                Delete test
+              </button>
+            </div>
+          </div>
           <h2 className="text-lg font-bold text-white mb-1">{selected.title}</h2>
           <p className="text-xs text-theme-muted mb-4">
             {results.length} of {workers.filter((w) => w.status === 'active').length} active workers have a score
@@ -205,6 +330,28 @@ function TestsBody() {
           )}
         </>
       )}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title={toDelete?.kind === 'task' ? 'Delete this task assessment?' : 'Delete this assessment?'}
+        body={
+          toDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{toDelete.title}</span>
+              {toDelete.kind === 'mcq'
+                ? ' and its questions. It will leave this Tests list immediately.'
+                : ', its activities, and media. It will leave this Tests list immediately.'}
+            </>
+          ) : null
+        }
+        confirmLabel="Delete"
+        tone="danger"
+        icon={Trash2}
+        busy={deleting}
+        onCancel={() => { if (!deleting) setToDelete(null); }}
+        onConfirm={() => { void confirmDelete(); }}
+      />
     </div>
   );
 }

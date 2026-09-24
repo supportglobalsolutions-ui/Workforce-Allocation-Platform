@@ -62,10 +62,7 @@ export default function AdminChatView() {
 
   return (
     <div className="w-full flex flex-col min-h-[70vh]">
-      <PageHeader
-        title="Chat with admin"
-        description="Ask for help with a desktop, account, or anything else. An administrator will reply here."
-      />
+      <PageHeader title="Chat with admin" />
 
       {error && <p className="text-danger text-sm mb-3">{error}</p>}
 

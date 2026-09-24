@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import { createPortal } from 'react-dom';
 import {
   AlertCircle, BarChart3, CheckCircle,
@@ -11,6 +12,7 @@ import PageHeader from '@/components/platform/PageHeader';
 import ConfirmModal from '@/components/platform/ConfirmModal';
 import AdminSectionTabs, { QUALITY_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
+import FormattedTextField, { FormattedTextView, briefingPlainText } from '@/components/shared/FormattedTextField';
 import { api } from '@/lib/api';
 import {
   fetchTaskAssessments, fetchTaskResults, uploadTaskMedia, deleteTaskMedia,
@@ -24,6 +26,30 @@ const BLUR_SCRIM =
   'fixed inset-0 bg-transparent backdrop-blur-2xl';
 
 // ── Shared helpers ─────────────────────────────────────────────────────────────
+
+function splitMinutes(total: number | null | undefined): { hours: string; minutes: string } {
+  const n = Math.max(0, Math.round(Number(total) || 0));
+  return { hours: String(Math.floor(n / 60)), minutes: String(n % 60) };
+}
+
+function combineHoursMinutes(hours: string, minutes: string): number {
+  const h = Math.max(0, Math.floor(Number(hours) || 0));
+  const m = Math.max(0, Math.floor(Number(minutes) || 0));
+  return Math.min(24 * 60, h * 60 + m);
+}
+
+/** e.g. "5 hours 2 minutes", "0 hours 5 minutes", "1 hour". */
+function formatDuration(totalMinutes: number | null | undefined): string {
+  if (totalMinutes == null || Number.isNaN(Number(totalMinutes))) return '—';
+  const n = Math.max(0, Math.round(Number(totalMinutes)));
+  const h = Math.floor(n / 60);
+  const m = n % 60;
+  const hPart = `${h} ${h === 1 ? 'hour' : 'hours'}`;
+  const mPart = `${m} ${m === 1 ? 'minute' : 'minutes'}`;
+  if (h === 0) return mPart;
+  if (m === 0) return hPart;
+  return `${hPart} ${mPart}`;
+}
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return <p className="text-[10px] font-bold uppercase tracking-widest text-gold-accent mb-3">{children}</p>;
@@ -44,6 +70,70 @@ function Toggle({ value, onChange }: { value: boolean; onChange: (v: boolean) =>
       className={`relative w-10 h-5 rounded-full transition-colors ${value ? 'bg-emerald-accent/40' : 'bg-white/10'}`}>
       <span className={`absolute top-0.5 w-4 h-4 rounded-full transition-all ${value ? 'right-0.5 bg-emerald-accent' : 'left-0.5 bg-white/30'}`} />
     </button>
+  );
+}
+
+function TimerLimitFields({
+  enabled,
+  onEnabledChange,
+  hours,
+  minutes,
+  onHoursChange,
+  onMinutesChange,
+}: {
+  enabled: boolean;
+  onEnabledChange: (v: boolean) => void;
+  hours: string;
+  minutes: string;
+  onHoursChange: (v: string) => void;
+  onMinutesChange: (v: string) => void;
+}) {
+  return (
+    <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-2">
+          <Timer size={14} className="text-gold-accent" />
+          <span className="text-sm text-white font-medium">Timer</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <Toggle value={enabled} onChange={onEnabledChange} />
+          <span className={`text-xs ${enabled ? 'text-emerald-400' : 'text-theme-muted'}`}>
+            {enabled ? 'On' : 'Off'}
+          </span>
+        </div>
+      </div>
+      {enabled && (
+        <div className="space-y-2">
+          <div className="flex flex-wrap items-end gap-3">
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Hours</span>
+              <input
+                type="number"
+                min={0}
+                max={24}
+                value={hours}
+                onChange={(e) => onHoursChange(e.target.value)}
+                className="input-field w-24"
+              />
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Minutes</span>
+              <input
+                type="number"
+                min={0}
+                max={59}
+                value={minutes}
+                onChange={(e) => onMinutesChange(e.target.value)}
+                className="input-field w-24"
+              />
+            </label>
+          </div>
+          <p className="text-xs text-theme-muted">
+            Limit: {formatDuration(combineHoursMinutes(hours, minutes))}
+          </p>
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -133,6 +223,8 @@ function NestedModal({
 
 interface AssessmentSet {
   id: string; title: string; category: string; passing_score_pct: number;
+  description?: string; instructions?: string;
+  is_timed?: boolean; time_limit_minutes?: number | null;
   is_active: boolean; allow_retakes?: boolean; max_attempts?: number;
   created_by: string; question_count: number; result_count: number; marks_total?: number;
 }
@@ -228,6 +320,14 @@ function McqFormModal({
 }: { existing?: AssessmentSet; onSaved: (s: AssessmentSet) => void; onClose: () => void }) {
   const [title,    setTitle]    = useState(existing?.title ?? '');
   const [category, setCategory] = useState(existing?.category ?? '');
+  const [description, setDescription] = useState(existing?.description ?? '');
+  const [instructions, setInstructions] = useState(existing?.instructions ?? '');
+  const [isTimed, setIsTimed] = useState(existing?.is_timed ?? false);
+  const initialLimit = splitMinutes(existing?.time_limit_minutes ?? 30);
+  const [timerHours, setTimerHours] = useState(initialLimit.hours);
+  const [timerMinutes, setTimerMinutes] = useState(
+    existing?.time_limit_minutes != null ? initialLimit.minutes : '30',
+  );
   const [passing,  setPassing]  = useState(String(existing?.passing_score_pct ?? 70));
   const [active,   setActive]   = useState(existing?.is_active ?? false);
   const [retakes,  setRetakes]  = useState(existing?.allow_retakes ?? false);
@@ -239,8 +339,19 @@ function McqFormModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
+    const totalMinutes = combineHoursMinutes(timerHours, timerMinutes);
+    if (isTimed && totalMinutes < 1) {
+      setError('Set at least 1 minute when the timer is on.');
+      setSaving(false);
+      return;
+    }
     const body = {
-      title, category, passing_score_pct: Number(passing), is_active: active,
+      title, category,
+      description,
+      instructions,
+      is_timed: isTimed,
+      time_limit_minutes: isTimed ? totalMinutes : null,
+      passing_score_pct: Number(passing), is_active: active,
       allow_retakes: retakes,
       max_attempts: retakes ? 1 + Math.max(1, Number(maxAttempts) || 1) : 1,
     };
@@ -253,9 +364,39 @@ function McqFormModal({
 
   return (
     <NestedModal title={existing ? 'Edit Assessment' : 'New MCQ Assessment'} onClose={onClose}>
-      <form onSubmit={handleSubmit} className="p-5 space-y-4">
-        <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Customer Service Basics" className="input-field" /></Field>
-        <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Onboarding, Compliance" className="input-field" /></Field>
+      <form onSubmit={handleSubmit} className="max-h-[calc(92vh-3.5rem)] overflow-y-auto p-5 space-y-4">
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <Field label="Title"><input required value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Customer Service Basics" className="input-field" /></Field>
+          <Field label="Category"><input required value={category} onChange={(e) => setCategory(e.target.value)} placeholder="e.g. Onboarding, Compliance" className="input-field" /></Field>
+        </div>
+
+        <Field label="Description">
+          <FormattedTextField
+            value={description}
+            onChange={setDescription}
+            placeholder="What this exam covers…"
+            minHeightClass="min-h-[5rem]"
+          />
+        </Field>
+
+        <Field label="Instructions">
+          <FormattedTextField
+            value={instructions}
+            onChange={setInstructions}
+            placeholder="How workers should take this exam…"
+            minHeightClass="min-h-[6rem]"
+          />
+        </Field>
+
+        <TimerLimitFields
+          enabled={isTimed}
+          onEnabledChange={setIsTimed}
+          hours={timerHours}
+          minutes={timerMinutes}
+          onHoursChange={setTimerHours}
+          onMinutesChange={setTimerMinutes}
+        />
+
         <Field label="Passing Score (%)"><input type="number" required min={1} max={100} value={passing} onChange={(e) => setPassing(e.target.value)} className="input-field" /></Field>
         <Field label="Status">
           <div className="flex items-center gap-3">
@@ -362,7 +503,10 @@ function McqDetailModal({
         <div className="px-5 pt-2 pb-0 shrink-0">
           <div className="flex items-center gap-2">
             <StatusBadge active={localSet.is_active} />
-            <span className="text-[10px] text-theme-muted">{localSet.category} · Pass at {Number(localSet.passing_score_pct).toFixed(0)}% · {questions.length} questions · {questions.reduce((s, q) => s + Number(q.marks || 0), 0).toFixed(1)}/100 marks</span>
+            <span className="text-[10px] text-theme-muted">
+              {localSet.category} · Pass at {Number(localSet.passing_score_pct).toFixed(0)}% · {questions.length} questions · {questions.reduce((s, q) => s + Number(q.marks || 0), 0).toFixed(1)}/100 marks
+              {localSet.is_timed ? ` · Timed ${formatDuration(localSet.time_limit_minutes)}` : ''}
+            </span>
           </div>
         </div>
         {/* Tabs */}
@@ -476,6 +620,7 @@ function McqDetailModal({
                 {[
                   { label: 'Title', value: localSet.title }, { label: 'Category', value: localSet.category },
                   { label: 'Passing Score', value: `${Number(localSet.passing_score_pct).toFixed(0)}%` },
+                  { label: 'Timer', value: localSet.is_timed ? formatDuration(localSet.time_limit_minutes) : 'Off' },
                   { label: 'Status', value: localSet.is_active ? 'Active' : 'Inactive' },
                   { label: 'Questions', value: questions.length },
                 ].map(({ label, value }) => (
@@ -484,6 +629,22 @@ function McqDetailModal({
                     <span className="text-white font-medium text-xs">{value}</span>
                   </div>
                 ))}
+                {(localSet.description || localSet.instructions) && (
+                  <div className="mt-4 space-y-3">
+                    {localSet.description ? (
+                      <div className="glass-panel rounded-xl p-3 border border-white/[0.06]">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5">Description</p>
+                        <FormattedTextView html={localSet.description} />
+                      </div>
+                    ) : null}
+                    {localSet.instructions ? (
+                      <div className="glass-panel rounded-xl p-3 border border-white/[0.06]">
+                        <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1.5">Instructions</p>
+                        <FormattedTextView html={localSet.instructions} />
+                      </div>
+                    ) : null}
+                  </div>
+                )}
                 <button type="button" onClick={() => setShowEdit(true)}
                   className="mt-4 btn-secondary text-xs py-1.5 px-3 flex items-center gap-1.5"><Settings size={12} /> Edit Assessment</button>
               </div>
@@ -667,7 +828,11 @@ function TaskFormModal({
   const [instructions,setInstructions]= useState(existing?.instructions ?? '');
   const [media,       setMedia]       = useState<TaskMedia[]>(existing?.media_urls ?? []);
   const [isTimed,     setIsTimed]     = useState(existing?.is_timed ?? false);
-  const [timeLimit,   setTimeLimit]   = useState(String(existing?.time_limit_minutes ?? 30));
+  const initialTaskLimit = splitMinutes(existing?.time_limit_minutes ?? 30);
+  const [timerHours, setTimerHours] = useState(initialTaskLimit.hours);
+  const [timerMinutes, setTimerMinutes] = useState(
+    existing?.time_limit_minutes != null ? initialTaskLimit.minutes : '30',
+  );
   const [passing,     setPassing]     = useState(String(existing?.passing_score_pct ?? 70));
   const [active,      setActive]      = useState(existing?.is_active ?? false);
   const [retakes,     setRetakes]     = useState(existing?.allow_retakes ?? false);
@@ -679,11 +844,22 @@ function TaskFormModal({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault(); setSaving(true); setError('');
+    if (!briefingPlainText(description) || !briefingPlainText(instructions)) {
+      setError('Description and instructions are required.');
+      setSaving(false);
+      return;
+    }
+    const totalMinutes = combineHoursMinutes(timerHours, timerMinutes);
+    if (isTimed && totalMinutes < 1) {
+      setError('Set at least 1 minute when the timer is on.');
+      setSaving(false);
+      return;
+    }
     const body = {
       title, category, description, instructions,
       media_urls: media,
       is_timed: isTimed,
-      time_limit_minutes: isTimed ? Number(timeLimit) : null,
+      time_limit_minutes: isTimed ? totalMinutes : null,
       passing_score_pct: Number(passing),
       is_active: active,
       allow_retakes: retakes,
@@ -705,38 +881,35 @@ function TaskFormModal({
         </div>
 
         <Field label="Task Description">
-          <textarea required rows={3} value={description} onChange={(e) => setDescription(e.target.value)}
-            placeholder="What is this task about? What will workers do?" className="input-field resize-none" />
+          <FormattedTextField
+            value={description}
+            onChange={setDescription}
+            placeholder="What is this task about? What will workers do?"
+            minHeightClass="min-h-[5rem]"
+          />
         </Field>
 
         <Field label="Instructions">
-          <textarea required rows={4} value={instructions} onChange={(e) => setInstructions(e.target.value)}
-            placeholder="Step-by-step instructions for the worker…" className="input-field resize-none" />
+          <FormattedTextField
+            value={instructions}
+            onChange={setInstructions}
+            placeholder="Step-by-step instructions for the worker…"
+            minHeightClass="min-h-[6rem]"
+          />
         </Field>
 
         <Field label="Reference Media (Images / Videos)">
           <MediaUploader media={media} onChange={setMedia} />
         </Field>
 
-        <div className="glass-panel rounded-xl p-4 border border-white/[0.06] space-y-3">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Timer size={14} className="text-gold-accent" />
-              <span className="text-sm text-white font-medium">Time Limit</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <Toggle value={isTimed} onChange={setIsTimed} />
-              <span className={`text-xs ${isTimed ? 'text-emerald-400' : 'text-theme-muted'}`}>{isTimed ? 'Enabled' : 'Untimed'}</span>
-            </div>
-          </div>
-          {isTimed && (
-            <div className="flex items-center gap-3">
-              <input type="number" min={1} max={480} value={timeLimit} onChange={(e) => setTimeLimit(e.target.value)}
-                className="input-field w-24" />
-              <span className="text-sm text-theme-muted">minutes</span>
-            </div>
-          )}
-        </div>
+        <TimerLimitFields
+          enabled={isTimed}
+          onEnabledChange={setIsTimed}
+          hours={timerHours}
+          minutes={timerMinutes}
+          onHoursChange={setTimerHours}
+          onMinutesChange={setTimerMinutes}
+        />
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           <Field label="Passing Score (%)">
@@ -922,7 +1095,7 @@ function TaskDetailModal({
             <span className="text-[10px] text-theme-muted">{localA.category}</span>
             {localA.is_timed && (
               <span className="text-[10px] flex items-center gap-1 text-gold-accent">
-                <Clock size={10} /> {localA.time_limit_minutes} min
+                <Clock size={10} /> {formatDuration(localA.time_limit_minutes)}
               </span>
             )}
             <span className="text-[10px] text-theme-muted">Pass at {Number(localA.passing_score_pct).toFixed(0)}%</span>
@@ -1028,11 +1201,11 @@ function TaskDetailModal({
             <div className="p-5 space-y-5">
               <div>
                 <SectionTitle>Description</SectionTitle>
-                <p className="text-sm text-white/90 leading-relaxed">{localA.description}</p>
+                <FormattedTextView html={localA.description || ''} />
               </div>
               <div>
                 <SectionTitle>Instructions</SectionTitle>
-                <p className="text-sm text-white/90 leading-relaxed whitespace-pre-line">{localA.instructions}</p>
+                <FormattedTextView html={localA.instructions || ''} />
               </div>
               {localA.media_urls.length > 0 && (
                 <div>
@@ -1140,7 +1313,7 @@ function TaskDetailModal({
                 {[
                   { label: 'Title',        value: localA.title },
                   { label: 'Category',     value: localA.category },
-                  { label: 'Timed',        value: localA.is_timed ? `Yes — ${localA.time_limit_minutes} min` : 'No' },
+                  { label: 'Timed',        value: localA.is_timed ? `Yes — ${formatDuration(localA.time_limit_minutes)}` : 'No' },
                   { label: 'Passing Score',value: `${Number(localA.passing_score_pct).toFixed(0)}%` },
                   { label: 'Media files',  value: localA.media_urls.length },
                   { label: 'Status',       value: localA.is_active ? 'Active' : 'Inactive' },
@@ -1211,6 +1384,19 @@ function TaskDetailModal({
 type AssessmentKind = 'mcq' | 'task';
 
 export default function AssessmentsPage() {
+  return (
+    <React.Suspense fallback={<div className="flex justify-center py-16"><SpinningDots size="lg" /></div>}>
+      <AssessmentsBody />
+    </React.Suspense>
+  );
+}
+
+function AssessmentsBody() {
+  const searchParams = useSearchParams();
+  /** Deep links from Tests: ?mcq=<id> or ?task=<id> opens that editor. */
+  const openMcqId = searchParams.get('mcq');
+  const openTaskId = searchParams.get('task');
+
   const [kind, setKind] = useState<AssessmentKind>('mcq');
 
   // MCQ state
@@ -1246,6 +1432,27 @@ export default function AssessmentsPage() {
   }
 
   useEffect(() => { loadMcq(); loadTasks(); }, []);
+
+  // Open whatever the link asked for, once its list has arrived. Switching
+  // `kind` too means closing the editor leaves you on the matching tab rather
+  // than on MCQ looking for a task you just edited.
+  useEffect(() => {
+    if (!openMcqId || mcqLoading) return;
+    const found = mcqSets.find((s) => s.id === openMcqId);
+    if (found) {
+      setKind('mcq');
+      setSelectedMcq(found);
+    }
+  }, [openMcqId, mcqLoading, mcqSets]);
+
+  useEffect(() => {
+    if (!openTaskId || taskLoading) return;
+    const found = tasks.find((t) => t.id === openTaskId);
+    if (found) {
+      setKind('task');
+      setSelectedTask(found);
+    }
+  }, [openTaskId, taskLoading, tasks]);
 
   const totalAssessments = mcqSets.length + tasks.length;
   const totalAttempts    = mcqSets.reduce((a, s) => a + s.result_count, 0)
@@ -1392,7 +1599,7 @@ export default function AssessmentsPage() {
                     </td>
                     <td className="px-4 py-3 text-center hidden md:table-cell">
                       {t.is_timed
-                        ? <span className="flex items-center justify-center gap-1 text-xs text-gold-accent"><Timer size={11} /> {t.time_limit_minutes}m</span>
+                        ? <span className="flex items-center justify-center gap-1 text-xs text-gold-accent"><Timer size={11} /> {formatDuration(t.time_limit_minutes)}</span>
                         : <span className="text-theme-muted/40 text-xs">None</span>}
                     </td>
                     <td className="px-4 py-3 text-center text-white tabular-nums hidden md:table-cell">{t.result_count}</td>
