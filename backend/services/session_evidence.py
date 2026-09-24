@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 from decimal import Decimal
-from typing import Optional
+from typing import Optional, Sequence
 from uuid import UUID
 
 from sqlmodel import Session, select
@@ -117,6 +117,60 @@ def clear_evidence_reminders(db: Session, session: WorkSession) -> None:
         db.add(n)
 
 
+def evidence_hours_for_workers(
+    db: Session,
+    worker_ids: Sequence[UUID],
+    start: Optional[datetime] = None,
+    end: Optional[datetime] = None,
+    period_id: Optional[UUID] = None,
+) -> dict[UUID, tuple[Decimal, bool, int]]:
+    """Same sum as :func:`evidence_hours_for_worker`, for a whole roster at once.
+
+    A payroll report asks this for every worker in the period. Done one worker
+    at a time that is one round trip each — on a hosted database it is the
+    difference between a report that renders and one the browser gives up on.
+    Every worker asked for appears in the result, zeroed if they have no
+    qualifying sessions, so callers never have to special-case a miss.
+    """
+    ids = list(dict.fromkeys(worker_ids))
+    totals: dict[UUID, tuple[Decimal, bool, int]] = {
+        wid: (Decimal("0.00"), False, 0) for wid in ids
+    }
+    if not ids:
+        return totals
+
+    stmt = select(WorkSession).where(
+        WorkSession.worker_id.in_(ids),
+        WorkSession.end_time.is_not(None),
+        WorkSession.payroll_approval_state != PayrollSessionEnum.excluded,
+        WorkSession.payroll_approval_state != PayrollSessionEnum.flagged,
+    )
+    if start is not None:
+        stmt = stmt.where(WorkSession.start_time >= start)
+    if end is not None:
+        stmt = stmt.where(WorkSession.start_time <= end)
+
+    minutes: dict[UUID, int] = {wid: 0 for wid in ids}
+    incomplete: dict[UUID, bool] = {wid: False for wid in ids}
+    counts: dict[UUID, int] = {wid: 0 for wid in ids}
+
+    for s in db.exec(stmt).all():
+        if period_id and s.payroll_period_id is not None and s.payroll_period_id != period_id:
+            continue
+        wid = s.worker_id
+        if wid not in minutes:
+            continue
+        if not evidence_complete(s):
+            incomplete[wid] = True
+        minutes[wid] += effective_duration_minutes(s)
+        counts[wid] += 1
+
+    for wid in ids:
+        hours = (Decimal(minutes[wid]) / Decimal(60)).quantize(Decimal("0.01"))
+        totals[wid] = (hours, incomplete[wid], counts[wid])
+    return totals
+
+
 def evidence_hours_for_worker(
     db: Session,
     worker_id: UUID,
@@ -129,27 +183,10 @@ def evidence_hours_for_worker(
 
     Skips flagged/excluded sessions and sessions already billed to another period.
     Returns (hours, any_incomplete_closed_session, session_count).
+
+    Delegates to the batch form so the two can never disagree about which
+    sessions count.
     """
-    stmt = select(WorkSession).where(
-        WorkSession.worker_id == worker_id,
-        WorkSession.end_time.is_not(None),
-        WorkSession.payroll_approval_state != PayrollSessionEnum.excluded,
-        WorkSession.payroll_approval_state != PayrollSessionEnum.flagged,
-    )
-    if start is not None:
-        stmt = stmt.where(WorkSession.start_time >= start)
-    if end is not None:
-        stmt = stmt.where(WorkSession.start_time <= end)
-    sessions = db.exec(stmt).all()
-    total_minutes = 0
-    incomplete = False
-    count = 0
-    for s in sessions:
-        if period_id and s.payroll_period_id is not None and s.payroll_period_id != period_id:
-            continue
-        if not evidence_complete(s):
-            incomplete = True
-        total_minutes += effective_duration_minutes(s)
-        count += 1
-    hours = (Decimal(total_minutes) / Decimal(60)).quantize(Decimal("0.01"))
-    return hours, incomplete, count
+    return evidence_hours_for_workers(
+        db, [worker_id], start, end, period_id=period_id
+    )[worker_id]

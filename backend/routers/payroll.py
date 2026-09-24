@@ -36,11 +36,12 @@ from services.admin_otp import PURPOSE_DELETE_PERIOD, issue_otp, verify_otp
 from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
 from services.fx import currency_for_country
+from services.period_lifecycle import ensure_current_work_month
 from services.period_current import pin_current_period, resolve_current_period
 from services.period_labels import period_label_from_date
 from services.payslip_pdf import generate_period_pdfs, render_payslip_pdf
 from services.security_risk import maybe_notify_threshold, record_event
-from services.session_evidence import evidence_hours_for_worker
+from services.session_evidence import evidence_hours_for_worker, evidence_hours_for_workers
 from .deps import apply_update, get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -52,6 +53,11 @@ def list_payroll_periods(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    # Keep a covering work month pinned so dashboards never look empty mid-month.
+    try:
+        ensure_current_work_month(db)
+    except Exception:
+        logger.exception("ensure_current_work_month failed during period list")
     return db.exec(select(PayrollPeriod).order_by(PayrollPeriod.start_date.desc())).all()
 
 
@@ -413,6 +419,64 @@ def _summary_response(db: Session, summary: PayrollWorkerSummary, period: Payrol
     return resp
 
 
+def _summary_responses(
+    db: Session,
+    summaries: list[PayrollWorkerSummary],
+    period: PayrollPeriod | None = None,
+) -> list[PayrollWorkerSummaryResponse]:
+    """Batched sibling of :func:`_summary_response` for whole-period lists.
+
+    Per row the single form costs a worker fetch, an admin-user fetch and a
+    sessions scan. Multiplied by a roster on a hosted database that is tens of
+    seconds — long enough for the browser to abort and the dashboard to report
+    the report as simply missing. Here each of those becomes one query for the
+    whole list.
+    """
+    if not summaries:
+        return []
+
+    worker_ids = [s.worker_id for s in summaries]
+    workers = {
+        w.id: w for w in db.exec(select(Worker).where(Worker.id.in_(worker_ids))).all()
+    }
+    admin_ids = [w.admin_user_id for w in workers.values() if w.admin_user_id]
+    admins = (
+        {a.id: a for a in db.exec(select(AdminUser).where(AdminUser.id.in_(admin_ids))).all()}
+        if admin_ids
+        else {}
+    )
+
+    evidence: dict = {}
+    if period is not None:
+        evidence = evidence_hours_for_workers(
+            db,
+            worker_ids,
+            datetime.combine(period.start_date, time.min, tzinfo=timezone.utc),
+            datetime.combine(period.end_date, time.max, tzinfo=timezone.utc),
+            period_id=period.id,
+        )
+
+    responses = []
+    for summary in summaries:
+        resp = PayrollWorkerSummaryResponse.model_validate(summary)
+        worker = workers.get(summary.worker_id)
+        if worker:
+            resp.worker_display_name = worker.display_name
+            resp.worker_country = worker.country
+            resp.worker_type = worker.worker_type.value if worker.worker_type else None
+            resp.worker_pay_tier = worker.pay_tier
+            if worker.admin_user_id:
+                admin_user = admins.get(worker.admin_user_id)
+                resp.worker_email = admin_user.email if admin_user else None
+        if summary.worker_id in evidence:
+            hours, incomplete, session_count = evidence[summary.worker_id]
+            resp.suggested_hours = hours
+            resp.evidence_incomplete = incomplete
+            resp.session_count = session_count
+        responses.append(resp)
+    return responses
+
+
 @router.get("/history", response_model=list[PayrollHistoryRow])
 def payroll_history(
     db: Session = Depends(get_db),
@@ -483,7 +547,7 @@ def list_period_summaries(
         select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
     ).all()
     return sorted(
-        (_summary_response(db, s, period) for s in summaries),
+        _summary_responses(db, list(summaries), period),
         key=lambda r: (r.worker_display_name or ""),
     )
 
@@ -603,7 +667,7 @@ def bulk_upsert_summaries(
         db.add(period)
         db.commit()
 
-    return [_summary_response(db, s, period) for s in results]
+    return _summary_responses(db, list(results), period)
 
 
 @router.patch("/summaries/{summary_id}", response_model=PayrollWorkerSummaryResponse)
@@ -847,12 +911,13 @@ def payroll_report(
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
-    rows = [
-        _summary_response(db, s)
-        for s in db.exec(
+    rows = _summary_responses(
+        db,
+        list(db.exec(
             select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
-        ).all()
-    ]
+        ).all()),
+        period,
+    )
     rows.sort(key=lambda r: r.worker_display_name or "")
 
     if format == "csv":

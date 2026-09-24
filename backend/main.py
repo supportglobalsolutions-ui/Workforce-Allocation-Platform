@@ -9,6 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from core.config import settings
+from core.database import warm_connection_pool
 from core.supabase_auth import is_auth_ready
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
@@ -48,6 +49,12 @@ async def lifespan(app: FastAPI):
             "SUPABASE_SECRET_KEY and SUPABASE_JWKS_URL. Every authenticated "
             "request will be rejected until then."
         )
+
+    # Open the first database connection here rather than inside whichever
+    # request happens to arrive first. Against a remote pooler the handshake
+    # costs several seconds; paying it during startup means no user ever waits
+    # for it, and the pool keeps the socket warm from then on.
+    asyncio.create_task(asyncio.to_thread(warm_connection_pool))
 
     background_tasks = [
         asyncio.create_task(run_period_lifecycle_loop()),

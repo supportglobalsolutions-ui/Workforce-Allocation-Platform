@@ -27,10 +27,28 @@ DATABASE_URL, _url_is_pooled = normalize_db_url(settings.DATABASE_URL)
 USE_PGBOUNCER = settings.DATABASE_USE_PGBOUNCER or _url_is_pooled
 
 if USE_PGBOUNCER:
-    # Supabase's :6543 endpoint is pgbouncer in transaction mode; it already
-    # multiplexes connections. A second pool on top of it just holds server
-    # backends open and burns through the project's connection budget.
-    engine_options["poolclass"] = NullPool
+    # Supabase's :6543 endpoint is pgbouncer in transaction mode.
+    #
+    # It was tempting to run NullPool here on the grounds that pgbouncer
+    # already multiplexes connections — but it multiplexes SERVER backends.
+    # It does nothing for the cost a client pays to *open* a connection, and
+    # against a remote pooler that handshake measured ~7s. Every request paid
+    # it before touching a row, which is what made the CEO dashboard's
+    # parallel fan-out trip its 20s budget.
+    #
+    # Transaction mode forbids session state and server-side prepared
+    # statements; it does not forbid reusing the socket. A small bounded pool
+    # is therefore both safe and the whole difference between a 7s request and
+    # a 1s one. Kept deliberately small so several app processes still add up
+    # to far fewer client connections than pgbouncer's limit.
+    engine_options.update(
+        pool_size=5,
+        max_overflow=10,
+        pool_timeout=15,
+        # Below any idle timeout the pooler is likely to enforce, so a stale
+        # socket is replaced by us rather than discovered mid-query.
+        pool_recycle=900,
+    )
 elif settings.is_production:
     engine_options.update(
         pool_size=10,
@@ -93,3 +111,19 @@ def get_db():
     """FastAPI dependency — yields a SQLModel Session and guarantees close."""
     with Session(engine) as session:
         yield session
+
+
+def warm_connection_pool() -> None:
+    """Open one connection at startup so no request pays the handshake.
+
+    Failure is not fatal: if the database is unreachable at boot the app
+    should still start and let individual requests report the problem, which
+    is what the connect retry above is for.
+    """
+    started = time.monotonic()
+    try:
+        with engine.connect() as conn:
+            conn.exec_driver_sql("select 1")
+        logger.info("Database pool warmed in %.2fs", time.monotonic() - started)
+    except Exception as exc:
+        logger.warning("Could not warm the database pool: %s", exc)

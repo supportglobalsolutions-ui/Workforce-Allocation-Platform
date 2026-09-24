@@ -90,3 +90,7 @@ frontend/app/admin/.env
 *.tsbuildinfo
 next-env.d.ts
 WORKING_DATABASE_URL.txt
+
+# Local dev server logs (backend/uvicorn-*.log, frontend/next-*.log)
+*.log
+*.log.err
