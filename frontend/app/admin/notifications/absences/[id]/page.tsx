@@ -14,6 +14,7 @@ import {
   ABSENCE_REASON_LABELS,
   getAbsenceReport,
   reviewAbsenceReport,
+  shiftWindowLabel,
   type AbsenceReport,
 } from '@/lib/absence-reports';
 
@@ -147,9 +148,16 @@ export default function AbsenceReportDetailPage() {
         <div>
           <p className={label}>Linked shift</p>
           {report.shift_id ? (
-            <p className="flex items-center gap-2 text-sm text-white">
+            <p className="flex flex-wrap items-center gap-2 text-sm text-white">
               <Clock size={14} className="text-theme-muted" />
-              <span className="font-mono text-xs">{report.shift_id}</span>
+              {/* The window, not the id — an admin deciding on cover needs to
+                  know which hours are about to go uncovered. */}
+              <span className="font-semibold">
+                {shiftWindowLabel(report) ?? 'Shift no longer on the roster'}
+              </span>
+              {report.shift_status && (
+                <StatusBadge status={report.shift_status} />
+              )}
             </p>
           ) : (
             <p className="text-sm text-theme-muted">

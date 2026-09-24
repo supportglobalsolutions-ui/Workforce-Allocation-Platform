@@ -22,11 +22,37 @@ const SIGNED_URL_TTL_SECONDS = 60 * 60;
 const IMAGE_TYPES = ['image/jpeg', 'image/jpg', 'image/png'];
 const IMAGE_EXT = /\.(jpe?g|png)$/i;
 const PDF_EXT = /\.pdf$/i;
+const DOC_EXT = /\.docx?$/i;
+const DOC_TYPES = [
+  'application/msword',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+];
 
-/** Images get resized before upload, so the source gate can stay tight. */
-const MAX_IMAGE_MB = 2;
-/** PDFs are uploaded byte-for-byte — a sick note scan needs the headroom. */
-const MAX_PDF_MB = 5;
+/**
+ * Extension → MIME, mirroring the bucket's allow-list in
+ * backend/scripts/setup_absence_evidence_bucket.py. Storage refuses anything
+ * outside that list, so the type we send cannot be a guess.
+ */
+const EXT_MIME: Record<string, string> = {
+  pdf: 'application/pdf',
+  doc: 'application/msword',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  jpg: 'image/jpeg',
+  jpeg: 'image/jpeg',
+  png: 'image/png',
+};
+
+/** One ceiling for every accepted type, enforced again by the bucket. */
+export const MAX_ATTACHMENT_MB = 5;
+
+/**
+ * What a phone camera may hand us before compression.
+ *
+ * A photo of a sick note routinely lands at 8-12 MB. Rejecting it for being
+ * over the 5 MB ceiling would be wrong — compression is what the ceiling is
+ * there to be measured after, so images are only checked once resized.
+ */
+const MAX_IMAGE_SOURCE_MB = 25;
 
 const TARGET_MAX_PX = 1400;
 const JPEG_QUALITY = 0.82;
@@ -74,6 +100,25 @@ export interface AbsenceReport {
   updated_at: string;
   worker_name: string | null;
   reviewer_name: string | null;
+  /** The linked shift's own window — an admin needs a time, not a UUID. */
+  shift_start: string | null;
+  shift_end: string | null;
+  shift_status: string | null;
+}
+
+/** "Thu, 24 Sep · 09:00–17:00" for a linked shift, or null when standalone. */
+export function shiftWindowLabel(report: AbsenceReport): string | null {
+  if (!report.shift_start || !report.shift_end) return null;
+  const start = new Date(report.shift_start);
+  const end = new Date(report.shift_end);
+  const day = start.toLocaleDateString(undefined, {
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  });
+  const time = (d: Date) =>
+    d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+  return `${day} · ${time(start)}–${time(end)}`;
 }
 
 export interface AbsenceAttachmentsResult {
@@ -179,17 +224,39 @@ export function isPdf(value: string): boolean {
   return PDF_EXT.test(value.split('?')[0]);
 }
 
+export function isDoc(value: string): boolean {
+  return DOC_EXT.test(value.split('?')[0]);
+}
+
+export function isImageFile(file: File): boolean {
+  return IMAGE_TYPES.includes(file.type) || IMAGE_EXT.test(file.name);
+}
+
+/** True for anything that cannot be re-encoded in the browser. */
+function isDocFile(file: File): boolean {
+  return DOC_TYPES.includes(file.type) || DOC_EXT.test(file.name);
+}
+
+function isPdfFile(file: File): boolean {
+  return file.type === 'application/pdf' || PDF_EXT.test(file.name);
+}
+
 /** Returns an error message, or null when the file is acceptable. */
 export function validateAttachment(file: File): string | null {
-  const isImage = IMAGE_TYPES.includes(file.type) || IMAGE_EXT.test(file.name);
-  const pdf = file.type === 'application/pdf' || PDF_EXT.test(file.name);
+  const image = isImageFile(file);
+  const pdf = isPdfFile(file);
+  const doc = isDocFile(file);
 
-  if (!isImage && !pdf) {
-    return 'Only PDF, JPG, JPEG and PNG files are allowed';
+  if (!image && !pdf && !doc) {
+    return 'Only PDF, Word, JPG, JPEG and PNG files are allowed';
   }
-  const limitMb = pdf ? MAX_PDF_MB : MAX_IMAGE_MB;
+
+  // Images are measured after compression, not before — see uploadAbsenceAttachment.
+  const limitMb = image ? MAX_IMAGE_SOURCE_MB : MAX_ATTACHMENT_MB;
   if (file.size > limitMb * 1024 * 1024) {
-    return `${pdf ? 'PDF' : 'Image'} must be under ${limitMb} MB`;
+    return image
+      ? `Image is too large to compress — keep it under ${MAX_IMAGE_SOURCE_MB} MB`
+      : `${doc ? 'Document' : 'PDF'} must be under ${MAX_ATTACHMENT_MB} MB`;
   }
   return null;
 }
@@ -241,17 +308,42 @@ export async function uploadAbsenceAttachment(
   const validationError = validateAttachment(file);
   if (validationError) throw new Error(validationError);
 
-  const pdf = file.type === 'application/pdf' || PDF_EXT.test(file.name);
-  const body: Blob = pdf ? file : await compressImage(file);
-  const ext = pdf ? 'pdf' : 'jpg';
+  const image = isImageFile(file);
+  // Only images can be re-encoded in the browser. A PDF or Word file goes up
+  // byte-for-byte, which is why their gate is on the source size.
+  const body: Blob = image ? await compressImage(file) : file;
+
+  if (body.size > MAX_ATTACHMENT_MB * 1024 * 1024) {
+    throw new Error(
+      `File is still over ${MAX_ATTACHMENT_MB} MB after compression — please send a smaller one`,
+    );
+  }
+
+  const ext = image ? 'jpg' : (file.name.split('.').pop() || '').toLowerCase();
+  // Derived from the extension, not from `file.type`: browsers hand back an
+  // empty type often enough for .doc, and the bucket's MIME allow-list would
+  // refuse the upload outright rather than guess.
+  const contentType = image ? 'image/jpeg' : (EXT_MIME[ext] ?? file.type);
+  if (!contentType) {
+    throw new Error('Could not determine the file type — please re-save it as a PDF');
+  }
   const stamp = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
   const path = `${reportId}/evidence-${stamp}.${ext}`;
 
   const { error } = await supabase.storage.from(ABSENCE_BUCKET).upload(path, body, {
-    contentType: pdf ? 'application/pdf' : 'image/jpeg',
+    contentType,
     upsert: false,
   });
-  if (error) throw error;
+  if (error) {
+    // The bucket is created by scripts/setup_absence_evidence_bucket.py; say so
+    // rather than surfacing Supabase's bare "Bucket not found".
+    if (/bucket not found/i.test(error.message)) {
+      throw new Error(
+        'Evidence storage is not set up yet. Ask an admin to run the absence-evidence bucket setup.',
+      );
+    }
+    throw error;
+  }
 
   // The server's list is authoritative — it owns the cap.
   return api.post<AbsenceAttachmentsResult>(`/absence-reports/${reportId}/attachments`, {

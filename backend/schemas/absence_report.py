@@ -109,6 +109,11 @@ class AbsenceReportResponse(SQLModel):
     # Joined for display so the admin list does not need a second round trip.
     worker_name:      Optional[str] = None
     reviewer_name:    Optional[str] = None
+    #: The linked shift's own window. Without these the only thing an admin
+    #: could be shown for "which shift?" was the raw UUID.
+    shift_start:      Optional[datetime] = None
+    shift_end:        Optional[datetime] = None
+    shift_status:     Optional[str] = None
 
 
 class AbsenceAttachmentsResponse(SQLModel):

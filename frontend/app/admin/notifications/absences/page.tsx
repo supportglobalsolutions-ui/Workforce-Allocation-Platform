@@ -11,6 +11,7 @@ import { reportError } from '@/lib/errors';
 import {
   ABSENCE_REASON_LABELS,
   listAbsenceReports,
+  shiftWindowLabel,
   type AbsenceReport,
   type AbsenceStatus,
 } from '@/lib/absence-reports';
@@ -95,9 +96,15 @@ export default function AbsenceReportsPage() {
 
         <p className="text-xs text-theme-muted truncate">{r.reason_text}</p>
 
-        <p className="text-xs text-theme-muted font-mono truncate">
-          {when(r.absence_start)}
-        </p>
+        <div className="min-w-0">
+          <p className="text-xs text-theme-muted font-mono truncate">
+            {when(r.absence_start)}
+          </p>
+          {/* Which shift, in hours rather than an id. */}
+          <p className="text-[11px] text-theme-muted/80 truncate">
+            {shiftWindowLabel(r) ?? 'Not tied to a shift'}
+          </p>
+        </div>
 
         <div className="flex items-center justify-between md:justify-end gap-2">
           {attachments.length > 0 ? (

@@ -93,7 +93,9 @@ def validate_session_image_url(url: str) -> str:
 
 
 #: Evidence a worker may attach to an absence report.
-ABSENCE_ATTACHMENT_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png")
+#: Word is here because a sick note or a letter from an employer usually
+#: arrives as one. Anything executable or scriptable stays out.
+ABSENCE_ATTACHMENT_EXTENSIONS = (".pdf", ".jpg", ".jpeg", ".png", ".doc", ".docx")
 
 
 def validate_absence_attachment_path(path: str) -> str:
@@ -119,5 +121,5 @@ def validate_absence_attachment_path(path: str) -> str:
     if not _STORAGE_OBJECT_PATH.match(value):
         raise ValueError("Attachment path is invalid")
     if not value.lower().endswith(ABSENCE_ATTACHMENT_EXTENSIONS):
-        raise ValueError("Attachment must be a PDF, JPG, JPEG or PNG file")
+        raise ValueError("Attachment must be a PDF, Word, JPG, JPEG or PNG file")
     return value

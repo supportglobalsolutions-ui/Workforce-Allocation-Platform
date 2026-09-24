@@ -3,7 +3,7 @@
 import { useEffect, useState } from 'react';
 import { ExternalLink, FileText, ImageIcon } from 'lucide-react';
 
-import { getAbsenceAttachmentUrl, isPdf } from '@/lib/absence-reports';
+import { getAbsenceAttachmentUrl, isDoc, isPdf } from '@/lib/absence-reports';
 
 interface AbsenceAttachmentsProps {
   paths: string[];
@@ -34,7 +34,8 @@ export default function AbsenceAttachments({
     Promise.all(
       paths.map(async (path) => ({
         path,
-        pdf: isPdf(path),
+        // Word cannot render in a browser tab either — both get the file row.
+        pdf: isPdf(path) || isDoc(path),
         url: await getAbsenceAttachmentUrl(path).catch(() => null),
       })),
     ).then((resolved) => {

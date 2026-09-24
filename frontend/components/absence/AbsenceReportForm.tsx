@@ -8,10 +8,13 @@ import { AppError } from '@/lib/errors';
 import {
   ABSENCE_REASONS,
   MAX_ABSENCE_ATTACHMENTS,
+  MAX_ATTACHMENT_MB,
   MIN_REASON_CHARS,
   amendAbsenceReport,
   createAbsenceReport,
   findOpenReportForShift,
+  isDoc,
+  isImageFile,
   isPdf,
   removeAbsenceAttachment,
   uploadAbsenceAttachment,
@@ -417,7 +420,7 @@ export default function AbsenceReportForm({
           ref={fileInput}
           type="file"
           multiple
-          accept=".pdf,.jpg,.jpeg,.png,application/pdf,image/jpeg,image/png"
+          accept=".pdf,.doc,.docx,.jpg,.jpeg,.png,application/pdf,application/msword,application/vnd.openxmlformats-officedocument.wordprocessingml.document,image/jpeg,image/png"
           className="hidden"
           onChange={(e) => addFiles(e.target.files)}
         />
@@ -431,7 +434,8 @@ export default function AbsenceReportForm({
           Attach a file
         </button>
         <p className="mt-1.5 text-[11px] text-theme-muted">
-          PDF, JPG or PNG · up to {MAX_ABSENCE_ATTACHMENTS} files.{' '}
+          PDF, Word, JPG or PNG · up to {MAX_ATTACHMENT_MB} MB each,{' '}
+          {MAX_ABSENCE_ATTACHMENTS} files. Photos are compressed for you.{' '}
           {amending
             ? 'You can keep adding evidence until an admin decides.'
             : 'Send it later if you do not have it yet.'}
@@ -448,7 +452,7 @@ export default function AbsenceReportForm({
                   className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2"
                 >
                   <span className="shrink-0 text-theme-muted">
-                    {isPdf(path) ? <FileText size={15} /> : <ImageIcon size={15} />}
+                    {isPdf(path) || isDoc(path) ? <FileText size={15} /> : <ImageIcon size={15} />}
                   </span>
                   <span className="min-w-0 flex-1 truncate text-xs text-white">{name}</span>
                   <span className="shrink-0 text-[10px] uppercase tracking-wider text-emerald-accent">
@@ -473,15 +477,12 @@ export default function AbsenceReportForm({
                 className="flex items-center gap-3 rounded-lg border border-white/[0.06] bg-white/[0.02] px-3 py-2"
               >
                 <span className="shrink-0 text-theme-muted">
-                  {f.type === 'application/pdf' || /\.pdf$/i.test(f.name) ? (
-                    <FileText size={15} />
-                  ) : (
-                    <ImageIcon size={15} />
-                  )}
+                  {isImageFile(f) ? <ImageIcon size={15} /> : <FileText size={15} />}
                 </span>
                 <span className="min-w-0 flex-1 truncate text-xs text-white">{f.name}</span>
                 <span className="shrink-0 text-[11px] text-theme-muted font-mono">
                   {(f.size / 1024).toFixed(0)} KB
+                  {isImageFile(f) && <span className="ml-1 text-emerald-accent">→ compressed</span>}
                 </span>
                 <button
                   type="button"

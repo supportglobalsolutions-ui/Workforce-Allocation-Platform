@@ -56,6 +56,12 @@ def _to_response(db: Session, report: AbsenceReport) -> AbsenceReportResponse:
     if report.reviewed_by:
         reviewer = db.get(AdminUser, report.reviewed_by)
         payload.reviewer_name = reviewer.display_name if reviewer else None
+    if report.shift_id:
+        shift = db.get(Shift, report.shift_id)
+        if shift:
+            payload.shift_start = shift.scheduled_start
+            payload.shift_end = shift.scheduled_end
+            payload.shift_status = shift.status.value if shift.status else None
     return payload
 
 

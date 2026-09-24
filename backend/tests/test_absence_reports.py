@@ -28,10 +28,13 @@ from schemas.absence_report import (
         "3f1e/evidence-1727000000-ab12cd.jpg",
         "3f1e/evidence-1727000000-ab12cd.jpeg",
         "3f1e/evidence-1727000000-ab12cd.png",
+        "3f1e/evidence-1727000000-ab12cd.doc",
+        "3f1e/evidence-1727000000-ab12cd.docx",
         "3f1e/EVIDENCE.PDF",
+        "3f1e/EVIDENCE.DOCX",
     ],
 )
-def test_accepts_the_four_allowed_file_types(path):
+def test_accepts_every_allowed_file_type(path):
     assert validate_absence_attachment_path(path) == path.strip()
 
 
@@ -41,11 +44,13 @@ def test_accepts_the_four_allowed_file_types(path):
         "report/evidence.exe",
         "report/evidence.svg",
         "report/evidence.pdf.exe",
+        # Word's macro-enabled format is deliberately not on the list.
+        "report/evidence.docm",
         "report/evidence",
     ],
 )
 def test_rejects_other_file_types(path):
-    with pytest.raises(ValueError, match="PDF, JPG, JPEG or PNG"):
+    with pytest.raises(ValueError, match="PDF, Word, JPG, JPEG or PNG"):
         validate_absence_attachment_path(path)
 
 

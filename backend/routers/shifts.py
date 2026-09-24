@@ -67,6 +67,20 @@ def create_shift(
                 detail="Workers may only submit shifts for themselves",
             )
 
+    # Submitting the same availability twice is a double-click, not a second
+    # shift. Returning the existing row keeps the submit loop working while
+    # making the operation idempotent — the roster stays clean either way.
+    existing = db.exec(
+        select(Shift).where(
+            Shift.worker_id == body.worker_id,
+            Shift.scheduled_start == body.scheduled_start,
+            Shift.scheduled_end == body.scheduled_end,
+            Shift.status != ShiftStatusEnum.cancelled,
+        )
+    ).first()
+    if existing:
+        return existing
+
     shift = Shift(**body.model_dump())
     db.add(shift)
     db.commit()
