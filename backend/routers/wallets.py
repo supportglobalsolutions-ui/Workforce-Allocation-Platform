@@ -12,7 +12,7 @@ from models.payroll import PayrollPeriod
 from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
 from schemas.wallet import WalletAdjustmentCreate, WalletResponse, WalletTransactionResponse
-from services.fx import currency_for_country
+from services.fx import currency_for_country, currency_symbol
 from .deps import get_admin_user, get_worker_for_user
 
 router = APIRouter()
@@ -35,6 +35,29 @@ def _get_or_create_wallet(db: Session, worker: Worker) -> Wallet:
         db.commit()
         db.refresh(wallet)
     return wallet
+
+
+def _wallet_response(db: Session, worker: Worker, wallet: Wallet) -> WalletResponse:
+    """Answer with what the account says, not only what the row remembers.
+
+    The stored ``currency`` is the ledger's: once money has moved through a
+    wallet it cannot be relabelled. But a worker whose profile says Kenya must
+    never be shown USD just because the row predates that profile, so the
+    currency their country maps to travels with every response and the display
+    follows it.
+    """
+    local = currency_for_country(db, worker.country)
+    display = wallet.currency if Decimal(wallet.balance) != 0 else local
+    payload = WalletResponse.model_validate(wallet)
+    return payload.model_copy(
+        update={
+            "currency": display,
+            "worker_display_name": worker.display_name,
+            "worker_country": worker.country,
+            "local_currency": local,
+            "currency_symbol": currency_symbol(db, display),
+        }
+    )
 
 
 def _tx_responses(db: Session, transactions: list[WalletTransaction]) -> list[WalletTransactionResponse]:
@@ -62,7 +85,7 @@ def get_my_wallet(
     current_user: dict = Depends(require_user),
 ):
     worker = get_worker_for_user(db, current_user)
-    return _get_or_create_wallet(db, worker)
+    return _wallet_response(db, worker, _get_or_create_wallet(db, worker))
 
 
 @router.get("/me/transactions", response_model=list[WalletTransactionResponse])
@@ -89,14 +112,12 @@ def list_wallets(
 ):
     workers = db.exec(select(Worker).order_by(Worker.display_name)).all()
     wallets = {w.worker_id: w for w in db.exec(select(Wallet)).all()}
-    result = []
-    for worker in workers:
-        wallet = wallets.get(worker.id) or _get_or_create_wallet(db, worker)
-        resp = WalletResponse.model_validate(wallet)
-        resp.worker_display_name = worker.display_name
-        resp.worker_country = worker.country
-        result.append(resp)
-    return result
+    # Same derivation as the worker's own view, so an admin reading the roster
+    # never sees a different currency from the one the worker is shown.
+    return [
+        _wallet_response(db, worker, wallets.get(worker.id) or _get_or_create_wallet(db, worker))
+        for worker in workers
+    ]
 
 
 @router.get("/{worker_id}/transactions", response_model=list[WalletTransactionResponse])

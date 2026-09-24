@@ -135,6 +135,38 @@ def currency_for_country(db: Session, country_name: str | None) -> str:
     return DEFAULT_COUNTRY_CURRENCIES.get(name.lower(), "USD")
 
 
+#: Shown to workers in place of the ISO code — "KSh 1,200" reads as money to
+#: the person being paid in a way "KES 1,200" does not. The admin catalog's
+#: ``symbol`` column overrides this when an operator fills it in.
+CURRENCY_SYMBOLS = {
+    "KES": "KSh",
+    "UGX": "USh",
+    "TZS": "TSh",
+    "RWF": "FRw",
+    "ETB": "Br",
+    "NGN": "₦",
+    "GHS": "₵",
+    "ZAR": "R",
+    "ZMW": "ZK",
+    "MWK": "MK",
+    "INR": "₹",
+    "GBP": "£",
+    "USD": "$",
+    "EUR": "€",
+}
+
+
+def currency_symbol(db: Session, code: str | None) -> Optional[str]:
+    """The display symbol for a currency code, catalog first."""
+    clean = (code or "").strip().upper()
+    if not clean:
+        return None
+    row = db.exec(select(Currency).where(func.upper(Currency.code) == clean)).first()
+    if row and (row.symbol or "").strip():
+        return row.symbol.strip()
+    return CURRENCY_SYMBOLS.get(clean)
+
+
 def ensure_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:
     """Resolve an FX rate, refreshing the needed quote from the FX API once.
 

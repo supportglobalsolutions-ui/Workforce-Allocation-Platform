@@ -18,6 +18,13 @@ class WalletResponse(SQLModel):
     updated_at: datetime
     worker_display_name: Optional[str] = None
     worker_country:      Optional[str] = None
+    #: Currency derived from the worker's country right now, rather than the
+    #: code stored on the row. A wallet created before the profile carried a
+    #: country keeps USD on the ledger; the worker should still be shown what
+    #: their account says they are paid in.
+    local_currency:      Optional[str] = None
+    #: Display symbol for ``currency`` — "KSh" rather than "KES".
+    currency_symbol:     Optional[str] = None
 
 
 class WalletAdjustmentCreate(SQLModel):

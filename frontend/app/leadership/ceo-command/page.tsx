@@ -74,7 +74,12 @@ interface Client {
   owner_name?: string | null;
 }
 interface PayrollPeriod extends PeriodLike { label: string; currency?: string }
-interface PayrollReportRow { final_net?: number | string }
+interface PayrollReportRow {
+  final_net?: number | string;
+  local_currency?: string | null;
+  /** final_net converted to the period's base currency at the stored FX rate. */
+  base_equivalent?: number | string | null;
+}
 
 const EMERALD = '#3FC7A0';
 const GOLD = '#D4AF37';
@@ -175,6 +180,7 @@ export default function CeoCommandCenterPage() {
   const [partners, setPartners] = useState<Partner[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
+  const [periodsLoadFailed, setPeriodsLoadFailed] = useState(false);
   const [periodId, setPeriodId] = useState('');
   const [payoutTotal, setPayoutTotal] = useState<number | null>(null);
   const [payoutLoading, setPayoutLoading] = useState(false);
@@ -182,61 +188,89 @@ export default function CeoCommandCenterPage() {
 
   useEffect(() => {
     let cancelled = false;
-    const LOAD_BUDGET_MS = 20_000;
-    const failSafe = window.setTimeout(() => {
-      if (cancelled) return;
-      setErrors((prev) => (
-        prev.includes('Dashboard load timed out. Showing what we have.')
-          ? prev
-          : [...prev, 'Dashboard load timed out. Showing what we have.']
-      ));
-      setLoading(false);
-    }, LOAD_BUDGET_MS);
+    const softFails: string[] = [];
+    const noteFail = (label: string, reason: unknown) => {
+      softFails.push(`${label}: ${reason instanceof Error ? reason.message : 'failed'}`);
+    };
 
     (async () => {
       setLoading(true);
-      try {
-        const results = await Promise.allSettled([
-          // lite skips Auth enrich / public-code / RDP joins — full /workers often timed out → Active=0
-          withTimeout(api.get<Worker[]>('/workers?lite=true'), 20_000, 'workers'),
-          withTimeout(api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'), 15_000, 'sessions'),
-          withTimeout(api.get<RdpResource[]>('/rdp'), 15_000, 'RDP'),
-          withTimeout(api.get<LeaderboardEntry[]>('/leaderboard?limit=5'), 15_000, 'leaderboard'),
-          withTimeout(api.get<QualityScore[]>('/quality/scores'), 15_000, 'quality'),
-          withTimeout(api.get<Partner[]>('/partners'), 15_000, 'partners'),
-          withTimeout(api.get<PayrollPeriod[]>('/payroll/periods'), 15_000, 'payroll periods'),
-          withTimeout(api.get<Client[]>('/clients'), 15_000, 'clients'),
-        ]);
-        if (cancelled) return;
+      setErrors([]);
+      setPeriodsLoadFailed(false);
 
-        const fails: string[] = [];
-        const labels = ['workers', 'sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'payroll periods', 'clients'];
-        results.forEach((r, i) => {
-          if (r.status === 'rejected') {
-            fails.push(`${labels[i]}: ${r.reason instanceof Error ? r.reason.message : 'failed'}`);
-          }
-        });
+      // Wave 1 — periods + workers only. Firing sessions/RDP in parallel used to
+      // starve the API worker so /payroll/periods timed out and the page looked
+      // like there was no September month.
+      const [workersResult, periodsResult] = await Promise.allSettled([
+        withTimeout(
+          (async () => {
+            try {
+              return await api.get<Worker[]>('/workers/roster');
+            } catch {
+              return api.get<Worker[]>('/workers?lite=true');
+            }
+          })(),
+          45_000,
+          'workers',
+        ),
+        withTimeout(api.get<PayrollPeriod[]>('/payroll/periods'), 45_000, 'payroll periods'),
+      ]);
+      if (cancelled) return;
 
-        const periodRows = settled(results[6], [] as PayrollPeriod[]);
-        setWorkers(settled(results[0], [] as Worker[]));
-        setSessions(settled(results[1], [] as WorkSession[]));
-        setMachines(settled(results[2], [] as RdpResource[]));
-        setLeaderboard(settled(results[3], [] as LeaderboardEntry[]));
-        setScores(settled(results[4], [] as QualityScore[]));
-        setPartners(settled(results[5], [] as Partner[]));
-        setPeriods(periodRows);
-        setClients(settled(results[7], [] as Client[]));
-        setPeriodId(pickCurrentPeriod(periodRows)?.id ?? periodRows[0]?.id ?? '');
-        setErrors(fails);
-      } finally {
-        window.clearTimeout(failSafe);
-        if (!cancelled) setLoading(false);
+      if (workersResult.status === 'fulfilled') {
+        setWorkers(workersResult.value);
+      } else {
+        setWorkers([]);
+        noteFail('workers', workersResult.reason);
       }
+
+      let periodRows: PayrollPeriod[] = [];
+      if (periodsResult.status === 'fulfilled') {
+        periodRows = periodsResult.value;
+        setPeriods(periodRows);
+        setPeriodId(pickCurrentPeriod(periodRows)?.id ?? periodRows[0]?.id ?? '');
+        setPeriodsLoadFailed(false);
+      } else {
+        setPeriods([]);
+        setPeriodId('');
+        setPeriodsLoadFailed(true);
+        noteFail('payroll periods', periodsResult.reason);
+      }
+
+      setErrors([...softFails]);
+      setLoading(false);
+
+      // Wave 2 — heavy / secondary feeds. Soft-fail; do not blank the month scope.
+      const secondary = await Promise.allSettled([
+        withTimeout(
+          api.get<WorkSession[]>('/sessions?limit=1000&include_images=false'),
+          60_000,
+          'sessions',
+        ),
+        withTimeout(api.get<RdpResource[]>('/rdp'), 60_000, 'RDP'),
+        withTimeout(api.get<LeaderboardEntry[]>('/leaderboard?limit=5'), 45_000, 'leaderboard'),
+        withTimeout(api.get<QualityScore[]>('/quality/scores'), 45_000, 'quality'),
+        withTimeout(api.get<Partner[]>('/partners'), 45_000, 'partners'),
+        withTimeout(api.get<Client[]>('/clients'), 45_000, 'clients'),
+      ]);
+      if (cancelled) return;
+
+      const labels = ['sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'clients'] as const;
+      secondary.forEach((r, i) => {
+        if (r.status === 'rejected') noteFail(labels[i], r.reason);
+      });
+
+      setSessions(settled(secondary[0], [] as WorkSession[]));
+      setMachines(settled(secondary[1], [] as RdpResource[]));
+      setLeaderboard(settled(secondary[2], [] as LeaderboardEntry[]));
+      setScores(settled(secondary[3], [] as QualityScore[]));
+      setPartners(settled(secondary[4], [] as Partner[]));
+      setClients(settled(secondary[5], [] as Client[]));
+      setErrors([...softFails]);
     })();
 
     return () => {
       cancelled = true;
-      window.clearTimeout(failSafe);
     };
   }, []);
 
@@ -257,7 +291,19 @@ export default function CeoCommandCenterPage() {
         if (results.every((result) => result.status === 'rejected')) {
           throw new Error('No payroll reports loaded.');
         }
-        setPayoutTotal(reports.reduce((sum, row) => sum + Number(row.final_net ?? 0), 0));
+        // Sum the base-currency equivalent, never final_net: that is in each
+        // worker's OWN currency, so adding a Ugandan row to a Kenyan one and
+        // labelling the result USD reported 150,000 UGX (~$40) as "USD 150K".
+        // base_equivalent is the same amount at the period's stored FX rate;
+        // a row that already is the base currency carries no rate, so it falls
+        // back to its own net.
+        setPayoutTotal(
+          reports.reduce((sum, row) => {
+            const base = row.base_equivalent;
+            const value = base != null && base !== '' ? Number(base) : Number(row.final_net ?? 0);
+            return sum + (Number.isFinite(value) ? value : 0);
+          }, 0),
+        );
         setErrors((prev) => prev.filter((e) => !e.startsWith('payroll report:')));
       })
       .catch((e) => {
@@ -460,7 +506,11 @@ export default function CeoCommandCenterPage() {
 
       {periods.length === 0 && (
         <div className="mb-4">
-          <DataAlert>No working months yet. Create one on Finance to scope hours and payouts.</DataAlert>
+          <DataAlert tone={periodsLoadFailed ? 'warning' : undefined}>
+            {periodsLoadFailed
+              ? 'Working months could not be loaded. Refresh the page — September should appear if it exists on Finance.'
+              : 'No working months yet. Create one on Finance to scope hours and payouts.'}
+          </DataAlert>
         </div>
       )}
 

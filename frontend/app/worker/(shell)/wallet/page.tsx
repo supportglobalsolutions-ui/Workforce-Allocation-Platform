@@ -27,6 +27,11 @@ interface Wallet {
   balance: number;
   currency: string;
   updated_at: string;
+  /** "KSh" for KES — what the worker recognises as their money. */
+  currency_symbol: string | null;
+  /** Currency the worker's country maps to, whatever the ledger row says. */
+  local_currency: string | null;
+  worker_country: string | null;
 }
 
 interface WalletTransaction {
@@ -348,7 +353,12 @@ export default function WalletPage() {
             </div>
             <p className="mt-3 text-4xl md:text-5xl font-black text-theme-heading tracking-tight tabular-nums">
               {fmt(wallet?.balance)}
-              <span className="ml-2 text-lg font-bold text-emerald-accent">{wallet?.currency}</span>
+              <span
+                className="ml-2 text-lg font-bold text-emerald-accent"
+                title={wallet?.currency}
+              >
+                {wallet?.currency_symbol ?? wallet?.currency}
+              </span>
             </p>
             {wallet?.updated_at && (
               <p className="text-xs text-theme-muted mt-2">
