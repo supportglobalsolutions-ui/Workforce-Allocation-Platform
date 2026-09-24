@@ -12,8 +12,6 @@ import EntityPickerModal from '@/components/admin/EntityPickerModal';
 import {
   createRdpResource,
   forceReleaseRdp,
-  getGuacamoleHealth,
-  GuacamoleHealth,
   listQuarantinedRdp,
   listRdpResources,
   lockRdp,
@@ -163,12 +161,8 @@ export default function RdpManagementPage() {
 
   const [deleteMachine, setDeleteMachine] = useState<RdpResource | null>(null);
 
-  const [health, setHealth] = useState<GuacamoleHealth | null>(null);
   const [holds, setHolds] = useState<QuarantinedLists>({ quarantined: [], held: [] });
   const [repairingId, setRepairingId] = useState<string | null>(null);
-
-  const reloadHealth = () =>
-    getGuacamoleHealth().then(setHealth).catch(() => setHealth(null));
 
   const reloadHolds = () =>
     listQuarantinedRdp()
@@ -183,7 +177,7 @@ export default function RdpManagementPage() {
       setEditing((current) =>
         current ? rows.find((row) => row.id === current.id) ?? null : null,
       );
-      await Promise.all([reloadHealth(), reloadHolds()]);
+      await reloadHolds();
     } catch (e) {
       setError(reportError('Load RDP machines', e));
     }
@@ -571,6 +565,12 @@ export default function RdpManagementPage() {
             <Link href="/admin/rdp/claim" className="btn-secondary text-sm py-2 px-4">
               Claim board
             </Link>
+            <Link
+              href="/admin/shifts"
+              className="inline-flex items-center rounded-lg border border-gold-accent/40 bg-gold-accent/15 px-4 py-2 text-sm font-semibold text-gold-accent transition-colors hover:bg-gold-accent/25"
+            >
+              RDP Schedule Management
+            </Link>
             <button
               type="button"
               onClick={() => {
@@ -593,27 +593,6 @@ export default function RdpManagementPage() {
         ]}
       />
       {error && <p className="text-danger text-sm mb-4">{error}</p>}
-
-      {health && (
-        <div
-          className={`glass-panel p-3 mb-4 text-xs flex flex-wrap items-center gap-x-4 gap-y-1 ${
-            health.authenticated ? 'text-brand-on-surface-variant' : 'text-danger'
-          }`}
-        >
-          <span>
-            Guacamole:{' '}
-            <strong className={health.authenticated ? 'text-success' : 'text-danger'}>
-              {health.authenticated ? 'connected' : 'unreachable'}
-            </strong>{' '}
-            ({health.guacamole_url})
-          </span>
-          <span>{health.connection_count} connection(s) registered</span>
-          <span>
-            {health.machines.filter((m) => m.ready).length}/{health.machines.length} machines ready
-          </span>
-          {health.error && <span className="text-danger">{health.error}</span>}
-        </div>
-      )}
 
       {holdRows.length > 0 && (
         <div className="glass-panel p-4 mb-4 space-y-3 border border-amber-500/30">
