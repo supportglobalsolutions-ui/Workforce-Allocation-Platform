@@ -180,7 +180,19 @@ export default function WorkingPeriodCalendarPage() {
   const canPrev = index > 0;
   const canNext = index >= 0 && index < periods.length - 1;
 
-  const todayYmd = useMemo(() => dateToYmd(new Date()), []);
+  const [todayYmd, setTodayYmd] = useState('');
+  useEffect(() => {
+    const updateToday = () => {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Africa/Nairobi', year: 'numeric', month: '2-digit', day: '2-digit',
+      }).formatToParts(new Date());
+      const part = (type: string) => parts.find((value) => value.type === type)?.value;
+      setTodayYmd(`${part('year')}-${part('month')}-${part('day')}`);
+    };
+    updateToday();
+    const timer = window.setInterval(updateToday, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
   const startYmd = selected ? isoDay(selected.start_date) : '';
   const endYmd = selected ? isoDay(selected.end_date) : '';
   const monthBlocks = useMemo(
@@ -368,7 +380,7 @@ export default function WorkingPeriodCalendarPage() {
               <div>
                 <h3 className="text-sm font-bold text-theme-heading">Calendar</h3>
                 <p className="text-[11px] text-theme-muted mt-0.5">
-                  In-range days highlighted · start and end marked
+                  In-range days highlighted · start, today and end marked
                 </p>
               </div>
               <div className="flex items-center gap-3 text-[10px] font-semibold uppercase tracking-wider text-theme-muted">
@@ -423,19 +435,19 @@ export default function WorkingPeriodCalendarPage() {
                               isStart ? 'ring-2 ring-emerald-accent bg-emerald-accent/25 border-emerald-accent/50' : '',
                               isEnd && !isStart ? 'ring-2 ring-gold-accent bg-gold-accent/20 border-gold-accent/40' : '',
                               isStart && isEnd ? 'ring-2 ring-emerald-accent' : '',
-                              isToday && !isStart && !isEnd ? 'outline outline-1 outline-white/30' : '',
+                              isToday ? 'ring-2 ring-blue-500 bg-blue-500/15 border-blue-500/50' : '',
                             ].join(' ')}
                           >
-                            <span className={`font-semibold tabular-nums ${isStart || isEnd ? 'text-sm sm:text-base' : ''}`}>
+                            <span className={`font-semibold tabular-nums ${isStart || isEnd || isToday ? 'text-sm sm:text-base' : ''}`}>
                               {day}
                             </span>
-                            {(isStart || isEnd) && (
+                            {(isStart || isEnd || isToday) && (
                               <span
-                                className={`absolute bottom-0.5 sm:bottom-1 left-1/2 -translate-x-1/2 text-[7px] sm:text-[8px] font-black uppercase tracking-wide leading-none hidden sm:inline ${
-                                  isStart ? 'text-emerald-accent' : 'text-gold-accent'
+                                className={`absolute bottom-0.5 sm:bottom-1 left-1/2 -translate-x-1/2 text-[7px] sm:text-[8px] font-black uppercase tracking-wide leading-none whitespace-nowrap ${
+                                  isToday ? 'text-blue-500' : isStart ? 'text-emerald-accent' : 'text-gold-accent'
                                 }`}
                               >
-                                {isStart && isEnd ? 'Start · End' : isStart ? 'Start' : 'End'}
+                                {[isStart && 'Start', isToday && 'Today', isEnd && 'End'].filter(Boolean).join(' · ')}
                               </span>
                             )}
                           </div>

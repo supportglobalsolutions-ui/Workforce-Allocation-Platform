@@ -339,7 +339,6 @@ export default function CeoCommandCenterPage() {
     [sessions],
   );
   const workersLoaded = workers.length > 0 || !errors.some((e) => e.startsWith('workers:'));
-  const rosterTotal = workers.length;
   const activeWorkers = useMemo(
     () => workers.filter((w) => w.status === 'active').length,
     [workers],
@@ -543,8 +542,7 @@ export default function CeoCommandCenterPage() {
               <KpiCard compact label="Payouts" value={payoutLabel} icon={DollarSign} accent="gold" />
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-              <MiniStat label="On roster" value={workersLoaded ? rosterTotal : 0} />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
               <MiniStat label="With sessions" value={census.workers} />
               <MiniStat label="RDPs used" value={census.rdps} />
               <MiniStat label="Partners" value={census.partners} />
@@ -665,8 +663,7 @@ export default function CeoCommandCenterPage() {
               </div>
             </div>
 
-            <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-              <MiniStat label="On roster" value={workersLoaded ? rosterTotal : 0} />
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 sm:gap-3">
               <MiniStat label="With sessions" value={census.workers} />
               <MiniStat label="RDPs used" value={census.rdps} />
               <MiniStat label="Partners" value={census.partners} />
