@@ -47,23 +47,20 @@ export default function SessionInactivity({ uid, onExpire }: { uid: string; onEx
     };
   }, [uid, onExpire]);
 
+  if (remaining > IDLE_WARNING_MS || remaining <= 0) return null;
+
   const seconds = Math.ceil(remaining / 1000);
   const countdown = `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, '0')}`;
-  const warning = remaining <= IDLE_WARNING_MS;
   return (
-    <div className={`fixed bottom-4 right-4 z-[100] rounded-xl border px-4 py-3 shadow-lg bg-brand-card ${warning ? 'border-gold-accent' : 'border-theme'}`}>
-      <p className="text-xs text-theme-muted">Inactivity sign-out <span className="font-mono font-bold text-theme-heading">{countdown}</span></p>
-      {warning && (
-        <div role="alert" className="mt-2">
-          <p className="text-sm text-theme-heading">Your session is about to expire.</p>
-          <button type="button" className="mt-2 text-sm font-bold text-emerald-accent" onClick={() => {
-            const last = readActivity(uid) ?? 0;
-            if (remainingIdleMs(last) === 0) { onExpire(); return; }
-            writeActivity(uid);
-            setRemaining(IDLE_TIMEOUT_MS);
-          }}>Stay signed in</button>
-        </div>
-      )}
+    <div className="fixed bottom-4 right-4 z-[100] max-w-sm rounded-xl border border-gold-accent px-4 py-3 shadow-lg bg-brand-card" role="alert">
+      <p className="text-sm font-semibold text-theme-heading">Are you still there?</p>
+      <p className="mt-1 text-sm text-theme-muted">You’ll be signed out in <span className="font-mono font-bold text-theme-heading">{countdown}</span> due to inactivity. Continue using the app or choose Stay signed in.</p>
+      <button type="button" className="mt-2 text-sm font-bold text-emerald-accent" onClick={() => {
+        const last = readActivity(uid) ?? 0;
+        if (remainingIdleMs(last) === 0) { onExpire(); return; }
+        writeActivity(uid);
+        setRemaining(IDLE_TIMEOUT_MS);
+      }}>Stay signed in</button>
     </div>
   );
 }
