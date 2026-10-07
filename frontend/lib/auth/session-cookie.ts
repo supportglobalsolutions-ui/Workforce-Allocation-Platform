@@ -151,5 +151,12 @@ export async function syncSessionCookie(idToken: string): Promise<Role> {
 }
 
 export async function clearSessionCookie(): Promise<void> {
+  // Let any pending cookie refresh finish before deleting the cookie.
+  if (cookieSyncInFlight) {
+    await cookieSyncInFlight.catch(() => { /* deletion still proceeds */ });
+  }
+  lastSyncedToken = null;
+  lastSyncedRole = null;
+  lastSyncedAt = 0;
   await fetch('/api/auth/session', { method: 'DELETE' });
 }

@@ -14,6 +14,7 @@ import {
   ROLE_ALLOWED_PORTALS,
 } from './config';
 import { api } from '@/lib/api';
+import { isIdleExpired } from './inactivity';
 
 export async function sessionFromUser(user: User, accessToken?: string): Promise<AuthSession> {
   const appMeta = user.app_metadata || {};
@@ -178,7 +179,7 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
 export async function signOut(): Promise<void> {
   // Clear local UI auth first; server MFA clear is best-effort in background.
   void clearLoginOtp();
-  void clearSessionCookie();
+  const cookieClear = clearSessionCookie().catch(() => { /* retry on the next signed-out event */ });
   try {
     await supabase.auth.signOut({ scope: 'local' });
   } catch {
@@ -188,6 +189,7 @@ export async function signOut(): Promise<void> {
       /* ignore */
     }
   }
+  await cookieClear;
 }
 
 async function settleAuthSession(
@@ -203,11 +205,25 @@ async function settleAuthSession(
     callback(null);
     return;
   }
+  if (isIdleExpired(session.user.id)) {
+    callback(null);
+    // Avoid calling another Supabase auth method inside its auth-event lock.
+    window.setTimeout(() => { void signOut(); }, 0);
+    return;
+  }
   try {
     // Abort-bounded in syncSessionCookie (5s) — never hang the UI gate.
     await syncSessionCookie(session.access_token);
+    if (options?.skipIf?.() || isIdleExpired(session.user.id)) {
+      callback(null);
+      return;
+    }
     callback(await sessionFromUser(session.user, session.access_token));
   } catch (err) {
+    if (options?.skipIf?.() || isIdleExpired(session.user.id)) {
+      callback(null);
+      return;
+    }
     if (err instanceof LoginOtpRequiredError) {
       callback(null);
       return;

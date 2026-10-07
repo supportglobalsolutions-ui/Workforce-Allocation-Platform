@@ -42,6 +42,12 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   const submitLock = useRef(false);
 
   useEffect(() => {
+    if (new URLSearchParams(window.location.search).get('reason') === 'inactive') {
+      setError('Your session expired after 15 minutes without activity. Please sign in again.');
+    }
+  }, []);
+
+  useEffect(() => {
     if (!session || pendingLoginOtp) return;
     setAuthRoleCookie(session.authRole);
     if (onSuccess) {

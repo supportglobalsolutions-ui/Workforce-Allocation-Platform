@@ -23,6 +23,8 @@ import { PortalRole } from '@/lib/navigation/config';
 import { endRdpConnection, getMyActiveRdp } from '@/lib/rdp';
 import { logoutBlockReason } from '@/lib/logout-guard';
 import { supabase } from '@/lib/supabase';
+import SessionInactivity from '@/components/auth/SessionInactivity';
+import { isIdleExpired, writeActivity } from './inactivity';
 
 export type LoginResult =
   | { ok: true; otpRequired?: false }
@@ -110,6 +112,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [pendingLoginOtp, setPendingLoginOtp] = useState<PendingLoginOtp | null>(null);
   const otpPendingRef = useRef(false);
   const pendingAccessTokenRef = useRef<string | null>(null);
+  const expiringRef = useRef(false);
 
   useEffect(() => {
     // Auth bootstrap must never leave public pages with a dead Sign In button.
@@ -122,11 +125,11 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const unsub = subscribeAuthState(
       (s) => {
         window.clearTimeout(failSafe);
-        setSession(s);
+        setSession(s && !expiringRef.current && !isIdleExpired(s.uid) ? s : null);
         setIsLoading(false);
         if (!s) clearAuthRoleCookie();
       },
-      { skipIf: () => otpPendingRef.current },
+      { skipIf: () => otpPendingRef.current || expiringRef.current },
     );
     return () => {
       window.clearTimeout(failSafe);
@@ -137,6 +140,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const finishLogin = useCallback(
     async (accessToken: string) => {
       const s = await completeLoginSession(accessToken);
+      writeActivity(s.uid);
+      expiringRef.current = false;
       otpPendingRef.current = false;
       pendingAccessTokenRef.current = null;
       setPendingLoginOtp(null);
@@ -338,6 +343,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     void signOut().finally(() => setIsLoggingOut(false));
   }, [router, isLoggingOut]);
 
+  const expireSession = useCallback(() => {
+    if (expiringRef.current) return;
+    expiringRef.current = true;
+    otpPendingRef.current = false;
+    pendingAccessTokenRef.current = null;
+    setPendingLoginOtp(null);
+    clearAuthRoleCookie();
+    setSession(null);
+    // Inactivity expiry must not wait for logout guards or confirmation dialogs.
+    void signOut();
+    router.replace('/login?reason=inactive');
+  }, [router]);
+
   const canAccess = useCallback(
     (portal: PortalRole) => canAccessPortal(session, portal),
     [session],
@@ -359,6 +377,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }}
     >
       {children}
+      {session && !pendingLoginOtp && <SessionInactivity uid={session.uid} onExpire={expireSession} />}
     </AuthContext.Provider>
   );
 }
