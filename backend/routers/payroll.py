@@ -303,6 +303,27 @@ def update_payroll_line_item(
 
 # ── Engine actions ─────────────────────────────────────────────────────────────
 
+@router.post("/periods/{period_id}/test-reset")
+def test_reset_period_finance(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """TEST MODE ONLY: zero this month's payslips, wallet credits, shared costs and client earnings."""
+    from core.sandbox import current_schema, in_test_mode
+    from services.test_finance_reset import reset_period_finance
+
+    # Refuse anything that isn't running inside the test copy — real finance is never reset here.
+    if not in_test_mode() or current_schema() is None:
+        raise HTTPException(status_code=403, detail="Resetting finance is only available in test mode.")
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    result = reset_period_finance(db, period)
+    db.commit()
+    return result
+
+
 @router.post("/periods/{period_id}/calculate")
 def calculate_period(
     period_id: UUID,

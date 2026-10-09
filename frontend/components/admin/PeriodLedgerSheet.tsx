@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import RecordedCurrencyNote from '@/components/currency/RecordedCurrencyNote';
 import { AlertCircle, Check, Save } from 'lucide-react';
 import SpinningDots from '@/components/shared/SpinningDots';
 import NoTierModal, { hasPayTier, NO_TIER_ERROR_PREFIX } from '@/components/payroll/NoTierModal';
@@ -314,6 +315,8 @@ export default function PeriodLedgerSheet({
   };
 
   return (
+    <>
+    <RecordedCurrencyNote />
     <div className="glass-panel flex flex-col h-[calc(100vh-17rem)] min-h-[28rem] overflow-hidden">
       {/* Toolbar */}
       <div className="px-4 sm:px-5 py-2.5 border-b border-white/[0.06] shrink-0 bg-white/[0.02]">
@@ -479,5 +482,6 @@ export default function PeriodLedgerSheet({
       )}
       {noTier && <NoTierModal names={noTier} onClose={() => setNoTier(null)} />}
     </div>
+    </>
   );
 }

@@ -13,6 +13,7 @@ interface Period {
 }
 
 interface Props {
+  iconOnly?: boolean;
   period: Period;
   onRenamed: (label: string) => void;
   onDeleted?: () => void;
@@ -26,7 +27,7 @@ interface Props {
  * more than one period, so admins can rename them. Names stay globally unique;
  * the API answers 409 on a clash.
  */
-export default function PeriodNameEditor({ period, onRenamed, onDeleted, trailing, size = 'sm' }: Props) {
+export default function PeriodNameEditor({ period, onRenamed, onDeleted, trailing, size = 'sm', iconOnly = false }: Props) {
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(period.label);
   const [saving, setSaving] = useState(false);
@@ -54,11 +55,11 @@ export default function PeriodNameEditor({ period, onRenamed, onDeleted, trailin
   if (!editing) {
     return (
       <span className={`inline-flex items-center gap-2 ${large ? 'flex-wrap justify-center' : ''}`}>
-        <span className={large
+        {!iconOnly && <span className={large
           ? 'text-xl sm:text-2xl font-black text-theme-heading tracking-tight'
           : 'text-xs font-bold text-theme-heading'}>
           {period.label}
-        </span>
+        </span>}
         <button
           type="button"
           onClick={() => { setLabel(period.label); setError(null); setEditing(true); }}

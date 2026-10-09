@@ -30,6 +30,7 @@ export function enableTestMode(uid: string): void {
 
 export function disableTestMode(): void {
   try { window.localStorage.removeItem(KEY); } catch { /* ignore */ }
+  setActingWorker(null);
   window.dispatchEvent(new Event(EVENT));
 }
 
@@ -47,8 +48,39 @@ export function useTestModeUid(): string | null {
   return useSyncExternalStore(subscribeTestMode, readTestModeUid, () => null);
 }
 
-export function testModeHeaders(): Record<string, string> {
-  return isTestModeOn() ? { 'X-Test-Mode': '1' } : {};
+const ACT_AS_KEY = 'gs-test-act-as';
+
+/** Test mode only: the test worker an admin views the worker portal as. */
+export type ActingWorker = { id: string; name: string };
+
+export function readActingWorker(): ActingWorker | null {
+  if (typeof window === 'undefined') return null;
+  try {
+    const raw = window.localStorage.getItem(ACT_AS_KEY);
+    return raw ? (JSON.parse(raw) as ActingWorker) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function setActingWorker(worker: ActingWorker | null): void {
+  try {
+    if (worker) window.localStorage.setItem(ACT_AS_KEY, JSON.stringify(worker));
+    else window.localStorage.removeItem(ACT_AS_KEY);
+  } catch { /* header just won't persist */ }
+}
+
+/**
+ * X-Test-Mode while test mode is on, plus X-Act-As-Worker on worker-portal
+ * pages when an admin picked a test worker. The backend honours act-as only
+ * inside the test copy.
+ */
+export function testModeHeaders(opts: { actAs?: boolean } = {}): Record<string, string> {
+  if (!isTestModeOn()) return {};
+  const headers: Record<string, string> = { 'X-Test-Mode': '1' };
+  const acting = opts.actAs === false ? null : readActingWorker();
+  if (acting && window.location.pathname.startsWith('/worker')) headers['X-Act-As-Worker'] = acting.id;
+  return headers;
 }
 
 /** Leaving test mode (or losing the workspace) must show real data again, so reload. */

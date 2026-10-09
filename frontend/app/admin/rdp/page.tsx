@@ -394,6 +394,9 @@ export default function RdpManagementPage() {
             </span>
             <ChevronDown size={16} className="shrink-0 text-theme-muted" />
           </button>
+          <p className="text-[11px] text-theme-muted mt-1.5">
+            The client this desktop works for. A client can have any number of desktops.
+          </p>
         </div>
 
         <div className="block sm:col-span-2">
@@ -761,6 +764,12 @@ export default function RdpManagementPage() {
                       Live · {m.assigned_worker_name || 'In use'}
                     </p>
                   )}
+                  <p
+                    className={`text-[11px] truncate pl-4 ${m.client_name ? 'text-white/70' : 'text-amber-300/80'}`}
+                    title={m.client_name ? `Client: ${m.client_name}` : 'Not linked to a client. Edit to link one.'}
+                  >
+                    {m.client_name ?? 'No client linked'}
+                  </p>
                   {!live && (
                     <p className="text-[11px] text-white/50 truncate pl-4">
                       {windowLabel(m.daily_window_start_hour ?? 10, Number(m.daily_limit_hours ?? 12))} ·{' '}

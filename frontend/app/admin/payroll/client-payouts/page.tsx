@@ -11,6 +11,7 @@ import PeriodFilter from '@/components/platform/PeriodFilter';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { displayCurrencyFor, formatMoney, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
 import { downloadFile } from '@/lib/download';
 import type { ClientPayoutRow, ClientPayoutSheet, PayoutStatus } from '@/lib/client-billing';
 import { pickCurrentPeriod } from '@/lib/periods';
@@ -28,6 +29,9 @@ interface Period {
 const n = (v: string | number | null | undefined) => Number(v ?? 0) || 0;
 const money = (v: string | number | null | undefined) =>
   v == null ? '—' : n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Amounts recorded in USD, shown in the top-bar display currency when one is chosen. */
+const usd = (v: string | number | null | undefined) => (v == null ? '—' : formatMoneyAmount(n(v), 'USD'));
+const usdWithCode = (v: string | number | null | undefined) => (v == null ? '—' : formatMoney(n(v), 'USD'));
 
 const STATUS_STYLE: Record<PayoutStatus, string> = {
   not_prepared: 'text-theme-muted border-white/10',
@@ -43,6 +47,8 @@ const STATUS_LABEL: Record<PayoutStatus, string> = {
 };
 
 export default function ClientPayoutsPage() {
+  useMoneyDisplay();
+  const cur = displayCurrencyFor('USD');
   const [periods, setPeriods] = useState<Period[]>([]);
   const [periodId, setPeriodId] = useState('');
   const [sheet, setSheet] = useState<ClientPayoutSheet | null>(null);
@@ -228,9 +234,9 @@ export default function ClientPayoutsPage() {
 
       {sheet && (
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-4">
-          <KpiCard compact label="Owed to clients USD" value={money(sheet.ready ? sheet.totals.total_usd : rows.reduce((s, r) => s + n(r.amount_usd), 0))} icon={Wallet} accent="gold" />
-          <KpiCard compact label="Paid USD" value={money(sheet.totals.paid_usd)} icon={CheckCircle2} />
-          <KpiCard compact label="Outstanding USD" value={money(sheet.ready ? sheet.totals.outstanding_usd : rows.reduce((s, r) => s + n(r.amount_usd), 0))} icon={Banknote} accent="blue" />
+          <KpiCard compact label="Owed to clients" value={usdWithCode(sheet.ready ? sheet.totals.total_usd : rows.reduce((s, r) => s + n(r.amount_usd), 0))} icon={Wallet} accent="gold" />
+          <KpiCard compact label="Paid" value={usdWithCode(sheet.totals.paid_usd)} icon={CheckCircle2} />
+          <KpiCard compact label="Outstanding" value={usdWithCode(sheet.ready ? sheet.totals.outstanding_usd : rows.reduce((s, r) => s + n(r.amount_usd), 0))} icon={Banknote} accent="blue" />
           <KpiCard compact label="To send · sent · paid" value={`${counts.draft} · ${counts.sent} · ${counts.paid}`} icon={Mail} />
         </div>
       )}
@@ -253,7 +259,7 @@ export default function ClientPayoutsPage() {
                 <th className={`${th} text-right`}>Split on</th>
                 <th className={`${th} text-right`}>Client %</th>
                 <th className={`${th} text-right`}>Costs</th>
-                <th className={`${th} text-right`}>Share USD</th>
+                <th className={`${th} text-right`}>Share {cur}</th>
                 <th className={`${th} text-right`}>Rate</th>
                 <th className={`${th} text-right`}>To pay</th>
                 <th className={`${th} text-left`}>Status</th>
@@ -284,11 +290,11 @@ export default function ClientPayoutsPage() {
                         {r.platform}{r.billed_hours ? ` · ${money(r.billed_hours)} h` : ''}
                       </p>
                     </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{money(r.basis)}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{usd(r.basis)}</td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(r.client_pct).toFixed(2)}%</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(r.client_costs) ? `-${money(r.client_costs)}` : '—'}</td>
+                    <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(r.client_costs) ? `-${usd(r.client_costs)}` : '—'}</td>
                     <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${n(r.amount_usd) < 0 ? 'text-danger' : 'text-white'}`}>
-                      {money(r.amount_usd)}
+                      {usd(r.amount_usd)}
                     </td>
                     <td className="px-3 py-2.5 text-right tabular-nums text-xs">
                       {r.currency === 'USD' ? (

@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import RecordedCurrencyNote from '@/components/currency/RecordedCurrencyNote';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, AlertTriangle, ArrowLeft, Check, Lock, Save } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
@@ -201,22 +202,20 @@ export default function ClientLedgerPage() {
     <div>
       <PageHeader
         title="Client Ledger"
-        description="Every client's month on one sheet: billed hours, rate, expected and received income, the client's % and costs, and how the money splits. Figures are in USD."
+        compact
         actions={
-          <Link href="/admin/clients" className="btn-secondary text-sm py-2 px-4 inline-flex items-center gap-2">
-            <ArrowLeft size={14} /> Clients
-          </Link>
+          <>
+            <PeriodFilter periods={periods} value={periodId} onChange={setPeriodId} variant="inline" label="Working month" />
+            <Link href="/admin/payroll/client-payouts" className="btn-secondary text-xs py-2 px-3">Client payouts</Link>
+            <Link href="/admin/payroll/month" className="btn-secondary text-xs py-2 px-3">Month overview</Link>
+            <Link href="/admin/clients" className="btn-secondary text-sm py-2 px-4 inline-flex items-center gap-2">
+              <ArrowLeft size={14} /> Clients
+            </Link>
+          </>
         }
       />
 
-      <div className="glass-panel p-4 mb-4 flex flex-wrap items-end gap-4">
-        <div className="w-full sm:w-auto sm:min-w-[18rem]">
-          <PeriodFilter periods={periods} value={periodId} onChange={setPeriodId} variant="select" label="Working month" />
-        </div>
-        <div className="flex-1" />
-        <Link href="/admin/payroll/client-payouts" className="btn-secondary text-xs py-2 px-3">Client payouts</Link>
-        <Link href="/admin/payroll/month" className="btn-secondary text-xs py-2 px-3">Month overview</Link>
-      </div>
+      <RecordedCurrencyNote recorded="USD" />
 
       {periodPaid && (
         <p className="text-xs text-amber-400 mb-3">{sheet?.period_label} is paid, so its client figures are locked.</p>

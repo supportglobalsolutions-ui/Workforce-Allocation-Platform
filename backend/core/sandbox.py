@@ -37,6 +37,9 @@ _sandbox_schema: ContextVar[Optional[str]] = ContextVar("sandbox_schema", defaul
 _test_user_email: ContextVar[str] = ContextVar("test_user_email", default="")
 # Extra inboxes admins listed in Settings that may also receive test-mode email.
 _test_extra_emails: ContextVar[frozenset[str]] = ContextVar("test_extra_emails", default=frozenset())
+# Test mode only: the test worker an admin is viewing the worker portal as.
+ACT_AS_HEADER = "x-act-as-worker"
+_act_as_worker: ContextVar[Optional[str]] = ContextVar("act_as_worker", default=None)
 
 # Admins and super admins may switch test mode on for themselves.
 TEST_MODE_ROLES = frozenset({"admin", "super_admin"})
@@ -57,18 +60,22 @@ def schema_for(auth_uid: str) -> str:  # noqa: ARG001 — kept so callers need n
     return SHARED_SANDBOX_SCHEMA
 
 
-def set_request_test_mode(active: bool, schema: Optional[str], email: str = "", extra_emails=()):
+def set_request_test_mode(
+    active: bool, schema: Optional[str], email: str = "", extra_emails=(), act_as: Optional[str] = None,
+):
     extra = frozenset(e.strip().lower() for e in extra_emails if e and e.strip())
     return (
         _test_mode.set(active),
         _sandbox_schema.set(schema),
         _test_user_email.set(email.strip().lower()),
         _test_extra_emails.set(extra),
+        _act_as_worker.set((act_as or "").strip() or None),
     )
 
 
 def reset_request_test_mode(tokens) -> None:
-    mode_token, schema_token, email_token, extra_token = tokens
+    mode_token, schema_token, email_token, extra_token, act_token = tokens
+    _act_as_worker.reset(act_token)
     _test_extra_emails.reset(extra_token)
     _test_user_email.reset(email_token)
     _sandbox_schema.reset(schema_token)
@@ -77,6 +84,13 @@ def reset_request_test_mode(tokens) -> None:
 
 def in_test_mode() -> bool:
     return _test_mode.get()
+
+
+def acting_test_worker_id() -> Optional[str]:
+    """Worker id an admin is acting as — only inside the sandbox, never on real tables."""
+    if not _test_mode.get() or _sandbox_schema.get() is None:
+        return None
+    return _act_as_worker.get()
 
 
 def test_mode_email() -> str:

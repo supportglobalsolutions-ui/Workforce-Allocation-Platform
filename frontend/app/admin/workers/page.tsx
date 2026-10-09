@@ -892,6 +892,16 @@ export default function WorkersPage() {
 
   useEffect(() => { loadWorkers(); }, []);
 
+  const [linkedWorkerId, setLinkedWorkerId] = useState<string | null>(() =>
+    typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('worker'),
+  );
+  useEffect(() => {
+    if (!linkedWorkerId || !workers.length) return;
+    const w = workers.find((x) => x.id === linkedWorkerId);
+    if (w) setSelectedWorker(w);
+    setLinkedWorkerId(null);
+  }, [linkedWorkerId, workers]);
+
   useEffect(() => {
     // One-shot nudge: notify workers whose phones lack a country code.
     api.post<{ notified: number }>('/workers/phone-format-nudge', {})

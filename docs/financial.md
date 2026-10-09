@@ -8,7 +8,7 @@ A plain-language guide to the finance side of the platform: how hours become pay
 
 **How things connect**
 
-- **Desktops (RDPs)** host client accounts on platforms such as Outlier. Each desktop belongs to one client.
+- **Desktops (RDPs)** host client accounts on platforms such as Outlier. A client can have any number of desktops; each desktop is linked to the client it works for, and a desktop can be left unlinked.
 - **Clients** own those accounts. A client is one row of the old worksheet (for example "Marcel 1").
 - **Workers** connect to desktops and work on the accounts. They are paid per hour by their tier.
 - **GlobalSolutions (GS)** collects the platform payouts, pays the workers, and shares the income with each client by an agreed percentage.
@@ -194,7 +194,7 @@ The Hours Log is the **one place a month's hours live**. It has one row per work
 - **Hours:** the figure that counts. It starts as the session figure.
 - **Typed by hand:** an admin can change any row, add a row, or import a CSV (Worker, Desktop, Hours, Note). A typed row shows the session figure next to it and has a **Reset** link to go back to it.
 
-**When the log refreshes from sessions:** on Calculate, and whenever the Hours page or the payslip ledger is opened, while the month is **open** or **calculated**. Typed rows are never overwritten. An approved month keeps its hours and stops following sessions. A paid month can't be edited.
+**When the log refreshes from sessions:** on Calculate, and whenever the Hours page or the Payroll ledger is opened, while the month is **open** or **calculated**. Typed rows are never overwritten. An approved month keeps its hours and stops following sessions. A paid month can't be edited.
 
 The page can be grouped by worker, by desktop or by client.
 
@@ -205,7 +205,7 @@ The page can be grouped by worker, by desktop or by client.
 
 Editing hours anywhere writes to the Hours Log, so the two always agree:
 
-- Typing hours on a payslip, in Bulk edit or in the payslip ledger updates the worker's log rows. An increase goes on their busiest desktop (or a "No desktop" row); a decrease comes off the largest rows first.
+- Typing hours on a payslip or in the Payroll ledger updates the worker's log rows. An increase goes on their busiest desktop (or a "No desktop" row); a decrease comes off the largest rows first.
 - Editing the Hours Log updates the payslip's hours straight away.
 
 **After calculating**, each counted session is tied to that month, so it can never be paid twice.
@@ -290,7 +290,7 @@ The Finance page lists **every active worker** for the month, including people w
 
   Only the fields you fill in are changed. Giving every partner a bonus leaves their hours and rates alone.
 - **Choosing a new currency** always fetches that currency's rate, replacing any typed one.
-- **Row by row:** a spreadsheet-style ledger is available for wide edits.
+- **Row by row:** the **Payroll ledger** button opens every worker's payslip on one sheet for wide edits. Client income is not entered here; it goes on the Client ledger (section 10).
 - Saving any edit on an open month moves it to **calculated**.
 
 ### Warnings shown on payslips
@@ -670,7 +670,7 @@ The platform records money and allocations. A wallet credit is not a bank or mob
 | Workers | `/admin/workers` | Worker type, country, status, tier assignment and individual pay terms |
 | Clients | `/admin/clients` | Rate, client tier, client %, desktop switch, payout fields, Sheet columns toggle, linked desktops, import |
 | Client ledger | `/admin/clients/ledger` | Billed hours, received income, costs, client %, apply to many, warnings |
-| Payroll | `/admin/payroll` | Month filter, worker detail, manual edits, Bulk edit, Apply to many, calculation and warnings |
+| Payroll | `/admin/payroll` | Month filter, worker detail, manual edits, Payroll ledger, Apply to many, calculation and warnings |
 | Tiers | `/admin/payroll/tiers` | Rate, currency, unit, applies-to, worker and client assignment |
 | Shared costs | `/admin/payroll/shared-costs` | Preview allocations, save, inspect and reverse entries |
 | Monthly approvals | `/admin/payroll/approvals` | Require membership approval; approve/revoke selected members |
@@ -773,7 +773,7 @@ Mark each case PASS, FAIL or BLOCKED. Keep screenshot, month/worker/client IDs, 
 | H04 | Link a session to another month and calculate | It is not stolen or paid a second time |
 | HL1 | Type 12 h on A's X1 row; recalculate | Row shows typed 12 with session 10; payslip hours 12; recalculation keeps 12 |
 | HL2 | Reset the row | Back to 10; payslip hours 10 |
-| HL3 | Type A's payslip hours as 8 in Bulk edit | Hours Log rows reduce to total 8; Hours page and payslip agree |
+| HL3 | Type A's payslip hours as 8 in the Payroll ledger | Hours Log rows reduce to total 8; Hours page and payslip agree |
 | HL4 | Add a "No desktop" row for C; import a CSV with a bad worker name | Row added; import reports the bad row without saving it |
 | HL5 | Edit hours after the month is paid | Rejected |
 | P01 | Enter A's bonus/costs and recalculate | Net 5,700 KES; edits preserved; row totals and worker PDF agree |

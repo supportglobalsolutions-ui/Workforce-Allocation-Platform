@@ -11,6 +11,7 @@ import PeriodFilter from '@/components/platform/PeriodFilter';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { displayCurrencyFor, formatMoney, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
 import { pickCurrentPeriod } from '@/lib/periods';
 
 interface Period {
@@ -62,6 +63,9 @@ interface Overview {
 const n = (v: string | number | null | undefined) => Number(v ?? 0) || 0;
 const money = (v: string | number | null | undefined) =>
   v == null ? '—' : n(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+/** Month figures are recorded in USD; shown in the top-bar display currency when one is chosen. */
+const usd = (v: string | number | null | undefined) => (v == null ? '—' : formatMoneyAmount(n(v), 'USD'));
+const usdWithCode = (v: string | number | null | undefined) => (v == null ? '—' : formatMoney(n(v), 'USD'));
 
 const FLOW = [
   { key: 'client_shares', label: 'Client shares', color: 'bg-sky-400' },
@@ -71,6 +75,9 @@ const FLOW = [
 ] as const;
 
 export default function MonthOverviewPage() {
+  // Re-render on a top-bar currency change; label the figures with that currency.
+  useMoneyDisplay();
+  const cur = displayCurrencyFor('USD');
   const [periods, setPeriods] = useState<Period[]>([]);
   const [periodId, setPeriodId] = useState('');
   const [data, setData] = useState<Overview | null>(null);
@@ -111,7 +118,7 @@ export default function MonthOverviewPage() {
     <div>
       <PageHeader
         title="Month Overview"
-        description="The month-end steps in order, and where the month's money went. Figures are in USD."
+        description={`The month-end steps in order, and where the month's money went. Figures are in ${cur}.`}
       />
       <AdminSectionTabs tabs={PAYROLL_TABS} />
 
@@ -167,11 +174,11 @@ export default function MonthOverviewPage() {
           </div>
 
           <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
-            <KpiCard compact label="Collected" value={money(k?.collected)} icon={Briefcase} accent="gold" />
-            <KpiCard compact label="Client shares" value={money(k?.client_shares)} icon={Users} accent="blue" />
-            <KpiCard compact label="Worker pay" value={money(k?.worker_pay)} icon={Banknote} />
-            <KpiCard compact label="Costs" value={money(k?.costs)} icon={Receipt} accent="danger" />
-            <KpiCard compact label="GS margin" value={money(k?.gs_margin)} icon={TrendingUp}
+            <KpiCard compact label="Collected" value={usdWithCode(k?.collected)} icon={Briefcase} accent="gold" />
+            <KpiCard compact label="Client shares" value={usdWithCode(k?.client_shares)} icon={Users} accent="blue" />
+            <KpiCard compact label="Worker pay" value={usdWithCode(k?.worker_pay)} icon={Banknote} />
+            <KpiCard compact label="Costs" value={usdWithCode(k?.costs)} icon={Receipt} accent="danger" />
+            <KpiCard compact label="GS margin" value={usdWithCode(k?.gs_margin)} icon={TrendingUp}
               accent={n(k?.gs_margin) < 0 ? 'danger' : 'emerald'} highlight />
           </div>
 
@@ -179,22 +186,22 @@ export default function MonthOverviewPage() {
             <div className="flex flex-wrap items-baseline justify-between gap-2 mb-3">
               <h2 className="text-sm font-bold text-theme-heading">Where the money went</h2>
               <span className="text-xs text-theme-muted">
-                Collected {money(k?.collected)} USD
-                {n(k?.expected) !== collected && ` · expected ${money(k?.expected)}`}
+                Collected {usd(k?.collected)} {cur}
+                {n(k?.expected) !== collected && ` · expected ${usd(k?.expected)}`}
                 {` · ${money(k?.hours)} h logged`}
               </span>
             </div>
             <div className="h-6 w-full rounded-lg overflow-hidden flex bg-white/[0.04]">
               {segments.filter((s) => s.value > 0).map((s) => (
                 <div key={s.key} className={`${s.color} h-full`} style={{ width: `${(s.value / barTotal) * 100}%` }}
-                  title={`${s.label}: ${money(s.value)} USD`} />
+                  title={`${s.label}: ${usd(s.value)} ${cur}`} />
               ))}
             </div>
             <div className="flex flex-wrap gap-x-5 gap-y-1 mt-3 text-xs">
               {segments.map((s) => (
                 <span key={s.key} className="inline-flex items-center gap-1.5 text-theme-muted">
                   <span className={`w-2.5 h-2.5 rounded-sm ${s.color}`} />
-                  {s.label} <span className={`tabular-nums ${s.value < 0 ? 'text-danger' : 'text-white'}`}>{money(s.value)}</span>
+                  {s.label} <span className={`tabular-nums ${s.value < 0 ? 'text-danger' : 'text-white'}`}>{usd(s.value)}</span>
                   {collected > 0 && <span className="tabular-nums">({((s.value / collected) * 100).toFixed(0)}%)</span>}
                 </span>
               ))}
@@ -242,15 +249,15 @@ export default function MonthOverviewPage() {
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{c.billed_hours ? money(c.billed_hours) : '—'}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{money(c.expected)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-white">{money(c.actual)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{usd(c.expected)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-white">{usd(c.actual)}</td>
                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(c.client_pct).toFixed(2)}%</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(c.client_costs) ? money(c.client_costs) : '—'}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-sky-300">{money(c.client_share)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-white">{money(c.gs_share)}</td>
-                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{money(c.worker_cost)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{n(c.client_costs) ? usd(c.client_costs) : '—'}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-sky-300">{usd(c.client_share)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-white">{usd(c.gs_share)}</td>
+                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted">{usd(c.worker_cost)}</td>
                       <td className={`px-3 py-2.5 text-right tabular-nums font-semibold ${n(c.gs_margin) < 0 ? 'text-danger' : 'text-emerald-accent'}`}>
-                        {money(c.gs_margin)}
+                        {usd(c.gs_margin)}
                       </td>
                       <td className="px-4 py-2.5 text-xs text-theme-muted capitalize">{c.payout_status ?? '—'}</td>
                     </tr>

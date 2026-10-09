@@ -4,8 +4,10 @@ import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/navigation/AppShell';
 import MonthApprovalBanner from '@/components/worker/MonthApprovalBanner';
+import TestWorkerSwitcher from '@/components/testMode/TestWorkerSwitcher';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { isTestModeOn, readActingWorker } from '@/lib/testMode';
 
 export default function WorkerShellLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -25,7 +27,8 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
     }>('/workers/me')
       .then((w) => {
         if (cancelled) return;
-        if (!w.username) {
+        // Test workers have no login, so no username; an admin viewing as one must not be sent to setup.
+        if (!w.username && !(isTestModeOn() && readActingWorker())) {
           router.replace('/worker/setup-username');
           return;
         }
@@ -53,6 +56,7 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
 
   return (
     <AppShell role="worker">
+      <TestWorkerSwitcher />
       <MonthApprovalBanner />
       {children}
     </AppShell>

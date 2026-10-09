@@ -850,8 +850,8 @@ function FinancesTab({ client }: { client: Client }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KpiCard compact label="RDPs" value={client.rdp_count ?? 0} icon={Monitor} />
             <KpiCard compact label="Hours" value={fmtMoney(sum('billed_hours'))} icon={Link2} accent="blue" />
-            <KpiCard compact label={`Income ${displayCurrencyFor(currency)}`} value={formatMoneyAmount(sum('basis'), currency)} icon={Briefcase} accent="gold" />
-            <KpiCard compact label={`Client share ${displayCurrencyFor(currency)}`} value={formatMoneyAmount(sum('client_share'), currency)} icon={Percent} accent="emerald" highlight />
+            <KpiCard compact label="Income" value={formatMoney(sum('basis'), currency)} icon={Briefcase} accent="gold" />
+            <KpiCard compact label="Client share" value={formatMoney(sum('client_share'), currency)} icon={Percent} accent="emerald" highlight />
           </div>
           {months.length === 0 ? (
             <p className="text-sm text-theme-muted text-center py-8">
@@ -1218,13 +1218,6 @@ export default function ClientManagementPage() {
         title="Client Management"
         actions={
           <div className="flex items-center gap-2">
-            <Link
-              href="/admin/payroll/ledger?tab=clients"
-              title="Enter this month's earnings for every client on one page."
-              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
-            >
-              <Table2 size={15} /> Month earnings
-            </Link>
             <Link
               href="/admin/clients/ledger"
               title="Every client's month on one sheet: hours, rate, expected and received income, the split and costs."

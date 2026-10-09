@@ -17,6 +17,7 @@ from models.enums import (
     WorkerTypeEnum,
 )
 from models.worker import Worker
+from core.sandbox import acting_test_worker_id
 from services.worker_public_code import assign_public_code
 
 
@@ -106,6 +107,18 @@ def get_worker_for_user(db: Session, current_user: dict) -> Worker:
     on first access. Business fields (country / pay_tier) are placeholders an
     admin can correct later.
     """
+    acting = acting_test_worker_id()
+    if acting:
+        # Test mode: an admin viewing the worker portal as one of the test workers.
+        # Only ever resolved inside the sandbox schema, so it can't reach real workers.
+        try:
+            test_worker = db.get(Worker, UUID(acting))
+        except ValueError:
+            test_worker = None
+        if not test_worker:
+            raise HTTPException(status_code=404, detail="That test worker no longer exists — pick another.")
+        return test_worker
+
     admin = get_admin_user(db, current_user)
     worker = db.exec(
         select(Worker).where(Worker.admin_user_id == admin.id)

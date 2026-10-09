@@ -3,24 +3,26 @@
 import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  AlertCircle, Calculator, CheckCircle, ChevronDown, Clock,
-  DollarSign, Eye, FileText, Mail, Plus, RotateCcw, Send, Table2,
+  AlertCircle, Calculator, CheckCircle, ChevronDown,
+  Eye, FileText, Mail, Plus, RotateCcw, Send, Table2,
   Users, Wallet, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
-import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
+import { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import ConfirmModal, { FINANCE_CONFIRM_META } from '@/components/platform/ConfirmModal';
-import KpiCard from '@/components/platform/KpiCard';
+
 import SpinningDots from '@/components/shared/SpinningDots';
 import ApplyToManyPanel from '@/components/admin/ApplyToManyPanel';
 import WorkerPayModal, { type PayRow } from '@/components/admin/WorkerPayModal';
 import PayslipEmailPanel from '@/components/payroll/PayslipEmailPanel';
+import TestFinanceResetButton from '@/components/testMode/TestFinanceResetButton';
+import PayTotalsCards from '@/components/payroll/PayTotalsCards';
 import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 import { pickCurrentPeriod } from '@/lib/periods';
-import { displayCurrencyFor, formatMoneyAmount, formatMoneyTotals, useMoneyDisplay } from '@/lib/money';
+import { displayCurrencyFor, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
 
 type ConfirmAction = 'approve' | 'push-wallets' | 'mark-paid';
 
@@ -57,23 +59,6 @@ type FinancePayRow = PayRow & {
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
 const fmt = formatMoneyAmount;
-
-function amountInBaseCurrency(
-  localAmount: number,
-  summary: NonNullable<PayRow['summary']>,
-  periodCurrency?: string,
-): number {
-  // Pay rows are stored in local_currency. KPI cards report period currency.
-  // When those already match, do not divide by a leftover FX rate.
-  const base = summary.base_currency || periodCurrency;
-  if (summary.local_currency && base && summary.local_currency === base) {
-    return localAmount;
-  }
-  const fx = Number(summary.fx_rate ?? 0);
-  if (fx > 0) return localAmount / fx;
-  const net = Number(summary.final_net ?? 0);
-  return net !== 0 ? localAmount * (Number(summary.base_equivalent ?? 0) / net) : 0;
-}
 
 const STATUS_CHIP: Record<PeriodStatus, string> = {
   open:       'bg-warning/15 text-warning border-warning/30',
@@ -582,29 +567,6 @@ export default function PayrollWorkbenchPage() {
 
   // ── Derived KPIs (payslip rows only) ──
 
-  const kpis = useMemo(() => {
-    const periodCurrency = selectedPeriod?.currency;
-    const paidRows = ledger.filter((r): r is FinancePayRow & { summary: NonNullable<PayRow['summary']> } => r.summary !== null);
-    const paid = paidRows.map((r) => r.summary);
-    const totalHours = paid.reduce((sum, r) => sum + Number(r.hours_logged ?? 0), 0);
-    const totalGross = paid.reduce((sum, r) => sum + amountInBaseCurrency(Number(r.gross_earned ?? 0), r, periodCurrency), 0);
-    const totalNet = paid.reduce((sum, r) => sum + amountInBaseCurrency(Number(r.final_net ?? 0), r, periodCurrency), 0);
-    const workers = isAllPeriods ? new Set(paidRows.map((r) => r.worker_id)).size : paid.length;
-    const grossByCurrency = new Map<string, number>();
-    const netByCurrency = new Map<string, number>();
-    if (isAllPeriods) {
-      paidRows.forEach((row) => {
-        const summary = row.summary;
-        const currency = summary.base_currency || row.period_currency || 'USD';
-        const baseGross = amountInBaseCurrency(Number(summary.gross_earned ?? 0), summary, row.period_currency);
-        const baseNet = amountInBaseCurrency(Number(summary.final_net ?? 0), summary, row.period_currency);
-        grossByCurrency.set(currency, (grossByCurrency.get(currency) ?? 0) + baseGross);
-        netByCurrency.set(currency, (netByCurrency.get(currency) ?? 0) + baseNet);
-      });
-    }
-    return { workers, totalHours, totalGross, totalNet, grossByCurrency, netByCurrency };
-  }, [ledger, isAllPeriods, selectedPeriod?.currency]);
-
   // ── Audience filter + search ──
 
   const visibleRows = useMemo(() => {
@@ -660,7 +622,6 @@ export default function PayrollWorkbenchPage() {
   const canMarkPaid = status === 'approved';
   const summariesLocked = status === 'approved' || status === 'paid';
 
-  const baseCur = selectedPeriod?.currency ?? 'USD';
   const payslipsAvailable = status !== 'open' || ledger.some((row) => row.summary);
   const allPeriodRange = useMemo(() => {
     if (periods.length === 0) return '';
@@ -697,13 +658,21 @@ export default function PayrollWorkbenchPage() {
     );
   })();
 
+  const monthActions = selectedPeriod ? [{ action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Calculate', icon: Calculator, enabled: canCalculate, primary: false, title: 'Pull finished session hours into this month. Does not pay anyone.' },
+                    { action: 'approve' as const, label: 'Approve', icon: CheckCircle, enabled: canApprove, primary: status === 'calculated', title: canApprove ? 'Lock this month and freeze FX. Required before Wallets.' : 'Calculate first, then Approve.' },
+                    { action: 'reopen' as const, label: 'Reopen', icon: RotateCcw, enabled: canReopen, primary: false, title: 'Unlock the month so you can edit payslips again. Does not delete rows.' },
+                    { action: 'push-wallets' as const, label: 'Wallets', icon: Wallet, enabled: canPush, primary: status === 'approved' && !selectedPeriod.wallet_pushed_at, title: canPush ? 'Credit each worker wallet with this month’s net pay.' : 'Approve this month first. Entering a rate does not credit wallets.' },
+                    { action: 'mark-paid' as const, label: 'Mark Paid', icon: Send, enabled: canMarkPaid, primary: status === 'approved' && !!selectedPeriod.wallet_pushed_at, title: canMarkPaid ? 'Mark the month paid after wallets are credited.' : 'Approve, then push Wallets, then Mark Paid.' },
+                  ] : [];
+
   // ── Render ──
 
   return (
     <div>
       <PageHeader
+        compact
         title="Finance"
-        description="Pay, wallets, and receipts."
+
         besideTitle={
           periodsLoading ? (
             <SpinningDots size="sm" className="text-emerald-accent" />
@@ -719,9 +688,10 @@ export default function PayrollWorkbenchPage() {
           ) : null
         }
         actions={
-          <>
+          <div className="flex flex-wrap items-center gap-2 [&>button]:h-10 [&>button]:py-0 [&>button]:text-sm">
             {selectedPeriod && (
               <>
+                <TestFinanceResetButton periodId={selectedPeriod.id} label={selectedPeriod.label} />
                 <button
                   type="button"
                   onClick={() => void handleGeneratePayslips()}
@@ -749,10 +719,19 @@ export default function PayrollWorkbenchPage() {
             <button type="button" onClick={() => setShowNewPeriod(true)} className="btn-primary text-sm py-2 px-4 flex items-center gap-2">
               <Plus size={15} /> New month
             </button>
-          </>
-        }
+          </div>}
       />
-      <AdminSectionTabs tabs={PAYROLL_TABS} />
+      <nav aria-label="Finance navigation" className="flex items-center gap-1 border-b border-theme pb-2 mb-3 overflow-x-auto whitespace-nowrap">
+        {[...PAYROLL_TABS.filter((tab) => ['Payroll', 'Wallets', 'Reports'].includes(tab.label)),
+          ...PAYROLL_TABS.filter((tab) => !['Payroll', 'Wallets', 'Reports'].includes(tab.label)),
+          { label: 'Enter month data', href: `/admin/payroll/month-data${selectedPeriod ? `?period=${selectedPeriod.id}` : ''}` },
+        ].map((tab) => (
+          <Link key={tab.href} href={tab.href} aria-current={tab.label === 'Payroll' ? 'page' : undefined}
+            className={`shrink-0 px-2.5 py-2 text-xs font-semibold rounded-lg ${tab.label === 'Payroll' ? 'bg-emerald-accent/10 text-emerald-accent' : 'text-theme-muted hover:text-theme-heading'}`}>
+            {tab.label}
+          </Link>
+        ))}
+      </nav>
 
       {periodsLoading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
@@ -770,7 +749,7 @@ export default function PayrollWorkbenchPage() {
           {(selectedPeriod || isAllPeriods) && (
             <>
               {isAllPeriods && (
-                <div className="glass-panel p-4 mb-5 flex flex-wrap items-center gap-3">
+                <div className="glass-panel px-3 py-2 mb-3 flex flex-wrap items-center gap-3">
                   <div>
                     <h2 className="text-sm font-bold text-theme-heading">All working months</h2>
                     <p className="text-[11px] text-theme-muted mt-0.5">
@@ -787,31 +766,15 @@ export default function PayrollWorkbenchPage() {
               {selectedPeriod && (
                 <>
                   {/* ── Action bar ── */}
-                  <div className="glass-panel p-4 mb-5">
+                  <div className="mb-3">
                 <div className="flex flex-wrap items-center gap-3">
-                  <div className="mr-2">
-                    <PeriodNameEditor
-                      period={selectedPeriod}
-                      trailing={<PeriodStatusChip status={selectedPeriod.status} />}
-                      onRenamed={(label) => setPeriods((prev) =>
-                        prev.map((p) => (p.id === selectedPeriod.id ? { ...p, label } : p)))}
-                      onDeleted={() => {
-                        const idx = periods.findIndex((p) => p.id === selectedPeriod.id);
-                        const fallback = periods[idx + 1] ?? periods[idx - 1];
-                        void loadPeriods(fallback?.id);
-                      }}
-                    />
-                    <p className="text-[11px] text-theme-muted">
-                      {new Date(selectedPeriod.start_date).toLocaleDateString()} – {new Date(selectedPeriod.end_date).toLocaleDateString()} · {selectedPeriod.currency}
-                    </p>
-                  </div>
-                  <div className="flex-1" />
+
                   <Link
                     href={`/admin/payroll/ledger?period=${selectedPeriod.id}`}
-                    title="Enter the whole month on one page: client earnings, shared costs, and every payslip field for every worker."
+                    title="Every worker's payslip for the month on one sheet: hours, rate, bonus, costs and FX."
                     className="btn-primary text-xs py-2 px-3 inline-flex items-center gap-1.5"
                   >
-                    <Table2 size={13} /> Ledger
+                    <Table2 size={13} /> Payroll ledger
                   </Link>
                   {!summariesLocked && (
                     <button
@@ -823,13 +786,7 @@ export default function PayrollWorkbenchPage() {
                       <Users size={13} /> Apply to many
                     </button>
                   )}
-                  {([
-                    { action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Calculate', icon: Calculator, enabled: canCalculate, primary: false, title: 'Pull finished session hours into this month. Does not pay anyone.' },
-                    { action: 'approve' as const, label: 'Approve', icon: CheckCircle, enabled: canApprove, primary: status === 'calculated', title: canApprove ? 'Lock this month and freeze FX. Required before Wallets.' : 'Calculate first, then Approve.' },
-                    { action: 'reopen' as const, label: 'Reopen', icon: RotateCcw, enabled: canReopen, primary: false, title: 'Unlock the month so you can edit payslips again. Does not delete rows.' },
-                    { action: 'push-wallets' as const, label: 'Wallets', icon: Wallet, enabled: canPush, primary: status === 'approved' && !selectedPeriod.wallet_pushed_at, title: canPush ? 'Credit each worker wallet with this month’s net pay.' : 'Approve this month first. Entering a rate does not credit wallets.' },
-                    { action: 'mark-paid' as const, label: 'Mark Paid', icon: Send, enabled: canMarkPaid, primary: status === 'approved' && !!selectedPeriod.wallet_pushed_at, title: canMarkPaid ? 'Mark the month paid after wallets are credited.' : 'Approve, then push Wallets, then Mark Paid.' },
-                  ]).map(({ action, label, icon: Icon, enabled, primary, title }) => (
+                  {monthActions.filter((item) => item.action === 'calculate' || item.action === 'approve').map(({ action, label, icon: Icon, enabled, primary, title }) => (
                     <button key={action} type="button" onClick={() => requestAction(action)}
                       disabled={!enabled || actionBusy !== null}
                       title={title}
@@ -838,8 +795,29 @@ export default function PayrollWorkbenchPage() {
                       {label}
                     </button>
                   ))}
+
+
+{monthActions.filter((item) => item.action !== 'calculate' && item.action !== 'approve').map(({ action, label, icon: Icon, enabled, primary, title }) => (
+                    <button key={action} type="button" onClick={() => requestAction(action)}
+                      disabled={!enabled || actionBusy !== null}
+                      title={title}
+                      className={`${primary ? 'btn-primary' : 'btn-secondary'} text-xs py-2 px-3.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}>
+                      {actionBusy === action ? <SpinningDots size="sm" /> : <Icon size={13} />}
+                      {label}
+                    </button>
+                  ))}
+<Link href="/admin/payroll/export" className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5">Export</Link><div className="ml-auto"><PeriodNameEditor iconOnly
+                      period={selectedPeriod}
+                      onRenamed={(label) => setPeriods((prev) =>
+                        prev.map((p) => (p.id === selectedPeriod.id ? { ...p, label } : p)))}
+                      onDeleted={() => {
+                        const idx = periods.findIndex((p) => p.id === selectedPeriod.id);
+                        const fallback = periods[idx + 1] ?? periods[idx - 1];
+                        void loadPeriods(fallback?.id);
+                      }}
+                    /></div>
                 </div>
-                <div className="flex flex-wrap gap-4 mt-3 text-[11px] text-theme-muted">
+                <div className="flex flex-wrap gap-4 text-[11px] text-theme-muted">
                   {selectedPeriod.approved_by && <span>Approved by: {selectedPeriod.approved_by}</span>}
                   {selectedPeriod.wallet_pushed_at && <span>Wallets pushed: {new Date(selectedPeriod.wallet_pushed_at).toLocaleString()}</span>}
                   {selectedPeriod.paid_at && <span>Paid: {new Date(selectedPeriod.paid_at).toLocaleString()}</span>}
@@ -853,25 +831,8 @@ export default function PayrollWorkbenchPage() {
               )}
 
               {/* ── KPI cards ── */}
-              <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
-                <KpiCard compact label="Workers" value={kpis.workers} icon={Users} />
-                <KpiCard compact label="Hours" value={kpis.totalHours.toLocaleString(undefined, { maximumFractionDigits: 1 })} icon={Clock} accent="blue" />
-                <KpiCard
-                  compact
-                  label={isAllPeriods ? 'Gross by currency' : `Gross ${displayCurrencyFor(baseCur)}`}
-                  value={isAllPeriods ? formatMoneyTotals(kpis.grossByCurrency) : fmt(kpis.totalGross, baseCur)}
-                  icon={DollarSign}
-                  accent="gold"
-                />
-                <KpiCard
-                  compact
-                  label={isAllPeriods ? 'Net by currency' : `Net ${displayCurrencyFor(baseCur)}`}
-                  value={isAllPeriods ? formatMoneyTotals(kpis.netByCurrency) : fmt(kpis.totalNet, baseCur)}
-                  icon={Wallet}
-                  accent="emerald"
-                  highlight
-                />
-              </div>
+              {/* One card: the month's total net pay in USD. */}
+              <PayTotalsCards rows={visibleRows} />
 
               {/* ── Audience filter + search ── */}
                   <div className="flex flex-wrap items-center gap-3 mb-4">

@@ -13,6 +13,7 @@ from core.config import settings
 from core.database import warm_connection_pool
 from core.supabase_auth import is_auth_ready, verify_supabase_token
 from core.sandbox import (
+    ACT_AS_HEADER as SANDBOX_ACT_AS_HEADER,
     TEST_MODE_HEADER,
     TEST_MODE_ROLES,
     is_ready as sandbox_is_ready,
@@ -183,7 +184,10 @@ async def test_mode_middleware(request: Request, call_next):
 
     # Read from the real settings row — inside the request every query hits the sandbox.
     extra_emails = await asyncio.to_thread(load_test_mode_emails)
-    tokens = set_request_test_mode(True, schema, identity.get("email") or "", extra_emails)
+    tokens = set_request_test_mode(
+        True, schema, identity.get("email") or "", extra_emails,
+        act_as=request.headers.get(SANDBOX_ACT_AS_HEADER),
+    )
     try:
         response = await call_next(request)
     finally:

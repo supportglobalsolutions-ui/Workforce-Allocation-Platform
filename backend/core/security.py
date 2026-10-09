@@ -4,6 +4,7 @@ from fastapi import Depends, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from .auth_logging import log_auth_failure
+from .sandbox import acting_test_worker_id
 from .supabase_auth import verify_supabase_token
 
 bearer_scheme = HTTPBearer(auto_error=False)
@@ -63,6 +64,12 @@ def get_current_user(
                 else "Access denied"
             ),
         )
+
+    if acting_test_worker_id():
+        # Test mode: an admin viewing the worker portal as a test worker gets
+        # exactly a worker's view (the sandbox middleware only allows this for
+        # admins / super admins, and only inside the test copy).
+        role = "user"
 
     return {
         "uid": decoded["uid"],

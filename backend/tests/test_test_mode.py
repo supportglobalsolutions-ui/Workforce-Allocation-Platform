@@ -156,3 +156,45 @@ def test_current_engine_follows_the_request():
         assert eng.get_execution_options()["schema_translate_map"] == {None: "sandbox_abc"}
     finally:
         sandbox.reset_request_test_mode(tokens)
+
+
+def test_finance_reset_refused_outside_test_mode():
+    from fastapi import HTTPException
+
+    from routers import payroll as payroll_router
+
+    with pytest.raises(HTTPException) as exc:
+        payroll_router.test_reset_period_finance(period_id=__import__("uuid").uuid4(), db=None, _={})
+    assert exc.value.status_code == 403
+
+
+def test_act_as_only_inside_the_sandbox():
+    # Header present but not routed to a sandbox schema (e.g. /auth paths): ignored.
+    tokens = sandbox.set_request_test_mode(True, None, "boss@example.com", act_as="abc")
+    try:
+        assert sandbox.acting_test_worker_id() is None
+    finally:
+        sandbox.reset_request_test_mode(tokens)
+    tokens = sandbox.set_request_test_mode(True, "sandbox_shared", "boss@example.com", act_as="abc")
+    try:
+        assert sandbox.acting_test_worker_id() == "abc"
+    finally:
+        sandbox.reset_request_test_mode(tokens)
+    assert sandbox.acting_test_worker_id() is None
+
+
+def test_acting_admin_is_seen_as_a_worker(client, monkeypatch):
+    client.ready.add(sandbox.schema_for(ADMIN["uid"]))
+    from core import security
+    from core.security import get_current_user
+
+    monkeypatch.setattr(security, "verify_supabase_token", lambda token: TOKENS[token])
+
+    main.app.add_api_route("/__probe_role", lambda u=__import__("fastapi").Depends(get_current_user): {"role": u["role"]})
+    try:
+        r = client.get("/__probe_role", headers={"Authorization": "Bearer admin", "X-Test-Mode": "1", "X-Act-As-Worker": "w1"})
+        assert r.json()["role"] == "user"
+        r = client.get("/__probe_role", headers={"Authorization": "Bearer admin", "X-Test-Mode": "1"})
+        assert r.json()["role"] == "admin"
+    finally:
+        main.app.router.routes[:] = [x for x in main.app.router.routes if getattr(x, "path", "") != "/__probe_role"]

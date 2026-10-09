@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import RecordedCurrencyNote from '@/components/currency/RecordedCurrencyNote';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertCircle, Check, ChevronDown, ChevronRight, ExternalLink, Eye, Plus, Trash2 } from 'lucide-react';
 import SpinningDots from '@/components/shared/SpinningDots';
@@ -137,6 +138,7 @@ export function SharedCostsSection({ period, onChanged }: { period: LedgerPeriod
 
   return (
     <div className="space-y-6">
+      <RecordedCurrencyNote />
       <Banner error={error} notice={notice} />
       {!editable && (
         <p className="text-xs text-amber-400">

@@ -98,6 +98,7 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  opts: { actAs?: boolean } = {},
 ): Promise<T> {
   const fetchWith = async (forceRefresh: boolean) => {
     const token = await getToken(forceRefresh);
@@ -110,7 +111,7 @@ async function request<T>(
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          ...testModeHeaders(),
+          ...testModeHeaders(opts),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
@@ -180,6 +181,8 @@ async function request<T>(
 
 export const api = {
   get:    <T>(path: string)                    => request<T>('GET',    path),
+  /** Test mode: GET as the admin even while viewing the worker portal as a test worker. */
+  getAsAdmin: <T>(path: string)                => request<T>('GET',    path, undefined, { actAs: false }),
   post:   <T>(path: string, body: unknown)     => request<T>('POST',   path, body),
   patch:  <T>(path: string, body: unknown)     => request<T>('PATCH',  path, body),
   put:    <T>(path: string, body: unknown)     => request<T>('PUT',    path, body),

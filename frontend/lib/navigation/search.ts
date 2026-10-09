@@ -58,7 +58,7 @@ const ROUTE_CATALOG: Array<{
   { title: 'Quality', href: '/admin/quality', portal: 'admin', description: 'Rate worker communication and organisation.', keywords: ['ratings', 'scores'] },
   { title: 'Calendar', href: '/admin/calendar', portal: 'admin', description: 'Working months and period history.', keywords: ['period', 'month'] },
   { title: 'Finance', href: '/admin/payroll', portal: 'admin', description: 'Payroll periods, approve, and wallets.', keywords: ['payroll', 'pay', 'finance', 'money'] },
-  { title: 'Ledger', href: '/admin/payroll/ledger', portal: 'admin', description: 'Enter the month: client earnings, shared costs, and every payslip field.', keywords: ['ledger', 'payroll', 'shared costs', 'client earnings', 'hours', 'bonus', 'payslip'] },
+  { title: 'Payroll ledger', href: '/admin/payroll/ledger', portal: 'admin', description: 'Every worker\'s payslip for the month on one sheet: hours, rate, bonus, costs and FX.', keywords: ['ledger', 'payroll', 'bulk edit', 'hours', 'bonus', 'payslip'] },
   { title: 'Payment Tiers', href: '/admin/payroll/tiers', portal: 'admin', description: 'Pay rates and tier assignments.', keywords: ['payroll', 'rates', 'tiers', 'hourly'] },
   { title: 'Calculate Payroll', href: '/admin/payroll/calculate', portal: 'admin', description: 'Run earnings for the working month.', keywords: ['payroll', 'calculate', 'earnings'] },
   { title: 'Payroll Export', href: '/admin/payroll/export', portal: 'admin', description: 'Download CSV or Excel paysheets.', keywords: ['payroll', 'export', 'csv', 'excel'] },
