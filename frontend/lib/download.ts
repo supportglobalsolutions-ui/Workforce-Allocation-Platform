@@ -4,11 +4,12 @@
  * and triggers a browser download of the resulting blob.
  */
 import { supabase } from '@/lib/supabase';
+import { testModeHeaders } from '@/lib/testMode';
 
 async function authHeaders(): Promise<HeadersInit> {
   const { data } = await supabase.auth.getSession();
   const token = data.session?.access_token;
-  return token ? { Authorization: `Bearer ${token}` } : {};
+  return { ...(token ? { Authorization: `Bearer ${token}` } : {}), ...testModeHeaders() };
 }
 
 export async function fetchAuthenticatedBlob(path: string): Promise<Blob> {

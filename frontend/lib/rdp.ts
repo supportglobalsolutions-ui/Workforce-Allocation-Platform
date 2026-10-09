@@ -204,10 +204,15 @@ export interface RdpResource {
   allowed_workers?: { id: string; name: string }[];
   /** Outlier-style day budget (reported on-image time). */
   daily_limit_hours?: number;
+  /** Hour (EAT, 0–23) the daily window opens; it lasts daily_limit_hours. */
+  daily_window_start_hour?: number;
   used_minutes_today?: number;
+  /** min(unused hours, time until the window closes) at load time. */
   remaining_minutes_today?: number;
+  /** The open window, or the next one when closed. */
   window_starts_at?: string | null;
   window_ends_at?: string | null;
+  window_open?: boolean;
   reserved_for_worker_id?: string | null;
   reserved_for_worker_name?: string | null;
   reservation_ends_at?: string | null;
@@ -260,6 +265,7 @@ export interface RdpResourceCreateBody extends RdpCredentials {
   health_notes?: string | null;
   allowed_worker_ids?: string[];
   daily_limit_hours?: number;
+  daily_window_start_hour?: number;
 }
 
 export interface RdpResourceUpdateBody extends RdpCredentials {
@@ -274,6 +280,7 @@ export interface RdpResourceUpdateBody extends RdpCredentials {
   /** Replaces the audience wholesale; omit to leave it unchanged. */
   allowed_worker_ids?: string[];
   daily_limit_hours?: number;
+  daily_window_start_hour?: number;
 }
 
 export interface RdpProvisionResult {

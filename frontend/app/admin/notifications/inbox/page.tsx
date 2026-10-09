@@ -1,13 +1,15 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { Archive, Mail, MailOpen, RefreshCw } from 'lucide-react';
+import { Archive, Mail, MailOpen, RefreshCw, Trash2 } from 'lucide-react';
 
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import PageHeader from '@/components/platform/PageHeader';
 import NotificationTabs from '@/components/admin/NotificationTabs';
 import { reportError } from '@/lib/errors';
 import {
   ContactMessage,
+  deleteContactMessage,
   listContactMessages,
   setContactStatus,
 } from '@/lib/contact';
@@ -33,6 +35,8 @@ export default function ContactInboxPage() {
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [openId, setOpenId] = useState<string | null>(null);
+  const [toDelete, setToDelete] = useState<ContactMessage | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -65,6 +69,21 @@ export default function ContactInboxPage() {
       setError(reportError('Update enquiry status', err, { messageId: m.id }));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const confirmDelete = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    try {
+      await deleteContactMessage(toDelete.id);
+      setMessages((prev) => prev.filter((m) => m.id !== toDelete.id));
+      if (openId === toDelete.id) setOpenId(null);
+      setToDelete(null);
+    } catch (err) {
+      setError(reportError('Delete enquiry', err, { messageId: toDelete.id }));
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -184,12 +203,22 @@ export default function ContactInboxPage() {
                         <button
                           type="button"
                           disabled={busyId === m.id}
+                          title="Keep the message but move it out of the inbox"
                           onClick={() => changeStatus(m, 'archived')}
                           className="btn-secondary text-xs py-1.5 inline-flex items-center gap-1.5"
                         >
                           <Archive size={13} /> Archive
                         </button>
                       )}
+                      <button
+                        type="button"
+                        disabled={busyId === m.id}
+                        title="Delete this enquiry permanently"
+                        onClick={() => setToDelete(m)}
+                        className="inline-flex items-center gap-1.5 rounded-xl border border-danger/25 bg-danger/10 px-3 py-1.5 text-xs font-semibold text-danger hover:bg-danger/20 disabled:opacity-50"
+                      >
+                        <Trash2 size={13} /> Delete
+                      </button>
                     </div>
                   </div>
                 )}
@@ -198,6 +227,27 @@ export default function ContactInboxPage() {
           })}
         </div>
       )}
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Delete this enquiry?"
+        body={
+          toDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{toDelete.subject}</span> from{' '}
+              {toDelete.name}. This cannot be undone — archive it instead if you
+              might need it later.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete"
+        tone="danger"
+        icon={Trash2}
+        busy={deleting}
+        onCancel={() => { if (!deleting) setToDelete(null); }}
+        onConfirm={() => { void confirmDelete(); }}
+      />
     </div>
   );
 }

@@ -13,6 +13,13 @@ DAILY_LIMIT_HOURS_MIN = Decimal("0.5")
 DAILY_LIMIT_HOURS_MAX = Decimal("24")
 
 
+def validate_window_start_hour(value: int | str) -> int:
+    hour = int(value)
+    if not 0 <= hour <= 23:
+        raise ValueError("daily_window_start_hour must be a whole hour from 0 to 23 (EAT)")
+    return hour
+
+
 def validate_daily_limit_hours(value: Decimal | float | int | str) -> Decimal:
     hours = Decimal(str(value))
     if hours < DAILY_LIMIT_HOURS_MIN or hours > DAILY_LIMIT_HOURS_MAX:
@@ -35,6 +42,7 @@ class RDPResourceBase(SQLModel):
     monitor_host:            Optional[str]    = None
     monitor_port:            Optional[int]    = 3389
     daily_limit_hours:       Decimal = Decimal("12")
+    daily_window_start_hour: int = 10
 
     @field_validator("daily_limit_hours", mode="before")
     @classmethod
@@ -42,6 +50,11 @@ class RDPResourceBase(SQLModel):
         if v is None:
             return Decimal("12")
         return validate_daily_limit_hours(v)
+
+    @field_validator("daily_window_start_hour", mode="before")
+    @classmethod
+    def _window_hour(cls, v):  # noqa: N805
+        return 10 if v is None else validate_window_start_hour(v)
 
 
 class GuacamoleCredentials(SQLModel):
@@ -78,6 +91,7 @@ class RDPResourceUpdate(GuacamoleCredentials):
     monitor_host:            Optional[str]           = None
     monitor_port:            Optional[int]           = None
     daily_limit_hours:       Optional[Decimal]       = None
+    daily_window_start_hour: Optional[int]           = None
     # Replaces the machine's audience wholesale. None leaves it untouched.
     allowed_worker_ids:      Optional[list[UUID]]    = None
 
@@ -87,6 +101,11 @@ class RDPResourceUpdate(GuacamoleCredentials):
         if v is None:
             return None
         return validate_daily_limit_hours(v)
+
+    @field_validator("daily_window_start_hour", mode="before")
+    @classmethod
+    def _window_hour(cls, v):  # noqa: N805
+        return None if v is None else validate_window_start_hour(v)
 
 
 class RdpAllowedWorker(SQLModel):
@@ -117,6 +136,8 @@ class RDPResourceResponse(RDPResourceBase):
     remaining_minutes_today: int = 0
     window_starts_at:        Optional[datetime] = None
     window_ends_at:          Optional[datetime] = None
+    # False outside the admin-set window (e.g. 22:00–10:00 for a 10:00 start, 12h).
+    window_open:             bool = True
     # Active reservation locking this machine right now (if any).
     reserved_for_worker_id:   Optional[UUID] = None
     reserved_for_worker_name: Optional[str] = None

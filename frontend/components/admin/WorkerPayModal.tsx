@@ -1,9 +1,10 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AlertCircle, CheckCircle, FileText, X } from 'lucide-react';
 
 import SpinningDots from '@/components/shared/SpinningDots';
+import NoTierModal, { hasPayTier, NO_TIER_ERROR_PREFIX } from '@/components/payroll/NoTierModal';
 import { api } from '@/lib/api';
 import { currencyCodes, useCurrencies } from '@/lib/currencies';
 
@@ -13,6 +14,8 @@ export interface PayRow {
   worker_country: string;
   worker_type: string | null;
   worker_pay_tier: string | null;
+  /** active | inactive | suspended — shown as the Active? column. */
+  worker_status?: string | null;
   suggested_hours: string | number;
   evidence_incomplete: boolean;
   session_count?: number;
@@ -46,6 +49,13 @@ interface Props {
   onClose: () => void;
   onSaved: () => void;
   onDownloadPayslip?: (summaryId: string) => void;
+}
+
+interface TierOption {
+  name: string;
+  currency: string;
+  rate: string | number;
+  hourly_equivalent: string | number | null;
 }
 
 type FormKey = 'hours_logged' | 'rate_per_hour' | 'bonus' | 'transfer_cost' | 'external_cost' | 'fx_rate';
@@ -119,9 +129,38 @@ export default function WorkerPayModal({
   const [currency, setCurrency] = useState(s?.local_currency ?? defaultCurrency);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const tierAllocated = hasPayTier(row.worker_pay_tier);
+  const [useTier, setUseTier] = useState(() => tierAllocated && (!s || !s.admin_locked));
+  const [ownTier, setOwnTier] = useState<TierOption | null>(null);
+  const [noTierOpen, setNoTierOpen] = useState(false);
 
-  const set = (key: FormKey) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  useEffect(() => {
+    if (!tierAllocated) return;
+    let cancelled = false;
+    api.get<TierOption[]>('/payment-tiers?active_only=true&scope=workers')
+      .then((list) => {
+        if (!cancelled) setOwnTier(list.find((t) => t.name === row.worker_pay_tier) ?? null);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [tierAllocated, row.worker_pay_tier]);
+
+  const set = (key: FormKey) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (key === 'rate_per_hour') setUseTier(false);
     setForm((f) => ({ ...f, [key]: e.target.value }));
+  };
+
+  const applyTier = () => {
+    if (!tierAllocated) {
+      setNoTierOpen(true);
+      return;
+    }
+    setUseTier(true);
+    if (ownTier) {
+      setForm((f) => ({ ...f, rate_per_hour: String(ownTier.hourly_equivalent ?? ownTier.rate) }));
+      setCurrency(ownTier.currency);
+    }
+  };
 
   const totals = useMemo(() => {
     const basePay = num(form.hours_logged) * num(form.rate_per_hour);
@@ -179,26 +218,39 @@ export default function WorkerPayModal({
       return;
     }
 
+    const followTier = useTier || form.rate_per_hour.trim() === '';
+    if (followTier && !tierAllocated) {
+      setNoTierOpen(true);
+      return;
+    }
+
+    const amounts = {
+      worker_id: row.worker_id,
+      hours_logged: num(form.hours_logged),
+      bonus: num(form.bonus),
+      transfer_cost: num(form.transfer_cost),
+      external_cost: num(form.external_cost),
+    };
     setSaving(true);
     try {
       await api.post(`/payroll/periods/${periodId}/summaries/bulk`, {
         upsert: true,
-        rows: [{
-          worker_id: row.worker_id,
-          hours_logged: num(form.hours_logged),
-          ...(form.rate_per_hour.trim() !== '' ? { rate_per_hour: Number(form.rate_per_hour) } : {}),
-          bonus: num(form.bonus),
-          transfer_cost: num(form.transfer_cost),
-          external_cost: num(form.external_cost),
-          local_currency: currency,
-          ...(form.fx_rate !== '' && !currencyChanged ? { fx_rate: Number(form.fx_rate) } : {}),
-          admin_locked: true,
-        }],
+        rows: [followTier
+          ? { ...amounts, use_tier: true }
+          : {
+              ...amounts,
+              rate_per_hour: Number(form.rate_per_hour),
+              local_currency: currency,
+              ...(form.fx_rate !== '' && !currencyChanged ? { fx_rate: Number(form.fx_rate) } : {}),
+              admin_locked: true,
+            }],
       });
       onSaved();
       onClose();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save the payslip row.');
+      const msg = err instanceof Error ? err.message : 'Failed to save the payslip row.';
+      if (msg.startsWith(NO_TIER_ERROR_PREFIX)) setNoTierOpen(true);
+      else setError(msg);
     } finally {
       setSaving(false);
     }
@@ -231,7 +283,7 @@ export default function WorkerPayModal({
         <div className="overflow-y-auto flex-1 p-5 space-y-5">
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <Field label="Pay currency">
-              <select value={currency} disabled={locked} onChange={(e) => setCurrency(e.target.value)}
+              <select value={currency} disabled={locked} onChange={(e) => { setCurrency(e.target.value); setUseTier(false); }}
                 className="input-field !py-2 text-sm disabled:opacity-60 w-full">
                 {currencyCodes(currencies, currency).map((code) => (
                   <option key={code} value={code}>{code}</option>
@@ -276,9 +328,24 @@ export default function WorkerPayModal({
                   )}
                 </div>
               </Field>
-              <Field label="Rate per hour" hint="Leave blank to use the worker’s assigned payment tier">
-                <input type="number" step="0.01" min="0" disabled={locked}
-                  value={form.rate_per_hour} onChange={set('rate_per_hour')} placeholder="From payment tier" className={inputClass} />
+              <Field
+                label="Rate per hour"
+                hint={
+                  useTier
+                    ? ownTier
+                      ? `Follows ${ownTier.name}: ${money(Number(ownTier.hourly_equivalent ?? ownTier.rate))} ${ownTier.currency}/h. Tier changes update this payslip.`
+                      : `Follows ${row.worker_pay_tier}. Tier changes update this payslip.`
+                    : 'Type a custom rate, or click Use tier for this person’s tier rate.'
+                }
+              >
+                <div className="flex gap-2">
+                  <input type="number" step="0.01" min="0" disabled={locked}
+                    value={form.rate_per_hour} onChange={set('rate_per_hour')} placeholder="From payment tier" className={inputClass} />
+                  <button type="button" disabled={locked} onClick={applyTier}
+                    className={`text-[11px] py-2 px-3 shrink-0 whitespace-nowrap ${useTier ? 'btn-primary' : 'btn-secondary'}`}>
+                    Use tier
+                  </button>
+                </div>
               </Field>
 
               <Computed label="Base pay" value={money(totals.basePay)} />
@@ -354,6 +421,7 @@ export default function WorkerPayModal({
           )}
         </div>
       </form>
+      {noTierOpen && <NoTierModal names={[row.worker_display_name]} onClose={() => setNoTierOpen(false)} />}
     </div>
   );
 }

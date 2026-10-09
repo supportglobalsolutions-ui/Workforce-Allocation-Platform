@@ -1,12 +1,14 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { AlertCircle, CheckCircle, ExternalLink, Mail, ShieldCheck } from 'lucide-react';
+import { AlertCircle, CheckCircle, ExternalLink, FlaskConical, Mail, ShieldCheck, Trash2 } from 'lucide-react';
 import Link from 'next/link';
 import PageHeader from '@/components/platform/PageHeader';
 import AdminSectionTabs, { SYSTEM_TABS } from '@/components/platform/AdminSectionTabs';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth/AuthProvider';
+import { enableTestMode, leaveTestMode, useTestModeUid } from '@/lib/testMode';
 
 const PLATFORM = [
   { name: 'Supabase Auth', status: 'Connected' },
@@ -160,7 +162,235 @@ function AlertEmailCard() {
   );
 }
 
+/** Extra inboxes that also receive emails sent in test mode. */
+function TestEmailsEditor() {
+  const [emails, setEmails] = useState<string[]>([]);
+  const [draft, setDraft] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null);
+
+  useEffect(() => {
+    api.get<{ emails: string[] }>('/settings/test-mode-emails')
+      .then((r) => setEmails(r.emails))
+      .catch(() => { /* leave the list empty */ });
+  }, []);
+
+  async function save(next: string[], done: string) {
+    setSaving(true);
+    setMsg(null);
+    try {
+      const r = await api.put<{ emails: string[] }>('/settings/test-mode-emails', { emails: next });
+      setEmails(r.emails);
+      setMsg({ kind: 'ok', text: done });
+      return true;
+    } catch (e) {
+      setMsg({ kind: 'error', text: e instanceof Error ? e.message : 'Could not save test emails.' });
+      return false;
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function add() {
+    const addr = draft.trim().toLowerCase();
+    if (!addr) return;
+    if (emails.includes(addr)) { setDraft(''); return; }
+    if (await save([...emails, addr], `${addr} will receive test emails.`)) setDraft('');
+  }
+
+  return (
+    <div className="mt-5 border-t border-white/10 pt-4">
+      <h3 className="text-xs font-bold text-theme-heading flex items-center gap-1.5">
+        <Mail size={13} /> Test email recipients
+      </h3>
+      <p className="text-xs text-theme-muted mt-1">
+        Emails sent in test mode go to whoever is testing, plus these addresses. Nobody else receives them.
+      </p>
+      {emails.length > 0 && (
+        <ul className="mt-3 flex flex-wrap gap-2">
+          {emails.map((e) => (
+            <li key={e} className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/[0.04] pl-3 pr-1.5 py-1 text-xs text-theme-heading">
+              {e}
+              <button
+                type="button"
+                aria-label={`Remove ${e}`}
+                disabled={saving}
+                onClick={() => void save(emails.filter((x) => x !== e), `${e} removed.`)}
+                className="rounded-full p-0.5 text-theme-muted hover:text-danger disabled:opacity-50"
+              >
+                <Trash2 size={12} />
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <form
+        className="mt-3 flex flex-wrap gap-2"
+        onSubmit={(ev) => { ev.preventDefault(); void add(); }}
+      >
+        <input
+          type="email"
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="name@company.com"
+          className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-theme-heading"
+        />
+        <button type="submit" disabled={saving || !draft.trim()} className="btn-secondary text-xs disabled:opacity-50">
+          {saving ? 'Saving…' : 'Add email'}
+        </button>
+      </form>
+      {msg && (
+        <p className={`mt-2 text-xs ${msg.kind === 'ok' ? 'text-emerald-accent' : 'text-danger'}`}>{msg.text}</p>
+      )}
+    </div>
+  );
+}
+
+interface TestModeState {
+  ready: boolean;
+  building: boolean;
+  error: string | null;
+}
+
+function TestModeCard({ uid }: { uid: string }) {
+  const on = useTestModeUid() === uid;
+  const [state, setState] = useState<TestModeState | null>(null);
+  const [waiting, setWaiting] = useState(false);
+  const [clearing, setClearing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [note, setNote] = useState<string | null>(null);
+
+  useEffect(() => {
+    api.get<TestModeState>('/test-mode').then(setState).catch((e) => {
+      setError(e instanceof Error ? e.message : 'Could not load test mode.');
+    });
+  }, []);
+
+  useEffect(() => {
+    if (!waiting) return;
+    const timer = setInterval(async () => {
+      try {
+        const next = await api.get<TestModeState>('/test-mode');
+        setState(next);
+        if (next.ready) {
+          enableTestMode(uid);
+          window.location.reload();
+        } else if (!next.building) {
+          setWaiting(false);
+          setError(next.error || 'Setting up the test workspace failed. Try again.');
+        }
+      } catch { /* keep polling */ }
+    }, 3000);
+    return () => clearInterval(timer);
+  }, [waiting, uid]);
+
+  async function turnOn() {
+    setError(null); setNote(null);
+    try {
+      const next = await api.post<TestModeState>('/test-mode/prepare', {});
+      setState(next);
+      if (next.ready) {
+        enableTestMode(uid);
+        window.location.reload();
+      } else {
+        setWaiting(true);
+      }
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not turn on test mode.');
+    }
+  }
+
+  async function clearData() {
+    if (!window.confirm('Delete all test data for every admin? Real data is not affected.')) return;
+    setClearing(true); setError(null); setNote(null);
+    try {
+      const next = await api.delete<TestModeState>('/test-mode/data');
+      setState(next);
+      if (on) {
+        leaveTestMode();
+        return;
+      }
+      setNote('Test data cleared. Turning test mode on again starts with an empty workspace.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Could not clear test data.');
+    } finally {
+      setClearing(false);
+    }
+  }
+
+  const busy = waiting || state?.building;
+
+  return (
+    <section className="glass-panel p-5">
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex items-start gap-3">
+          <span className="mt-0.5 inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-xl border border-amber-400/40 bg-amber-400/10 text-amber-400">
+            <FlaskConical size={16} />
+          </span>
+          <div>
+            <h2 className="text-sm font-bold text-theme-heading">Test mode</h2>
+            <p className="text-xs text-theme-muted mt-1">
+              While it&apos;s on you work in a test copy of the platform that starts empty: everything you add is
+              test data, and real workers, payroll and desktops are hidden. Every admin who turns test mode on
+              shares the same test data, and it stays until someone clears it. Everyone else keeps working on
+              real data. Emails only go to your own address and the test addresses below, marked [TEST], and real
+              desktop logins and accounts can&apos;t be changed.
+            </p>
+          </div>
+        </div>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Test mode"
+          disabled={!!busy || !state}
+          onClick={() => (on ? leaveTestMode() : void turnOn())}
+          className={`theme-toggle-track shrink-0 disabled:opacity-50 ${on ? '!bg-amber-400/80' : ''}`}
+        >
+          <span className={`theme-toggle-thumb ${on ? 'translate-x-5' : ''}`} />
+        </button>
+      </div>
+
+      <div className="mt-4 space-y-2">
+        {busy && (
+          <p className="text-xs text-amber-400 flex items-center gap-2">
+            <SpinningDots size="sm" className="text-amber-400" /> Setting up your test workspace — about a minute…
+          </p>
+        )}
+        {error && (
+          <p className="text-xs text-danger flex items-start gap-1.5">
+            <AlertCircle size={12} className="shrink-0 mt-0.5" /> {error}
+          </p>
+        )}
+        {note && (
+          <p className="text-xs text-emerald-accent flex items-start gap-1.5">
+            <CheckCircle size={12} className="shrink-0 mt-0.5" /> {note}
+          </p>
+        )}
+        {state?.ready && (
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <p className="text-xs text-theme-muted">
+              {on ? 'Test mode is on.' : 'Test mode is off. Your test data is kept for next time.'}
+            </p>
+            <button
+              type="button"
+              onClick={() => void clearData()}
+              disabled={clearing}
+              className="inline-flex items-center gap-1.5 text-xs font-semibold text-danger hover:underline disabled:opacity-50"
+            >
+              <Trash2 size={12} /> {clearing ? 'Clearing…' : 'Clear test data'}
+            </button>
+          </div>
+        )}
+      </div>
+
+      <TestEmailsEditor />
+    </section>
+  );
+}
+
 export default function SystemSettingsPage() {
+  const { session } = useAuth();
   return (
     <div>
       <PageHeader
@@ -169,6 +399,7 @@ export default function SystemSettingsPage() {
       <AdminSectionTabs tabs={SYSTEM_TABS} />
 
       <div className="max-w-3xl mx-auto space-y-6">
+        {(session?.authRole === 'admin' || session?.authRole === 'super_admin') && <TestModeCard uid={session.uid} />}
         <AlertEmailCard />
 
         <section className="glass-panel p-5">

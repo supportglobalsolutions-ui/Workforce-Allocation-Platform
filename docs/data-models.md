@@ -1315,7 +1315,6 @@ This matrix links the DB roles to the portal layers above.
 | ERD produced | ✅ Mermaid diagrams above |
 | User roles defined | ✅ Charter + `frontend/lib/auth/config.ts` (demo roles) |
 | Wireframes for major screens | ✅ Implemented as Next.js pages under `frontend/app/` |
-| Sprint plan for remaining 83 days | ⬜ To be added in `docs/phase-progress.md` |
 | GlobalSolutions approval | ⬜ Pending review |
 
 ---

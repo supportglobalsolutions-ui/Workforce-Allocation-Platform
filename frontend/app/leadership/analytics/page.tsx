@@ -37,6 +37,7 @@ import {
 } from '@/lib/intelligence/briefing';
 import { pickCurrentPeriod } from '@/lib/periods';
 import { plainText } from '@/lib/intelligence/plain';
+import { formatMoney, useMoneyDisplay } from '@/lib/money';
 
 ChartJS.register(
   CategoryScale,
@@ -213,7 +214,7 @@ const DOMAIN_LABEL: Record<string, string> = {
 };
 
 function fmtMoney(x: number, currency = 'USD') {
-  return `${currency} ${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatMoney(x, currency);
 }
 
 function fmtHours(x: number) {
@@ -363,6 +364,7 @@ function NeedCard({ move, currency }: { move: BriefingMove; currency: string }) 
 }
 
 export default function OrganizationAnalyticsPage() {
+  useMoneyDisplay();
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [periodId, setPeriodId] = useState('');
   const [loading, setLoading] = useState(true);

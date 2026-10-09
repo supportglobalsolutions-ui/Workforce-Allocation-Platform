@@ -7,6 +7,9 @@ sqlmodel>=0.0.21
 sqlalchemy>=2.0.30
 alembic>=1.13.1
 psycopg2-binary>=2.9.9
+# Pure-Python fallback for development environments where Windows blocks the
+# native psycopg2 extension through Application Control.
+pg8000>=1.31.5
 
 # Validation & settings
 pydantic>=2.7.1

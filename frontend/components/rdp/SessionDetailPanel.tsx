@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { Flag, X } from 'lucide-react';
+import { Flag, Plus, X } from 'lucide-react';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionImageGallery from './SessionImageGallery';
 import { api } from '@/lib/api';
@@ -24,6 +24,8 @@ interface SessionDetail {
   image_urls?: string[] | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
+  /** Worked blocks inside the session (breaks excluded), at most 10. */
+  work_blocks?: { start: string; end: string }[] | null;
   evidence_complete?: boolean | null;
   duration_minutes?: number | null;
   /** Admin-only review flag — never shown to workers. */
@@ -64,6 +66,24 @@ function formatMins(minutes: number | null | undefined): string {
   return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
 }
 
+const MAX_BLOCKS = 10;
+
+interface BlockDraft { start: string; end: string }
+
+/** Saved blocks, else the single start/end pair, else one empty row. */
+function initialBlocks(session: SessionDetail | null): BlockDraft[] {
+  const saved = session?.work_blocks ?? [];
+  if (saved.length) return saved.map((b) => ({ start: toLocalInput(b.start), end: toLocalInput(b.end) }));
+  if (session?.image_start_at || session?.image_end_at) {
+    return [{ start: toLocalInput(session.image_start_at), end: toLocalInput(session.image_end_at) }];
+  }
+  return [{ start: '', end: '' }];
+}
+
+function localToIso(value: string): string | null {
+  return value ? new Date(value).toISOString() : null;
+}
+
 function minutesBetween(
   start: string | null | undefined,
   end: string | null | undefined,
@@ -86,56 +106,64 @@ export default function SessionDetailPanel({
   allowUpload = true,
   allowSuspiciousFlag = false,
 }: Props) {
-  const [startAt, setStartAt] = useState(() => toLocalInput(session?.image_start_at));
-  const [endAt, setEndAt] = useState(() => toLocalInput(session?.image_end_at));
+  const [blocks, setBlocks] = useState<BlockDraft[]>(() => initialBlocks(session));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suspicious, setSuspicious] = useState(Boolean(session?.suspicious));
   const [flagBusy, setFlagBusy] = useState(false);
 
   useEffect(() => {
-    setStartAt(toLocalInput(session?.image_start_at));
-    setEndAt(toLocalInput(session?.image_end_at));
+    setBlocks(initialBlocks(session));
     setSuspicious(Boolean(session?.suspicious));
-  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.suspicious]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.work_blocks, session?.suspicious]);
 
   if (!session) return null;
 
-  const draftWorkMinutes = minutesBetween(
-    startAt ? new Date(startAt).toISOString() : null,
-    endAt ? new Date(endAt).toISOString() : null,
-  );
-  const savedWorkMinutes = minutesBetween(session.image_start_at, session.image_end_at);
+  // Work time = sum of the blocks; the breaks between them are not counted.
+  const blockMins = blocks.map((b) => minutesBetween(localToIso(b.start), localToIso(b.end)));
+  const draftWorkMinutes = blockMins.every((m) => m != null)
+    ? blockMins.reduce<number>((sum, m) => sum + (m ?? 0), 0)
+    : null;
+  const savedWorkMinutes = session.duration_minutes
+    ?? minutesBetween(session.image_start_at, session.image_end_at);
   const workMinutes = allowEvidenceEdit ? (draftWorkMinutes ?? savedWorkMinutes) : savedWorkMinutes;
+  const lastBlock = blocks[blocks.length - 1];
+  const canAddBlock = blocks.length < MAX_BLOCKS && !!lastBlock?.start && !!lastBlock?.end;
+  const allFilled = blocks.every((b) => b.start && b.end);
+  const updateBlock = (i: number, key: keyof BlockDraft, value: string) =>
+    setBlocks((prev) => prev.map((b, j) => (j === i ? { ...b, [key]: value } : b)));
   const rdpMinutes = session.rdp_minutes
     ?? rdpConnectedMinutes({ start_time: session.start_time, end_time: session.end_time });
   const showRdp = formatMins(rdpMinutes);
 
   const saveEvidence = async () => {
     if (!allowEvidenceEdit) return;
-    if (!startAt || !endAt) {
-      setError('Enter a start time and an end time.');
+    if (!allFilled) {
+      setError('Enter a start time and an end time for every block.');
       return;
     }
-    if (workMinutes == null) {
-      setError('End time must be after the start time.');
+    if (draftWorkMinutes == null) {
+      setError('Each end time must be after its start time.');
       return;
     }
     setSaving(true);
     setError(null);
     try {
-      const body: Record<string, string> = {};
-      if (startAt) body.image_start_at = new Date(startAt).toISOString();
-      if (endAt) body.image_end_at = new Date(endAt).toISOString();
+      const body = {
+        work_blocks: blocks.map((b) => ({ start: localToIso(b.start), end: localToIso(b.end) })),
+      };
       const updated = await api.patch<{
         duration_minutes: number | null;
         image_start_at: string | null;
         image_end_at: string | null;
+        work_blocks: { start: string; end: string }[];
         evidence_complete: boolean;
       }>(`/sessions/${session.id}/evidence`, body);
       onEvidenceSaved?.(session.id, {
         image_start_at: updated.image_start_at,
         image_end_at: updated.image_end_at,
+        work_blocks: updated.work_blocks,
         duration_minutes: updated.duration_minutes,
         evidence_complete: updated.evidence_complete,
       });
@@ -200,7 +228,7 @@ export default function SessionDetailPanel({
             <p className="text-sm font-medium text-gray-800">{session.type}</p>
           </div>
           <div>
-            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5">Connected</p>
+            <p className="text-[10px] font-semibold uppercase tracking-widest text-gray-400 mb-0.5" title="Tracked automatically: how long the RDP was on">Uptime (RDP on)</p>
             <p className="text-sm font-bold text-gray-800 tabular-nums">{showRdp}</p>
           </div>
           <div>
@@ -257,45 +285,71 @@ export default function SessionDetailPanel({
           />
         </div>
 
-        <div className="px-4 sm:px-6 py-5 grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <div>
-            {allowEvidenceEdit ? (
-              <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time</span>
-                <input
-                  type="datetime-local"
-                  required
-                  value={startAt}
-                  onChange={(e) => setStartAt(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
-                />
-              </label>
-            ) : (
-              <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">Start time</span>
-                {formatClock(session.image_start_at)}
-              </p>
-            )}
+        <div className="px-4 sm:px-6 py-5">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-emerald-600">Work times</p>
+          <p className="text-xs text-gray-500 mt-0.5 mb-3">
+            {allowEvidenceEdit
+              ? 'Took a break? Add each stretch you worked as its own block. Work hours are the total of all blocks.'
+              : 'Each stretch worked; breaks between them are not counted.'}
+          </p>
+          <div className="space-y-2.5">
+            {blocks.map((b, i) => (
+              <div key={i} className="rounded-xl border border-gray-200 p-3">
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">
+                    Block {i + 1}{blockMins[i] != null ? ` · ${formatMins(blockMins[i])}` : ''}
+                  </span>
+                  {allowEvidenceEdit && blocks.length > 1 && (
+                    <button
+                      type="button"
+                      aria-label={`Remove block ${i + 1}`}
+                      onClick={() => setBlocks((prev) => prev.filter((_, j) => j !== i))}
+                      className="w-6 h-6 inline-flex items-center justify-center rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50"
+                    >
+                      <X size={12} />
+                    </button>
+                  )}
+                </div>
+                {allowEvidenceEdit ? (
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">Start time</span>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={b.start}
+                        onChange={(e) => updateBlock(i, 'start', e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
+                      />
+                    </label>
+                    <label className="block">
+                      <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">End time</span>
+                      <input
+                        type="datetime-local"
+                        required
+                        value={b.end}
+                        onChange={(e) => updateBlock(i, 'end', e.target.value)}
+                        className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
+                      />
+                    </label>
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-600">
+                    {formatClock(localToIso(b.start))} → {formatClock(localToIso(b.end))}
+                  </p>
+                )}
+              </div>
+            ))}
           </div>
-          <div>
-            {allowEvidenceEdit ? (
-              <label className="block mt-3">
-                <span className="text-[10px] font-semibold uppercase tracking-wider text-gray-400">End time</span>
-                <input
-                  type="datetime-local"
-                  required
-                  value={endAt}
-                  onChange={(e) => setEndAt(e.target.value)}
-                  className="mt-1 w-full rounded-lg border border-gray-200 px-2 py-1.5 text-sm text-gray-800"
-                />
-              </label>
-            ) : (
-              <p className="mt-3 text-xs text-gray-500">
-                <span className="block text-[10px] font-semibold uppercase tracking-wider text-gray-400 mb-0.5">End time</span>
-                {formatClock(session.image_end_at)}
-              </p>
-            )}
-          </div>
+          {allowEvidenceEdit && canAddBlock && (
+            <button
+              type="button"
+              onClick={() => setBlocks((prev) => [...prev, { start: '', end: '' }])}
+              className="mt-2.5 inline-flex items-center gap-1.5 rounded-lg border border-dashed border-emerald-300 px-3 py-1.5 text-xs font-semibold text-emerald-700 hover:bg-emerald-50"
+            >
+              <Plus size={13} /> Add another block ({blocks.length}/{MAX_BLOCKS})
+            </button>
+          )}
         </div>
 
         {error && <p className="px-6 text-xs text-red-600 mb-2">{error}</p>}
@@ -304,7 +358,7 @@ export default function SessionDetailPanel({
           <div className="px-6 pb-6">
             <button
               type="button"
-              disabled={saving || !startAt || !endAt}
+              disabled={saving || !allFilled}
               onClick={saveEvidence}
               className="w-full rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold py-2.5"
             >

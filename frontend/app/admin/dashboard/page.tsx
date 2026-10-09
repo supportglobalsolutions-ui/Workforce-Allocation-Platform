@@ -25,6 +25,7 @@ import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import AbsenceReportsButton from '@/components/absence/AbsenceReportsButton';
+import AuditLogDetailModal, { AuditLogEyeButton, type AuditLogEntry } from '@/components/admin/AuditLogDetailModal';
 import { absenceSummary } from '@/lib/absence-reports';
 import { useAuth } from '@/lib/auth/AuthProvider';
 import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
@@ -77,14 +78,7 @@ interface QualityScore {
   period_label?: string | null;
 }
 
-interface AuditLog {
-  id: string;
-  actor_id: string | null;
-  action: string;
-  target_type: string;
-  target_id: string;
-  created_at: string;
-}
+type AuditLog = AuditLogEntry;
 
 interface PayrollPeriod {
   id: string;
@@ -205,6 +199,7 @@ export default function AdminDashboard() {
   const [scores, setScores] = useState<QualityScore[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLog[]>([]);
+  const [viewLog, setViewLog] = useState<AuditLog | null>(null);
   const [absencesPending, setAbsencesPending] = useState(0);
 
   useEffect(() => {
@@ -669,27 +664,38 @@ export default function AdminDashboard() {
           <p className="text-sm text-theme-muted px-4 py-8 text-center">No recent activity.</p>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[480px]">
+            <table className="w-full text-sm min-w-[520px]">
               <thead>
                 <tr className="border-b border-theme">
-                  <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Time</th>
-                  <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Actor</th>
-                  <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Action</th>
-                  <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted hidden md:table-cell">Target</th>
+                  <th className="text-left px-4 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">When</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">Who</th>
+                  <th className="text-left px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-theme-muted">What happened</th>
+                  <th className="w-12 px-3 py-2"><span className="sr-only">Details</span></th>
                 </tr>
               </thead>
               <tbody>
                 {auditLogs.map((log) => (
                   <tr key={log.id} className="border-b border-theme/60 last:border-0 hover:bg-white/[0.02]">
-                    <td className="px-4 py-2.5 text-xs font-mono text-theme-muted whitespace-nowrap">
-                      {new Date(log.created_at).toLocaleString()}
+                    <td className="px-4 py-2.5 text-xs text-theme-muted whitespace-nowrap align-top">
+                      {new Date(log.created_at).toLocaleString(undefined, {
+                        month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit',
+                      })}
                     </td>
-                    <td className="px-3 py-2.5 font-medium text-theme-heading whitespace-nowrap">
-                      {log.actor_id ? `${log.actor_id.slice(0, 8)}…` : 'System'}
+                    <td className="px-3 py-2.5 font-medium text-theme-heading whitespace-nowrap align-top">
+                      {log.actor_name || (log.actor_id ? 'Unknown user' : 'System')}
                     </td>
-                    <td className="px-3 py-2.5 text-emerald-accent font-semibold text-xs">{log.action}</td>
-                    <td className="px-4 py-2.5 text-theme-muted text-xs hidden md:table-cell">
-                      {log.target_type} {log.target_id.slice(0, 8)}…
+                    <td className="px-3 py-2.5 align-top">
+                      <p className="text-sm text-theme-heading leading-snug">
+                        {log.summary || log.action_label || log.action}
+                      </p>
+                      {(log.action_label || log.target_label) && log.summary && (
+                        <p className="text-[11px] text-theme-muted mt-0.5">
+                          {[log.action_label, log.target_label].filter(Boolean).join(' · ')}
+                        </p>
+                      )}
+                    </td>
+                    <td className="px-3 py-1.5 text-right align-top">
+                      <AuditLogEyeButton onClick={() => setViewLog(log)} />
                     </td>
                   </tr>
                 ))}
@@ -698,6 +704,7 @@ export default function AdminDashboard() {
           </div>
         )}
       </div>
+      {viewLog && <AuditLogDetailModal log={viewLog} onClose={() => setViewLog(null)} />}
     </div>
   );
 }

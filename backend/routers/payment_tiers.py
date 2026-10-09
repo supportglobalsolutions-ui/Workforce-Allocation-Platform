@@ -11,9 +11,12 @@ from models.enums import RateTypeEnum, WorkerStatusEnum, WorkerTypeEnum
 from models.payment_tier import PaymentTier, hourly_equivalent
 from models.rate_table import RateTableEntry
 from models.worker import Worker
+from models.client import Client
 from schemas.payment_tier import (
     PaymentTierAssignRequest,
     PaymentTierAssignResponse,
+    PaymentTierClientsRequest,
+    PaymentTierClientsResponse,
     PaymentTierCreate,
     PaymentTierResponse,
     PaymentTierUnassignResponse,
@@ -21,6 +24,7 @@ from schemas.payment_tier import (
 )
 from services.currency_names import currency_name
 from services.fx import store_api_rates_for_codes
+from services.payroll_engine import refresh_open_summaries_for_workers
 from .deps import get_admin_user
 
 router = APIRouter()
@@ -52,11 +56,29 @@ def _member_counts(db: Session) -> dict[str, int]:
     return {name: n for name, n in rows if name}
 
 
-def _tier_response(tier: PaymentTier, member_count: int = 0) -> PaymentTierResponse:
+def _client_counts(db: Session) -> dict[UUID, int]:
+    rows = db.exec(
+        select(Client.payment_tier_id, func.count())
+        .where(Client.payment_tier_id.is_not(None))
+        .group_by(Client.payment_tier_id)
+    ).all()
+    return {tier_id: n for tier_id, n in rows}
+
+
+def _tier_response(tier: PaymentTier, member_count: int = 0, client_count: int = 0) -> PaymentTierResponse:
     resp = PaymentTierResponse.model_validate(tier)
     resp.hourly_equivalent = hourly_equivalent(tier.rate, tier.unit)
     resp.member_count = member_count
+    resp.client_count = client_count
     return resp
+
+
+def _for_workers(tier: PaymentTier) -> bool:
+    return tier.applies_to in ("workers", "both")
+
+
+def _for_clients(tier: PaymentTier) -> bool:
+    return tier.applies_to in ("clients", "both")
 
 
 def _sync_rate_table(db: Session, tier: PaymentTier, admin_id: UUID) -> None:
@@ -101,14 +123,21 @@ def _sync_rate_table(db: Session, tier: PaymentTier, admin_id: UUID) -> None:
 @router.get("", response_model=list[PaymentTierResponse])
 def list_payment_tiers(
     active_only: bool = Query(False),
+    scope: str | None = Query(None, pattern="^(workers|clients)$"),
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
     stmt = select(PaymentTier).order_by(PaymentTier.name)
     if active_only:
         stmt = stmt.where(PaymentTier.is_active.is_(True))
+    if scope:
+        stmt = stmt.where(PaymentTier.applies_to.in_([scope, "both"]))
     counts = _member_counts(db)
-    return [_tier_response(t, counts.get(t.name, 0)) for t in db.exec(stmt).all()]
+    clients = _client_counts(db)
+    return [
+        _tier_response(t, counts.get(t.name, 0) if _for_workers(t) else 0, clients.get(t.id, 0))
+        for t in db.exec(stmt).all()
+    ]
 
 
 @router.post("", response_model=PaymentTierResponse, status_code=status.HTTP_201_CREATED)
@@ -136,10 +165,12 @@ def create_payment_tier(
         unit=body.unit,
         description=body.description,
         is_active=body.is_active,
+        applies_to=body.applies_to,
     )
     db.add(tier)
     db.flush()
-    _sync_rate_table(db, tier, admin.id)
+    if _for_workers(tier):
+        _sync_rate_table(db, tier, admin.id)
     db.commit()
     db.refresh(tier)
     return _tier_response(tier, 0)
@@ -170,6 +201,21 @@ def update_payment_tier(
         _ensure_currency_for_fx(db, data["currency"])
     if "rate" in data and data["rate"] is not None and data["rate"] <= 0:
         raise HTTPException(status_code=400, detail="Rate must be positive.")
+    scope = data.get("applies_to")
+    if scope == "workers":
+        in_use = _client_counts(db).get(tier.id, 0)
+        if in_use:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{in_use} client{'s' if in_use != 1 else ''} use this tier. Remove it from them first.",
+            )
+    if scope == "clients":
+        in_use = _member_counts(db).get(tier.name, 0)
+        if in_use:
+            raise HTTPException(
+                status_code=400,
+                detail=f"{in_use} worker{'s' if in_use != 1 else ''} use this tier. Unassign them first.",
+            )
 
     for key, value in data.items():
         setattr(tier, key, value)
@@ -185,12 +231,15 @@ def update_payment_tier(
             db.add(row)
 
     admin = get_admin_user(db, current_user)
-    if tier.is_active:
+    if tier.is_active and _for_workers(tier):
         _sync_rate_table(db, tier, admin.id)
+        db.flush()
+        members = db.exec(select(Worker.id).where(Worker.pay_tier == tier.name)).all()
+        refresh_open_summaries_for_workers(db, members)
     db.commit()
     db.refresh(tier)
     counts = _member_counts(db)
-    return _tier_response(tier, counts.get(tier.name, 0))
+    return _tier_response(tier, counts.get(tier.name, 0), _client_counts(db).get(tier.id, 0))
 
 
 @router.post("/{tier_id}/assign", response_model=PaymentTierAssignResponse)
@@ -205,11 +254,15 @@ def assign_payment_tier(
         raise HTTPException(status_code=404, detail="Payment tier not found")
     if not tier.is_active:
         raise HTTPException(status_code=400, detail="Cannot assign an inactive tier.")
+    if not _for_workers(tier):
+        raise HTTPException(status_code=400, detail=f"{tier.name} is a client tier. Assign it to clients instead.")
 
     workers = _workers_for_assign(db, body)
     for w in workers:
         w.pay_tier = tier.name
         db.add(w)
+    db.flush()
+    refresh_open_summaries_for_workers(db, [w.id for w in workers])
     db.commit()
     return PaymentTierAssignResponse(assigned=len(workers), tier_name=tier.name)
 
@@ -262,6 +315,49 @@ def unassign_payment_tier(
         db.add(w)
     db.commit()
     return PaymentTierUnassignResponse(removed=len(workers), tier_name=tier.name)
+
+
+@router.post("/{tier_id}/assign-clients", response_model=PaymentTierClientsResponse)
+def assign_tier_to_clients(
+    tier_id: UUID,
+    body: PaymentTierClientsRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Bill these clients at the tier's hourly rate (it replaces their typed rate)."""
+    tier = db.get(PaymentTier, tier_id)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Payment tier not found")
+    if not tier.is_active:
+        raise HTTPException(status_code=400, detail="Cannot assign an inactive tier.")
+    if not _for_clients(tier):
+        raise HTTPException(status_code=400, detail=f"{tier.name} is a worker tier. Set it to apply to clients first.")
+    clients = db.exec(select(Client).where(Client.id.in_(body.client_ids))).all() if body.client_ids else []
+    for c in clients:
+        c.payment_tier_id = tier.id
+        db.add(c)
+    db.commit()
+    return PaymentTierClientsResponse(changed=len(clients), tier_name=tier.name)
+
+
+@router.post("/{tier_id}/unassign-clients", response_model=PaymentTierClientsResponse)
+def unassign_tier_from_clients(
+    tier_id: UUID,
+    body: PaymentTierClientsRequest,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    tier = db.get(PaymentTier, tier_id)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Payment tier not found")
+    clients = db.exec(
+        select(Client).where(Client.id.in_(body.client_ids), Client.payment_tier_id == tier.id)
+    ).all() if body.client_ids else []
+    for c in clients:
+        c.payment_tier_id = None
+        db.add(c)
+    db.commit()
+    return PaymentTierClientsResponse(changed=len(clients), tier_name=tier.name)
 
 
 @router.delete("/{tier_id}", status_code=status.HTTP_204_NO_CONTENT)

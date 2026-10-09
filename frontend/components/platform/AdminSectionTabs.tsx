@@ -69,16 +69,20 @@ export const QUALITY_TABS: SectionTab[] = [
   { label: 'Training', href: '/admin/training' },
 ];
 
-/** Finance hub: period ledger, tiers, wallets / FX / reports. */
+/** Finance hub: payroll, tiers, wallets / FX / reports. */
 export const PAYROLL_TABS: SectionTab[] = [
-  { label: 'Period ledger', href: '/admin/payroll' },
+  { label: 'Payroll', href: '/admin/payroll' },
   { label: 'Tiers', href: '/admin/payroll/tiers' },
+  { label: 'Monthly approvals', href: '/admin/payroll/approvals' },
   { label: 'Calendar', href: '/admin/calendar' },
   { label: 'Calculate', href: '/admin/payroll/calculate' },
   { label: 'Export', href: '/admin/payroll/export' },
   { label: 'Wallets', href: '/admin/wallets' },
   { label: 'Currencies', href: '/admin/currencies' },
   { label: 'Reports', href: '/admin/reports' },
+  { label: 'Hours', href: '/admin/payroll/hours' },
+  { label: 'Month', href: '/admin/payroll/month' },
+  { label: 'Client payouts', href: '/admin/payroll/client-payouts' },
 ];
 
 /** @deprecated use PAYROLL_TABS */
@@ -89,7 +93,7 @@ export const FINANCE_HUB_TABS = PAYROLL_TABS;
 
 export const SYSTEM_TABS: SectionTab[] = [
   { label: 'Settings', href: '/admin/settings' },
-  { label: 'Audit Logs', href: '/admin/audit-logs' },
+  { label: 'Activity log', href: '/admin/audit-logs' },
 ];
 
 /** @deprecated kept for any leftover imports — prefer sidebar destinations */

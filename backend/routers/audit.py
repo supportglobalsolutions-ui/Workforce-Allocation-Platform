@@ -7,6 +7,7 @@ from core.database import get_db
 from core.permissions import require_admin
 from models.audit_log import AuditLog
 from schemas.audit_log import AuditLogResponse
+from services.audit_present import present_audit_entries, present_audit_entry
 
 router = APIRouter()
 
@@ -24,7 +25,8 @@ def list_audit_logs(
         stmt = stmt.where(AuditLog.action == action)
     if target_type:
         stmt = stmt.where(AuditLog.target_type == target_type)
-    return db.exec(stmt.order_by(AuditLog.created_at.desc()).limit(limit)).all()
+    rows = db.exec(stmt.order_by(AuditLog.created_at.desc()).limit(limit)).all()
+    return [AuditLogResponse(**item) for item in present_audit_entries(db, list(rows))]
 
 
 @router.get("/{entry_id}", response_model=AuditLogResponse)
@@ -36,7 +38,7 @@ def get_audit_log(
     entry = db.exec(select(AuditLog).where(AuditLog.id == entry_id)).first()
     if not entry:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log entry not found")
-    return entry
+    return AuditLogResponse(**present_audit_entry(db, entry))
 
 
 @router.post("", status_code=status.HTTP_405_METHOD_NOT_ALLOWED)

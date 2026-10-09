@@ -233,6 +233,21 @@ function WorkerDetailModal({
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState<WorkerAdminForm>(() => adminFormFromWorker(worker));
   const [editSaving, setEditSaving] = useState(false);
+  const [statusSaving, setStatusSaving] = useState(false);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  async function changeStatus(next: 'active' | 'inactive') {
+    setStatusSaving(true);
+    setStatusError(null);
+    try {
+      const resp = await api.patch<Partial<Worker>>(`/workers/${worker.id}`, { status: next });
+      onUpdated({ ...worker, status: next, ...resp } as Worker);
+    } catch (e: unknown) {
+      setStatusError(e instanceof Error ? e.message : 'Could not change status.');
+    } finally {
+      setStatusSaving(false);
+    }
+  }
   const [editError, setEditError] = useState<string | null>(null);
   const [showRate, setShowRate] = useState(false);
   const [rdpOptions, setRdpOptions] = useState<RDPResource[] | null>(null);
@@ -285,7 +300,7 @@ function WorkerDetailModal({
 
   useEffect(() => {
     if (!editing || paymentTiers !== null) return;
-    api.get<{ name: string; is_active: boolean }[]>('/payment-tiers?active_only=true')
+    api.get<{ name: string; is_active: boolean }[]>('/payment-tiers?active_only=true&scope=workers')
       .then((t) => setPaymentTiers(t.map((x) => ({ name: x.name }))))
       .catch(() => setPaymentTiers([]));
   }, [editing, paymentTiers]);
@@ -447,7 +462,23 @@ function WorkerDetailModal({
                     <DetailField label="Mobile money name" value={worker.mobile_money_name || '—'} />
                     <DetailField label="Provider" value={worker.mobile_money_provider || '—'} />
                     <DetailField label="Worker Type" value={<WorkerTypeBadge worker={worker} />} />
-                    <DetailField label="Status" value={<StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />} />
+                    <DetailField
+                      label="Status"
+                      value={
+                        <span className="inline-flex flex-wrap items-center gap-2">
+                          <StatusBadge status={worker.status === 'active' ? 'approved' : 'offline'} label={worker.status} />
+                          <button
+                            type="button"
+                            disabled={statusSaving}
+                            onClick={() => void changeStatus(worker.status === 'active' ? 'inactive' : 'active')}
+                            className="rounded-lg border border-white/10 px-2 py-0.5 text-[11px] font-semibold text-theme-heading hover:border-emerald-accent/40 disabled:opacity-50"
+                          >
+                            {statusSaving ? 'Saving…' : worker.status === 'active' ? 'Mark inactive' : 'Mark active'}
+                          </button>
+                          {statusError && <span className="text-[11px] text-danger">{statusError}</span>}
+                        </span>
+                      }
+                    />
                     <DetailField label="Work Ready" value={<WorkReadyBadge ready={worker.work_ready} />} />
                     {(worker.account_banned || banStatus === 'banned') && (
                       <DetailField
@@ -845,6 +876,7 @@ export default function WorkersPage() {
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [actionNote, setActionNote] = useState<string | null>(null);
+  const [bulkStatusSaving, setBulkStatusSaving] = useState(false);
 
   async function loadWorkers() {
     setWorkersLoading(true);
@@ -935,6 +967,23 @@ export default function WorkersPage() {
     setSelectedWorker((prev) => (prev && prev.id === updated.id ? updated : prev));
   }
 
+  async function setSelectedStatus(next: 'active' | 'inactive') {
+    const ids = Array.from(selectedIds);
+    if (!ids.length) return;
+    setBulkStatusSaving(true);
+    const results = await Promise.allSettled(
+      ids.map((id) => api.patch<Partial<Worker>>(`/workers/${id}`, { status: next })),
+    );
+    const done = new Set(ids.filter((_, i) => results[i].status === 'fulfilled'));
+    setWorkers((prev) => prev.map((w) => (done.has(w.id) ? { ...w, status: next } : w)));
+    const failed = ids.length - done.size;
+    setActionNote(
+      `${done.size} worker${done.size === 1 ? '' : 's'} marked ${next}`
+      + (failed ? ` · ${failed} could not be changed` : '') + '.',
+    );
+    setBulkStatusSaving(false);
+  }
+
   function openBulkDelete() {
     const ids = Array.from(selectedIds).filter((id) => {
       const w = workers.find((row) => row.id === id);
@@ -963,6 +1012,26 @@ export default function WorkersPage() {
         title="Workers"
         actions={
           <div className="flex items-center gap-2">
+            {selectedIds.size > 0 && (
+              <>
+                <button
+                  type="button"
+                  disabled={bulkStatusSaving}
+                  onClick={() => void setSelectedStatus('active')}
+                  className="btn-secondary text-xs py-2 px-3 disabled:opacity-50"
+                >
+                  Mark active ({selectedIds.size})
+                </button>
+                <button
+                  type="button"
+                  disabled={bulkStatusSaving}
+                  onClick={() => void setSelectedStatus('inactive')}
+                  className="btn-secondary text-xs py-2 px-3 disabled:opacity-50"
+                >
+                  Mark inactive ({selectedIds.size})
+                </button>
+              </>
+            )}
             {selectedIds.size > 0 && (
               <button
                 type="button"

@@ -12,9 +12,10 @@ Calculation rules (confirmed by client):
 - Client revenue splits (GS vs account owner) apply only AFTER worker costs.
 """
 import logging
-from datetime import datetime, timezone
+from dataclasses import dataclass
+from datetime import date, datetime, timezone
 from decimal import Decimal, ROUND_HALF_UP
-from typing import Optional
+from typing import Iterable, Optional
 from uuid import UUID
 
 from sqlalchemy import update as sa_update
@@ -41,7 +42,8 @@ from models.wallet import Wallet, WalletTransaction
 from models.worker import Worker
 from services.client_owners import client_owner_name, owner_rollup_key
 from services.fx import currency_for_country, ensure_rate
-from services.session_evidence import effective_duration_minutes, evidence_hours_for_worker
+from services import hours_log
+from services.session_evidence import effective_duration_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -59,38 +61,83 @@ def _fx_to_local(db: Session, period: PayrollPeriod, local_currency: str) -> Opt
     return ensure_rate(db, period.currency, local_currency)
 
 
-def _rate_entry_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[RateTableEntry]:
-    """Latest applicable rate entry: worker-specific first, then pay-tier."""
-    stmt = (
+def _rate_entry_between(
+    db: Session, worker: Worker, start: date, end: date,
+) -> Optional[RateTableEntry]:
+    """Latest rate entry live in [start, end]: worker-specific first, then pay-tier."""
+    entry = db.exec(
         select(RateTableEntry)
         .where(
             RateTableEntry.worker_id == worker.id,
-            RateTableEntry.effective_from <= period.end_date,
+            RateTableEntry.effective_from <= end,
         )
         .order_by(RateTableEntry.effective_from.desc())
-    )
-    entry = db.exec(stmt).first()
+    ).first()
     if not entry:
         entry = db.exec(
             select(RateTableEntry)
             .where(
                 RateTableEntry.worker_id.is_(None),
                 RateTableEntry.pay_tier == worker.pay_tier,
-                RateTableEntry.effective_from <= period.end_date,
+                RateTableEntry.effective_from <= end,
             )
             .order_by(RateTableEntry.effective_from.desc())
         ).first()
     if not entry:
         return None
-    if entry.effective_to and entry.effective_to < period.start_date:
+    if entry.effective_to and entry.effective_to < start:
         return None
     return entry
 
 
-def _hourly_rate_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[Decimal]:
-    """Latest applicable hourly rate: worker-specific first, then pay-tier."""
+def _rate_entry_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[RateTableEntry]:
+    return _rate_entry_between(db, worker, period.start_date, period.end_date)
+
+
+@dataclass(frozen=True)
+class PayTerms:
+    """How one worker is paid in one period.
+
+    A rate is entered in its own currency (the tier's currency). That currency
+    is the payout currency, and the rate is used exactly as entered — it is
+    never treated as base currency and converted again.
+    """
+
+    currency: str
+    rate_local: Optional[Decimal]
+    rate_base: Optional[Decimal]
+    # 1 period-base = fx payout currency; None when no FX rate is available.
+    fx: Optional[Decimal]
+
+
+def pay_terms(db: Session, worker: Worker, period: PayrollPeriod) -> PayTerms:
     entry = _rate_entry_for(db, worker, period)
-    return entry.amount if entry else None
+    entry_currency = (entry.currency or "").strip().upper() if entry else ""
+    currency = (
+        entry_currency
+        or currency_for_country(db, worker.country)
+        or period.currency
+    ).upper()
+    fx = _fx_to_local(db, period, currency)
+    if fx is not None and fx <= 0:
+        fx = None
+    rate_local = Decimal(entry.amount) if entry else None
+    rate_base = (rate_local / fx) if (rate_local is not None and fx) else None
+    return PayTerms(currency=currency, rate_local=rate_local, rate_base=rate_base, fx=fx)
+
+
+def payout_currency_for_worker(db: Session, worker: Worker) -> str:
+    """Currency a worker is paid in today: their rate's currency, else their country's."""
+    today = date.today()
+    entry = _rate_entry_between(db, worker, today, today)
+    if entry and (entry.currency or "").strip():
+        return entry.currency.strip().upper()
+    return currency_for_country(db, worker.country) or "USD"
+
+
+def _hourly_rate_for(db: Session, worker: Worker, period: PayrollPeriod) -> Optional[Decimal]:
+    """Hourly rate converted to the period's base currency (for base-currency reports)."""
+    return pay_terms(db, worker, period).rate_base
 
 
 def _active_arrangement(db: Session, partner_entity_id: UUID, period: PayrollPeriod) -> Optional[PartnerArrangement]:
@@ -173,10 +220,8 @@ def sync_hours_from_sessions(
     worker_id: UUID,
     period: PayrollPeriod,
 ) -> Optional[PayrollWorkerSummary]:
-    """Rewrite hours_logged from summed session times and recompute hours × rate."""
-    start = datetime.combine(period.start_date, datetime.min.time(), tzinfo=timezone.utc)
-    end = datetime.combine(period.end_date, datetime.max.time(), tzinfo=timezone.utc)
-    hours, _, _ = evidence_hours_for_worker(db, worker_id, start, end, period_id=period.id)
+    """Refresh the worker's Hours Log rows, set hours_logged to their total and recompute."""
+    hours = hours_log.worker_total(db, period, worker_id)
     summary = db.exec(
         select(PayrollWorkerSummary).where(
             PayrollWorkerSummary.payroll_period_id == period.id,
@@ -221,6 +266,9 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         raise ValueError("Period is already approved — reopen it before recalculating")
 
     sessions = _sessions_for_period(db, period)
+    hours_log.refresh(db, period, sessions=sessions)
+    log_totals = hours_log.totals(db, period_id)
+    log_deltas = hours_log.manual_deltas(db, period_id)
 
     # Wipe previous calculation results (manual bonuses on summaries survive).
     db.exec(delete(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id))
@@ -236,6 +284,10 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
     by_worker: dict[UUID, list[WorkSession]] = {}
     for s in sessions:
         by_worker.setdefault(s.worker_id, []).append(s)
+    # Workers with only typed Hours Log rows are paid too.
+    for worker_id, total in log_totals.items():
+        if total > 0:
+            by_worker.setdefault(worker_id, [])
 
     # First pass: hours + base pay per worker, and line items per session.
     calc: dict[UUID, dict] = {}
@@ -244,30 +296,37 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         if not worker:
             continue
 
-        hours = Decimal(sum(effective_duration_minutes(s) for s in worker_sessions)) / Decimal(60)
-        hours = _q(hours)
-        rate = _hourly_rate_for(db, worker, period)
+        session_hours = _q(Decimal(sum(effective_duration_minutes(s) for s in worker_sessions)) / Decimal(60))
+        hours = log_totals.get(worker_id, session_hours)
+        terms = pay_terms(db, worker, period)
         flags: list[str] = []
-        base_pay = Decimal("0")
+        # Partner earnings arrive in the period's base currency.
+        partner_base = Decimal("0")
 
-        # GS RDP hours × rate
+        # GS RDP hours × rate, in the rate's own (payout) currency.
         gs_minutes = sum(
             effective_duration_minutes(s) for s in worker_sessions
             if s.session_type == SessionTypeEnum.gs_rdp
         )
-        gs_hours = _q(Decimal(gs_minutes) / Decimal(60))
+        # Hours typed into the Hours Log beyond what sessions show are paid at the rate.
+        gs_hours = max(Decimal("0"), _q(Decimal(gs_minutes) / Decimal(60)) + log_deltas.get(worker_id, Decimal("0")))
+        gs_local = Decimal("0")
         if gs_hours > 0:
-            if rate is None:
+            if terms.rate_local is None:
                 flags.append("no_rate")
             else:
-                base_pay += gs_hours * rate
+                gs_local = _q(gs_hours * terms.rate_local)
+                if terms.fx is None:
+                    flags.append("no_fx_rate")
 
         # Partner / third-party earnings with splits
         for s in worker_sessions:
             if s.session_type == SessionTypeEnum.gs_rdp:
                 minutes = effective_duration_minutes(s)
-                if rate is not None and minutes:
-                    gross = _q(Decimal(minutes) / Decimal(60) * rate)
+                if terms.rate_local is not None and minutes:
+                    gross_local = Decimal(minutes) / Decimal(60) * terms.rate_local
+                    # Line items feed base-currency client reports.
+                    gross = _q(gross_local / terms.fx) if terms.fx else _q(gross_local)
                     db.add(PayrollLineItem(
                         payroll_period_id=period_id,
                         session_id=s.id,
@@ -318,7 +377,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
                 gs_net=gs_net,
                 partner_net=partner_net,
             ))
-            base_pay += worker_net
+            partner_base += worker_net
 
         if hours == 0:
             flags.append("no_hours")
@@ -326,8 +385,9 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         calc[worker_id] = {
             "worker": worker,
             "hours": hours,
-            "rate": rate or Decimal("0"),
-            "base_pay": _q(base_pay),
+            "terms": terms,
+            "gs_local": gs_local,
+            "partner_base": _q(partner_base),
             "flags": flags,
         }
 
@@ -339,23 +399,23 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         transfer_cost = summary.transfer_cost if summary else Decimal("0")
         external_cost = summary.external_cost if summary else Decimal("0")
 
-        # Sessions and rates use the period's base currency. Summaries store local
-        # amounts, while bonus and per-worker costs are already entered locally.
-        local_currency = currency_for_country(db, worker.country) or period.currency
-        fx = _fx_to_local(db, period, local_currency)
-        if fx is None or fx <= 0:
-            flags.append("no_fx_rate")
-            local_currency = period.currency
-            fx_used = Decimal("1")
-            fx = None
-        else:
-            fx_used = fx
+        # Summaries are in the payout currency (the rate's currency). The rate is
+        # already in it; only base-currency partner earnings need converting.
+        terms: PayTerms = data["terms"]
+        local_currency = terms.currency
+        fx = terms.fx
+        partner_local = data["partner_base"]
+        if data["partner_base"] > 0:
+            if fx:
+                partner_local = _q(data["partner_base"] * fx)
+            elif local_currency != period.currency:
+                flags.append("no_fx_rate")
 
-        rate_local = _q(data["rate"] * fx_used)
-        base_pay_local = _q(data["base_pay"] * fx_used)
+        rate_local = _q(terms.rate_local) if terms.rate_local is not None else Decimal("0")
+        base_pay_local = _q(data["gs_local"] + partner_local)
 
         bonus = summary.bonus if summary else Decimal("0")
-        # Locked rows keep admin rate/bonus/costs, but hours always follow sessions.
+        # Locked rows keep admin rate/bonus/costs, but hours always follow the Hours Log.
         if summary and getattr(summary, "admin_locked", False):
             summary.hours_logged = data["hours"]
             summary.base_pay = (
@@ -378,7 +438,7 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         if final_net < 0:
             flags.append("negative_net")
 
-        base_equiv = _q(final_net / fx_used)
+        base_equiv = _q(final_net / fx) if fx else None
 
         if summary is None:
             summary = PayrollWorkerSummary(payroll_period_id=period_id, worker_id=worker_id)
@@ -399,9 +459,10 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         summary.updated_at = datetime.now(timezone.utc)
         db.add(summary)
 
-    # Remove stale summaries for workers with no sessions this run (keep manual bonus rows).
+    # Remove stale summaries for workers with no sessions this run (keep rows
+    # carrying a manual bonus or cost, e.g. a shared-cost ledger share).
     for worker_id, summary in existing_summaries.items():
-        if worker_id not in calc and summary.bonus == 0:
+        if worker_id not in calc and summary.bonus == 0 and summary.transfer_cost == 0 and summary.external_cost == 0:
             db.delete(summary)
 
     period.status = PayrollPeriodStatusEnum.calculated
@@ -411,7 +472,9 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
     return {"workers": len(calc), "sessions": len(sessions), "status": period.status}
 
 
-def recompute_summary(db: Session, summary: PayrollWorkerSummary) -> PayrollWorkerSummary:
+def recompute_summary(
+    db: Session, summary: PayrollWorkerSummary, *, commit: bool = True,
+) -> PayrollWorkerSummary:
     """Recompute derived fields after an admin cost-evaluation edit."""
     period = db.get(PayrollPeriod, summary.payroll_period_id)
     summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour) if summary.rate_per_hour is not None else summary.base_pay
@@ -432,9 +495,65 @@ def recompute_summary(db: Session, summary: PayrollWorkerSummary) -> PayrollWork
     summary.exception_flags = flags
     summary.updated_at = datetime.now(timezone.utc)
     db.add(summary)
-    db.commit()
-    db.refresh(summary)
+    if commit:
+        db.commit()
+        db.refresh(summary)
     return summary
+
+
+def refresh_open_summaries_for_workers(db: Session, worker_ids: Iterable[UUID]) -> int:
+    """
+    Re-apply each worker's current rate + currency to their payslip rows in
+    open/calculated periods (after a tier is edited or assigned). Rows an admin
+    locked keep their custom rate unless they are in a different currency.
+    Caller commits.
+    """
+    ids = list({wid for wid in worker_ids if wid})
+    if not ids:
+        return 0
+    rows = db.exec(
+        select(PayrollWorkerSummary, PayrollPeriod)
+        .join(PayrollPeriod, PayrollPeriod.id == PayrollWorkerSummary.payroll_period_id)
+        .where(
+            PayrollWorkerSummary.worker_id.in_(ids),
+            PayrollPeriod.status.in_([
+                PayrollPeriodStatusEnum.open,
+                PayrollPeriodStatusEnum.calculated,
+            ]),
+        )
+    ).all()
+    workers = {w.id: w for w in db.exec(select(Worker).where(Worker.id.in_(ids))).all()}
+    changed = 0
+    for summary, period in rows:
+        worker = workers.get(summary.worker_id)
+        if not worker:
+            continue
+        terms = pay_terms(db, worker, period)
+        same_currency = (summary.local_currency or "").upper() == terms.currency
+        if summary.admin_locked and same_currency:
+            continue
+        if not same_currency and summary.local_currency and terms.currency:
+            # Carry admin-entered local amounts into the new currency.
+            old_fx = _fx_to_local(db, period, summary.local_currency.upper())
+            if old_fx and old_fx > 0 and terms.fx:
+                factor = terms.fx / old_fx
+                summary.bonus = _q(summary.bonus * factor)
+                summary.transfer_cost = _q(summary.transfer_cost * factor)
+                summary.external_cost = _q(summary.external_cost * factor)
+        summary.local_currency = terms.currency
+        if terms.rate_local is not None:
+            summary.rate_per_hour = _q(terms.rate_local)
+        summary.fx_rate = terms.fx
+        summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour)
+        summary.gross_earned = _q(summary.base_pay + summary.bonus)
+        summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
+        summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+        summary.base_currency = period.currency
+        summary.base_equivalent = _q(summary.final_net / terms.fx) if terms.fx else None
+        summary.updated_at = datetime.now(timezone.utc)
+        db.add(summary)
+        changed += 1
+    return changed
 
 
 def approve_period(db: Session, period_id: UUID, admin_user_id: UUID) -> PayrollPeriod:
@@ -466,19 +585,40 @@ def approve_period(db: Session, period_id: UUID, admin_user_id: UUID) -> Payroll
     return period
 
 
-def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) -> dict:
-    """Idempotently credit each worker's wallet with their final net for the period."""
+def _work_dates(period: PayrollPeriod) -> str:
+    start, end = period.start_date, period.end_date
+    if start.year == end.year:
+        return f"{start:%d %b} – {end:%d %b %Y}"
+    return f"{start:%d %b %Y} – {end:%d %b %Y}"
+
+
+def push_period_to_wallets(
+    db: Session,
+    period_id: UUID,
+    admin_user_id: UUID,
+    worker_ids: Optional[Iterable[UUID]] = None,
+) -> dict:
+    """
+    Idempotently credit wallets with each worker's final net for the period.
+    `worker_ids` limits the push to those workers; None means everyone.
+    """
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise ValueError("Payroll period not found")
     if period.status not in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid):
         raise ValueError("Period must be approved before pushing to wallets")
 
-    summaries = db.exec(
-        select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
-    ).all()
+    stmt = select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
+    if worker_ids is not None:
+        ids = list(worker_ids)
+        if not ids:
+            return {"credited": 0, "skipped": 0}
+        stmt = stmt.where(PayrollWorkerSummary.worker_id.in_(ids))
+    summaries = db.exec(stmt).all()
+    work_dates = _work_dates(period)
 
     credited = skipped = 0
+    no_fx: list[str] = []
     for summary in summaries:
         if summary.final_net <= 0:
             skipped += 1
@@ -502,6 +642,10 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
             wallet = Wallet(worker_id=summary.worker_id, currency=summary.local_currency)
             db.add(wallet)
             db.flush()
+        elif not _move_wallet_to_currency(db, wallet, summary.local_currency, admin_user_id):
+            skipped += 1
+            no_fx.append(str(summary.worker_id))
+            continue
 
         db.add(WalletTransaction(
             wallet_id=wallet.id,
@@ -510,7 +654,7 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
             amount=summary.final_net,
             currency=summary.local_currency,
             payroll_period_id=period_id,
-            note=f"Payroll {period.label}",
+            note=f"Pay for work {work_dates} · {summary.hours_logged} h",
             created_by=admin_user_id,
         ))
         wallet.balance = _q(wallet.balance + summary.final_net)
@@ -519,10 +663,10 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
         db.add(wallet)
         db.add(Notification(
             sender_admin_id=admin_user_id,
-            title=f"Payroll credited — {period.label}",
+            title=f"Payment received — {period.label}",
             message=(
-                f"Your wallet was credited {summary.final_net} {summary.local_currency} "
-                f"for payroll period {period.label}."
+                f"{summary.final_net:,} {summary.local_currency} was added to your wallet "
+                f"for your work {work_dates} ({summary.hours_logged} h)."
             ),
             category="payment",
             target_type="specific",
@@ -533,7 +677,54 @@ def push_period_to_wallets(db: Session, period_id: UUID, admin_user_id: UUID) ->
     period.wallet_pushed_at = datetime.now(timezone.utc)
     db.add(period)
     db.commit()
-    return {"credited": credited, "skipped": skipped}
+    result: dict = {"credited": credited, "skipped": skipped}
+    if no_fx:
+        result["skipped_no_fx"] = no_fx
+    return result
+
+
+def _move_wallet_to_currency(
+    db: Session, wallet: Wallet, currency: str, admin_user_id: UUID,
+) -> bool:
+    """
+    Switch a wallet to `currency` before crediting it. A non-zero balance is
+    converted and both legs are written to the ledger. False when no FX rate.
+    """
+    target = (currency or "").upper()
+    current = (wallet.currency or "").upper()
+    if not target or current == target:
+        return True
+    old_balance = Decimal(wallet.balance)
+    if old_balance == 0:
+        wallet.currency = target
+        db.add(wallet)
+        return True
+    rate = ensure_rate(db, current, target)
+    if not rate or rate <= 0:
+        return False
+    new_balance = _q(old_balance * rate)
+    db.add(WalletTransaction(
+        wallet_id=wallet.id,
+        worker_id=wallet.worker_id,
+        tx_type=WalletTxTypeEnum.adjustment,
+        amount=-old_balance,
+        currency=current,
+        note=f"Balance converted to {target} @ {rate}",
+        created_by=admin_user_id,
+    ))
+    db.add(WalletTransaction(
+        wallet_id=wallet.id,
+        worker_id=wallet.worker_id,
+        tx_type=WalletTxTypeEnum.adjustment,
+        amount=new_balance,
+        currency=target,
+        note=f"Balance converted from {old_balance} {current} @ {rate}",
+        created_by=admin_user_id,
+    ))
+    wallet.balance = new_balance
+    wallet.currency = target
+    db.add(wallet)
+    return True
 
 
 # ── Reports ────────────────────────────────────────────────────────────────────
@@ -573,98 +764,46 @@ def _rdp_session_minutes(session: WorkSession) -> int:
 
 def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     """
-    Per-client earnings + revenue share for a period.
-    Split order (confirmed): earnings − worker costs = distributable → GS/owner split.
-    Worker costs per client = worker pay on the client's sessions plus a
-    proportional share of that worker's period deductions.
+    Per-client income and split for a period, in the period's currency.
+
+    The split is taken from gross (see services.client_billing): income is
+    what was received, else hours × rate; the client gets their % of it less
+    any costs charged to them, GS keeps the rest. Worker cost is shown for
+    information. ``distributable`` is the gross being split and ``owner_share``
+    is the client's share, kept under their old names for existing reports.
     """
+    from services import client_billing
+
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise ValueError("Payroll period not found")
 
-    line_items = db.exec(
-        select(PayrollLineItem).where(PayrollLineItem.payroll_period_id == period_id)
-    ).all()
-    entered_earnings = {
-        row.client_id: row.amount
-        for row in db.exec(
-            select(ClientPeriodEarning).where(ClientPeriodEarning.payroll_period_id == period_id)
-        ).all()
-    }
-    if not line_items and not entered_earnings:
-        return []
+    months = [m for m in client_billing.build(db, period) if m.basis or m.client_costs or m.worker_cost]
+    usd_to_period = Decimal("1")
+    if period.currency.upper() != client_billing.BILLING_CURRENCY:
+        usd_to_period = ensure_rate(db, client_billing.BILLING_CURRENCY, period.currency) or Decimal("1")
 
-    session_ids = [li.session_id for li in line_items]
-    sessions = {
-        s.id: s for s in db.exec(select(WorkSession).where(WorkSession.id.in_(session_ids))).all()
-    }
-    summaries = {
-        s.worker_id: s
-        for s in db.exec(
-            select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
-        ).all()
-    }
+    def conv(value: Optional[Decimal]) -> str:
+        return str(_q((value or Decimal("0")) * usd_to_period))
 
-    # Worker's total gross this period → to prorate deductions per line item.
-    worker_gross_totals: dict[UUID, Decimal] = {}
-    for li in line_items:
-        worker_gross_totals[li.worker_id] = worker_gross_totals.get(li.worker_id, Decimal("0")) + li.gross_amount
-
-    per_client: dict[Optional[UUID], dict] = {
-        client_id: {
-            "earnings": amount,
-            "worker_cost": Decimal("0"),
-            "earnings_entered": True,
-        }
-        for client_id, amount in entered_earnings.items()
-    }
-    for li in line_items:
-        session = sessions.get(li.session_id)
-        client_id = session.client_id if session else None
-        bucket = per_client.setdefault(client_id, {
-            "earnings": Decimal("0"),
-            "worker_cost": Decimal("0"),
-            "earnings_entered": False,
-        })
-        # Explicit client earnings entered on the Clients page are authoritative.
-        # Existing periods without an entry retain the calculated legacy fallback.
-        if not bucket["earnings_entered"]:
-            bucket["earnings"] += li.gross_amount
-
-        worker_cost = li.worker_net
-        summary = summaries.get(li.worker_id)
-        total_gross = worker_gross_totals.get(li.worker_id, Decimal("0"))
-        if summary and total_gross > 0:
-            # Summary deductions are stored in local currency — convert back to base.
-            deductions_base = summary.total_deductions
-            if summary.fx_rate and summary.fx_rate > 0:
-                deductions_base = summary.total_deductions / summary.fx_rate
-            worker_cost += deductions_base * (li.gross_amount / total_gross)
-        bucket["worker_cost"] += worker_cost
-
-    clients = {c.id: c for c in db.exec(select(Client)).all()}
     rows: list[dict] = []
-    for client_id, bucket in per_client.items():
-        client = clients.get(client_id) if client_id else None
-        gs_pct, owner_pct = _revenue_split(db, client, period)
-
-        earnings = _q(bucket["earnings"])
-        worker_cost = _q(bucket["worker_cost"])
-        distributable = _q(earnings - worker_cost)
-        gs_share = _q(distributable * gs_pct / 100)
-        owner_share = _q(distributable - gs_share)
+    for m in months:
         rows.append({
-            "client_id": str(client_id) if client_id else None,
-            "client_name": client.name if client else "Unattributed",
-            "platform": client.platform if client else "—",
-            "earnings": str(earnings),
-            "worker_cost": str(worker_cost),
-            "distributable": str(distributable),
-            "gs_pct": str(gs_pct),
-            "owner_pct": str(owner_pct),
-            "gs_share": str(gs_share),
-            "owner_share": str(owner_share),
-            "earnings_source": "entered" if bucket["earnings_entered"] else "calculated",
+            "client_id": str(m.client_id),
+            "client_name": m.client_name,
+            "platform": m.platform,
+            "earnings": conv(m.basis),
+            "expected": conv(m.expected),
+            "actual": conv(m.actual) if m.actual is not None else None,
+            "worker_cost": conv(m.worker_cost),
+            "shared_cost": conv(m.client_costs),
+            "distributable": conv(m.basis),
+            "gs_pct": str(m.gs_pct),
+            "owner_pct": str(m.client_pct),
+            "gs_share": conv(m.gs_share),
+            "owner_share": conv(m.client_share),
+            "gs_margin": conv(m.gs_margin),
+            "earnings_source": "entered" if m.basis_source == "actual" else "calculated",
         })
     rows.sort(key=lambda r: Decimal(r["earnings"]), reverse=True)
     return rows

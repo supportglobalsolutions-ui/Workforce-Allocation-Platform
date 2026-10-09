@@ -1,12 +1,14 @@
 from datetime import datetime
 from decimal import Decimal
-from typing import Optional
+from typing import Literal, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict
 from sqlmodel import SQLModel
 
 from models.enums import PaymentTierUnitEnum, WorkerTypeEnum
+
+TierScope = Literal["workers", "clients", "both"]
 
 
 class PaymentTierCreate(SQLModel):
@@ -16,6 +18,7 @@ class PaymentTierCreate(SQLModel):
     unit: PaymentTierUnitEnum
     description: Optional[str] = None
     is_active: bool = True
+    applies_to: TierScope = "workers"
 
 
 class PaymentTierUpdate(SQLModel):
@@ -25,6 +28,7 @@ class PaymentTierUpdate(SQLModel):
     unit: Optional[PaymentTierUnitEnum] = None
     description: Optional[str] = None
     is_active: Optional[bool] = None
+    applies_to: Optional[TierScope] = None
 
 
 class PaymentTierResponse(SQLModel):
@@ -39,8 +43,19 @@ class PaymentTierResponse(SQLModel):
     description: Optional[str] = None
     hourly_equivalent: Optional[Decimal] = None
     member_count: int = 0
+    applies_to: str = "workers"
+    client_count: int = 0
     created_at: datetime
     updated_at: datetime
+
+
+class PaymentTierClientsRequest(SQLModel):
+    client_ids: list[UUID]
+
+
+class PaymentTierClientsResponse(SQLModel):
+    changed: int
+    tier_name: str
 
 
 class PaymentTierAssignRequest(SQLModel):

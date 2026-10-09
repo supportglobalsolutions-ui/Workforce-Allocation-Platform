@@ -28,8 +28,10 @@ from services.fx import (
     convert_amount,
     fetch_api_rates,
     list_api_quotes,
+    RateSnapshot,
     resolve_rate,
     store_api_rates_for_codes,
+    stored_rates_snapshot,
 )
 from .deps import apply_update
 
@@ -64,9 +66,13 @@ def _upsert_manual_usd_rate(db: Session, code: str, rate: Decimal) -> None:
         ))
 
 
-def _currency_response(db: Session, currency: Currency) -> CurrencyResponse:
-    usd_rate, usd_source = resolve_rate(db, "USD", currency.code)
-    gbp_rate, _ = resolve_rate(db, "GBP", currency.code)
+def _currency_response(
+    db: Session,
+    currency: Currency,
+    snapshot: RateSnapshot | None = None,
+) -> CurrencyResponse:
+    usd_rate, usd_source = resolve_rate(db, "USD", currency.code, snapshot)
+    gbp_rate, _ = resolve_rate(db, "GBP", currency.code, snapshot)
     resp = CurrencyResponse.model_validate(currency)
     resp.usd_rate = usd_rate
     resp.usd_rate_source = usd_source
@@ -150,7 +156,8 @@ def list_currencies(
     if active_only:
         stmt = stmt.where(Currency.is_active)
     rows = db.exec(stmt.order_by(Currency.code)).all()
-    return [_currency_response(db, c) for c in rows]
+    snapshot = stored_rates_snapshot(db)
+    return [_currency_response(db, c, snapshot) for c in rows]
 
 
 @router.post("/list", response_model=CurrencyResponse, status_code=status.HTTP_201_CREATED)

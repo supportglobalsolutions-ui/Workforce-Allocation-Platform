@@ -21,6 +21,7 @@ from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from models.worker import Worker
 from services.client_owners import client_owner_name
+from services.session_evidence import work_minutes
 from services import payroll_engine
 
 logger = logging.getLogger(__name__)
@@ -115,6 +116,7 @@ def serialize_session(s: WorkSession) -> dict[str, Any]:
         "end_time": _iso(s.end_time),
         "image_start_at": _iso(s.image_start_at),
         "image_end_at": _iso(s.image_end_at),
+        "work_minutes": work_minutes(s),
         "payroll_period_id": _uid(s.payroll_period_id),
     }
 

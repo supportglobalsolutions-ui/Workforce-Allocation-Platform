@@ -187,8 +187,38 @@ def ensure_rate(db: Session, base_currency: str, quote_currency: str) -> Optiona
     return resolve_rate(db, base_currency, quote_currency)[0]
 
 
-def _stored_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[Optional[Decimal], Optional[str]]:
+RateSnapshot = dict[tuple[str, str], tuple[Decimal, str]]
+
+
+def stored_rates_snapshot(db: Session) -> RateSnapshot:
+    """Every pair's stored rate in one query, picked exactly as ``_stored_rate`` does.
+
+    Resolving many currencies one query at a time costs a database round trip
+    per lookup, which on a remote database adds up to tens of seconds.
+    """
+    rows = db.exec(
+        select(FxRate)
+        .where(FxRate.source.in_(("manual", "api")))
+        .order_by(FxRate.as_of_date.desc())
+    ).all()
+    best: RateSnapshot = {}
+    for row in rows:
+        key = (row.base_currency.upper(), row.quote_currency.upper())
+        current = best.get(key)
+        if current is None or (current[1] != "manual" and row.source == "manual"):
+            best[key] = (row.rate, row.source)
+    return best
+
+
+def _stored_rate(
+    db: Session,
+    base_currency: str,
+    quote_currency: str,
+    snapshot: Optional[RateSnapshot] = None,
+) -> tuple[Optional[Decimal], Optional[str]]:
     """Latest stored rate for the pair, manual before API."""
+    if snapshot is not None:
+        return snapshot.get((base_currency, quote_currency), (None, None))
     for source in ("manual", "api"):
         row = db.exec(
             select(FxRate)
@@ -204,7 +234,12 @@ def _stored_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
     return None, None
 
 
-def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[Optional[Decimal], Optional[str]]:
+def resolve_rate(
+    db: Session,
+    base_currency: str,
+    quote_currency: str,
+    snapshot: Optional[RateSnapshot] = None,
+) -> tuple[Optional[Decimal], Optional[str]]:
     """
     1 base = X quote, with the source that produced it.
 
@@ -214,18 +249,20 @@ def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
     3. USD pivot so any catalog currency converts to any other:
        1 A = (1 USD → quote) / (1 USD → base)
     4. Legacy GBP derivation when only USD rows exist
+
+    Pass ``snapshot`` (from ``stored_rates_snapshot``) when resolving many pairs.
     """
     base_currency = base_currency.upper()
     quote_currency = quote_currency.upper()
     if base_currency == quote_currency:
         return Decimal("1"), "identity"
 
-    rate, source = _stored_rate(db, base_currency, quote_currency)
+    rate, source = _stored_rate(db, base_currency, quote_currency, snapshot)
     if rate is not None:
         return rate, source
 
     # Inverse of a stored pair: 1 quote = X base → 1 base = 1/X quote
-    inverse, inv_source = _stored_rate(db, quote_currency, base_currency)
+    inverse, inv_source = _stored_rate(db, quote_currency, base_currency, snapshot)
     if inverse is not None and inverse > 0:
         return Decimal("1") / inverse, inv_source or "derived"
 
@@ -237,19 +274,19 @@ def resolve_rate(db: Session, base_currency: str, quote_currency: str) -> tuple[
     if quote_currency == "USD":
         usd_to_quote, src_q = Decimal("1"), "identity"
     else:
-        usd_to_quote, src_q = _stored_rate(db, "USD", quote_currency)
+        usd_to_quote, src_q = _stored_rate(db, "USD", quote_currency, snapshot)
 
     if base_currency == "USD":
         usd_to_base, src_b = Decimal("1"), "identity"
     else:
-        usd_to_base, src_b = _stored_rate(db, "USD", base_currency)
+        usd_to_base, src_b = _stored_rate(db, "USD", base_currency, snapshot)
 
     if usd_to_quote is not None and usd_to_base is not None and usd_to_base > 0:
         return usd_to_quote / usd_to_base, "derived"
 
     if base_currency == "GBP":
-        usd_to_quote, _ = _stored_rate(db, "USD", quote_currency)
-        usd_to_gbp, _ = _stored_rate(db, "USD", "GBP")
+        usd_to_quote, _ = _stored_rate(db, "USD", quote_currency, snapshot)
+        usd_to_gbp, _ = _stored_rate(db, "USD", "GBP", snapshot)
         if usd_to_quote is not None and usd_to_gbp and usd_to_gbp > 0:
             return usd_to_quote / usd_to_gbp, "derived"
 

@@ -10,7 +10,6 @@ import {
   Power,
 } from 'lucide-react';
 
-import ConfirmModal from '@/components/platform/ConfirmModal';
 import RdpViewer, { type RdpViewerHandle } from '@/components/rdp/RdpViewer';
 import RegionSnipOverlay from '@/components/rdp/RegionSnipOverlay';
 import { api } from '@/lib/api';

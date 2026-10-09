@@ -2,8 +2,9 @@
 
 import { useCallback, useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
+import Link from 'next/link';
 import {
-  AlertCircle, ArrowLeft, BookOpen, Check, FileText, GraduationCap,
+  AlertCircle, ArrowLeft, BookOpen, Check, ExternalLink, FileText, GraduationCap,
   Link2, Pencil, PlayCircle, Plus, Star, Trash2, X,
 } from 'lucide-react';
 
@@ -39,10 +40,36 @@ interface TrainingModule {
   is_mandatory_for_new_workers: boolean;
   is_active: boolean;
   lessons?: Lesson[];
+  mcq_set_title?: string | null;
+  task_assessment_title?: string | null;
 }
 
 interface McqSetOption { id: string; title: string; question_count: number; }
 interface TaskOption { id: string; title: string; }
+
+interface LinkedTest { key: string; label: string; title: string; href: string; }
+
+/** The test(s) a module links to, each opening that test's editor. */
+function linkedTests(m: TrainingModule, mcqSets: McqSetOption[], tasks: TaskOption[]): LinkedTest[] {
+  const tests: LinkedTest[] = [];
+  if (m.mcq_set_id) {
+    tests.push({
+      key: `mcq-${m.mcq_set_id}`,
+      label: 'Linked MCQ Set',
+      title: m.mcq_set_title || mcqSets.find((s) => s.id === m.mcq_set_id)?.title || 'Linked MCQ set',
+      href: `/admin/assessments?mcq=${m.mcq_set_id}`,
+    });
+  }
+  if (m.task_assessment_id) {
+    tests.push({
+      key: `task-${m.task_assessment_id}`,
+      label: 'Linked Task',
+      title: m.task_assessment_title || tasks.find((t) => t.id === m.task_assessment_id)?.title || 'Linked task',
+      href: `/admin/assessments?task=${m.task_assessment_id}`,
+    });
+  }
+  return tests;
+}
 
 interface ProgressRow {
   module_id: string;
@@ -447,8 +474,7 @@ function ModuleDetail({
   const completed = progress?.filter((p) => p.status === 'completed').length ?? 0;
   const inProgress = progress?.filter((p) => p.status === 'in_progress').length ?? 0;
 
-  const mcqTitle = module.mcq_set_id ? mcqSets.find((s) => s.id === module.mcq_set_id)?.title : null;
-  const taskTitle = module.task_assessment_id ? tasks.find((t) => t.id === module.task_assessment_id)?.title : null;
+  const tests = linkedTests(module, mcqSets, tasks);
 
   async function handleDeleteLesson() {
     if (!lessonToDelete) return;
@@ -520,18 +546,18 @@ function ModuleDetail({
                 : `${completed} completed · ${inProgress} in progress · ${progress.length} started`}
             </p>
           </div>
-          {mcqTitle && (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Linked MCQ Set</p>
-              <p className="text-gold-accent font-semibold mt-0.5">{mcqTitle}</p>
+          {tests.map((t) => (
+            <div key={t.key}>
+              <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">{t.label}</p>
+              <Link
+                href={t.href}
+                title={`Open ${t.title}`}
+                className="inline-flex items-center gap-1 text-gold-accent font-semibold mt-0.5 hover:underline"
+              >
+                {t.title} <ExternalLink size={11} />
+              </Link>
             </div>
-          )}
-          {taskTitle && (
-            <div>
-              <p className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Linked Task</p>
-              <p className="text-gold-accent font-semibold mt-0.5">{taskTitle}</p>
-            </div>
-          )}
+          ))}
         </div>
       </div>
 
@@ -776,6 +802,19 @@ export default function AdminTrainingPage() {
                     )}
                     <span className="text-[11px] text-theme-muted">{lessonCount} lesson{lessonCount !== 1 ? 's' : ''}</span>
                   </div>
+                  {linkedTests(m, mcqSets, tasks).map((t) => (
+                    <Link
+                      key={t.key}
+                      href={t.href}
+                      title={`Open ${t.title}`}
+                      className="flex items-center gap-2 rounded-lg border border-gold-accent/25 bg-gold-accent/[0.06] px-3 py-2 text-xs hover:border-gold-accent/50 hover:bg-gold-accent/10 transition-colors"
+                    >
+                      <GraduationCap size={13} className="text-gold-accent shrink-0" />
+                      <span className="text-theme-muted shrink-0">{t.label}:</span>
+                      <span className="font-semibold text-theme-heading truncate flex-1">{t.title}</span>
+                      <ExternalLink size={12} className="text-gold-accent shrink-0" />
+                    </Link>
+                  ))}
                   <div className="mt-auto pt-3 border-t border-white/[0.06] flex items-center justify-between gap-2">
                     {/* Active toggle */}
                     <button

@@ -176,6 +176,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         );
         passwordAccepted = true;
         pendingAccessTokenRef.current = accessToken;
+        // A fresh password sign-in is activity; without this a stale idle
+        // timestamp signs the user out while they are entering the OTP.
+        writeActivity(provisional.uid);
 
         // Workers/partners: finish immediately. Admin / executive / super_admin:
         // always require the Resend login OTP before the session cookie.

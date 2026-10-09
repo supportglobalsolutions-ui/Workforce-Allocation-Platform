@@ -8,7 +8,7 @@ from routers.deps import get_admin_user
 from services.account_guard import is_protected_account, is_protected_email
 from services.admin_otp import get_platform_settings, mask_email, otp_recipient, set_alert_email
 from services.audit_service import record_audit
-from services.email_resend import blocked_recipient_reason
+from services.email_resend import blocked_recipient_reason, is_valid_email_address
 
 router = APIRouter()
 
@@ -99,3 +99,54 @@ def update_alert_email(
     )
     db.commit()
     return _settings_payload(row, can_edit=True)
+
+
+class TestModeEmailsUpdate(BaseModel):
+    emails: list[str]
+
+
+MAX_TEST_MODE_EMAILS = 20
+
+
+@router.get("/test-mode-emails")
+def get_test_mode_emails(
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Extra inboxes that also receive emails sent while an admin is in test mode."""
+    return {"emails": list(get_platform_settings(db).test_mode_emails or [])}
+
+
+@router.put("/test-mode-emails")
+def update_test_mode_emails(
+    body: TestModeEmailsUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    cleaned: list[str] = []
+    for raw in body.emails:
+        addr = (raw or "").strip().lower()
+        if not addr or addr in cleaned:
+            continue
+        if not is_valid_email_address(addr):
+            raise HTTPException(status_code=400, detail=f"`{addr}` is not a valid email address.")
+        cleaned.append(addr)
+    if len(cleaned) > MAX_TEST_MODE_EMAILS:
+        raise HTTPException(status_code=400, detail=f"Add at most {MAX_TEST_MODE_EMAILS} test addresses.")
+
+    admin = get_admin_user(db, current_user)
+    row = get_platform_settings(db)
+    previous = list(row.test_mode_emails or [])
+    row.test_mode_emails = cleaned
+    db.add(row)
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="settings.test_mode_emails_changed",
+        target_type="platform_settings",
+        target_id=row.id,
+        previous_value={"emails": previous},
+        new_value={"emails": cleaned},
+    )
+    db.commit()
+    return {"emails": cleaned}

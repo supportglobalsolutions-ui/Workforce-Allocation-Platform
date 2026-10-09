@@ -11,7 +11,6 @@ import DeleteRdpModal from '@/components/rdp/DeleteRdpModal';
 import EntityPickerModal from '@/components/admin/EntityPickerModal';
 import {
   createRdpResource,
-  forceReleaseRdp,
   listQuarantinedRdp,
   listRdpResources,
   lockRdp,
@@ -26,11 +25,12 @@ import {
 } from '@/lib/rdp';
 import { api } from '@/lib/api';
 import { reportError } from '@/lib/errors';
+import { formatDurationShort } from '@/lib/hours';
 
 type StatusMode = 'online' | 'locked' | 'maintenance';
 
 /** Per-card actions that need their own in-progress label. */
-type CardAction = 'sync' | 'stop' | 'other';
+type CardAction = 'sync' | 'other';
 
 interface ClientOption {
   id: string;
@@ -60,6 +60,8 @@ interface MachineForm {
   guacamole_connection_id: string;
   /** Outlier-style reported-time pool (hours). Free-form 0.5–24. */
   daily_limit_hours: string;
+  /** Hour (EAT) the daily window opens; it stays open for daily_limit_hours. */
+  daily_window_start_hour: string;
 }
 
 const EMPTY_FORM: MachineForm = {
@@ -75,7 +77,22 @@ const EMPTY_FORM: MachineForm = {
   rdp_domain: '',
   guacamole_connection_id: '',
   daily_limit_hours: '12',
+  daily_window_start_hour: '10',
 };
+
+/** "10:00" for an EAT hour. */
+function hourLabel(hour: number): string {
+  return `${String(((hour % 24) + 24) % 24).padStart(2, '0')}:00`;
+}
+
+/** "Open 10:00 – 22:00 EAT" for a start hour and window length. */
+function windowLabel(startHour: number, hours: number): string {
+  if (!Number.isFinite(startHour) || !Number.isFinite(hours) || hours <= 0) return 'Set the daily hours first';
+  if (hours >= 24) return `Open all day from ${hourLabel(startHour)} EAT`;
+  const endMinutes = Math.round((startHour + hours) * 60) % (24 * 60);
+  const end = `${String(Math.floor(endMinutes / 60)).padStart(2, '0')}:${String(endMinutes % 60).padStart(2, '0')}`;
+  return `Open ${hourLabel(startHour)} – ${end} EAT${startHour + hours > 24 ? ' (next day)' : ''}`;
+}
 
 function formFromMachine(m: RdpResource): MachineForm {
   return {
@@ -91,6 +108,7 @@ function formFromMachine(m: RdpResource): MachineForm {
     rdp_domain: '',
     guacamole_connection_id: m.guacamole_connection_id ?? '',
     daily_limit_hours: String(m.daily_limit_hours ?? 12),
+    daily_window_start_hour: String(m.daily_window_start_hour ?? 10),
   };
 }
 
@@ -107,6 +125,7 @@ function bodyFromForm(form: MachineForm) {
     monitor_port: monitorPort,
     guacamole_connection_id: form.guacamole_connection_id.trim() || null,
     daily_limit_hours: Number.isFinite(limitHours) ? limitHours : 12,
+    daily_window_start_hour: Number(form.daily_window_start_hour) || 0,
     ...(form.rdp_username.trim() ? { rdp_username: form.rdp_username.trim() } : {}),
     ...(form.rdp_password ? { rdp_password: form.rdp_password } : {}),
     ...(form.rdp_domain.trim() ? { rdp_domain: form.rdp_domain.trim() } : {}),
@@ -430,7 +449,41 @@ export default function RdpManagementPage() {
             </button>
           </div>
           <p className="text-[11px] text-theme-muted mt-1.5">
-            Shared reported on-image pool for this machine. Resets at 10:00 EAT. Use any value 0.5–24 (e.g. short-expiry accounts at 4h).
+            Hours this machine may be worked each day (0.5–24). Time left counts down with the clock inside the window below.
+          </p>
+        </div>
+
+        <div className="block sm:col-span-2">
+          <span className="text-[11px] font-semibold uppercase tracking-wider text-theme-muted mb-1.5 block">
+            Window opens at (EAT)
+          </span>
+          <div className="flex flex-wrap items-center gap-2">
+            <select
+              value={form.daily_window_start_hour}
+              onChange={(e) => setForm((f) => ({ ...f, daily_window_start_hour: e.target.value }))}
+              className={`${fieldClass} max-w-[8rem]`}
+            >
+              {Array.from({ length: 24 }, (_, h) => (
+                <option key={h} value={String(h)}>{hourLabel(h)}</option>
+              ))}
+            </select>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, daily_window_start_hour: '10' }))}
+              className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white hover:border-emerald-accent/40"
+            >
+              Day 10:00
+            </button>
+            <button
+              type="button"
+              onClick={() => setForm((f) => ({ ...f, daily_window_start_hour: '22' }))}
+              className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-xs text-white hover:border-emerald-accent/40"
+            >
+              Night 22:00
+            </button>
+          </div>
+          <p className="text-[11px] text-theme-muted mt-1.5">
+            {windowLabel(Number(form.daily_window_start_hour), Number(form.daily_limit_hours))} — outside these hours the machine cannot be claimed.
           </p>
         </div>
 
@@ -566,7 +619,7 @@ export default function RdpManagementPage() {
               Claim board
             </Link>
             <Link
-              href="/admin/shifts"
+              href="/admin/shifts?kind=rdp_claim"
               className="inline-flex items-center rounded-lg border border-gold-accent/40 bg-gold-accent/15 px-4 py-2 text-sm font-semibold text-gold-accent transition-colors hover:bg-gold-accent/25"
             >
               RDP Schedule Management
@@ -710,8 +763,10 @@ export default function RdpManagementPage() {
                   )}
                   {!live && (
                     <p className="text-[11px] text-white/50 truncate pl-4">
-                      Limit {Number(m.daily_limit_hours ?? 12)}h/day ·{' '}
-                      {Math.max(0, Math.round(m.remaining_minutes_today ?? Number(m.daily_limit_hours ?? 12) * 60))}m left
+                      {windowLabel(m.daily_window_start_hour ?? 10, Number(m.daily_limit_hours ?? 12))} ·{' '}
+                      {m.window_open === false
+                        ? 'closed now'
+                        : `${formatDurationShort(m.remaining_minutes_today ?? Number(m.daily_limit_hours ?? 12) * 60)} left`}
                     </p>
                   )}
                 </div>
@@ -740,19 +795,6 @@ export default function RdpManagementPage() {
                     size={14}
                     className={busyId === m.id && busyAction === 'sync' ? 'animate-spin' : undefined}
                   />
-                </button>
-                <button
-                  type="button"
-                  disabled={busyId === m.id || !live}
-                  onClick={() => runAction(m.id, () => forceReleaseRdp(m.id), 'stop')}
-                  className="shrink-0 text-xs py-1.5 px-2.5 rounded-lg font-semibold border border-red-400/35 bg-red-500/10 text-red-300 hover:bg-red-500/20 disabled:opacity-35 disabled:grayscale disabled:cursor-not-allowed disabled:hover:bg-red-500/10"
-                  title={
-                    live
-                      ? `Kick ${m.assigned_worker_name || 'current session'} and free the machine`
-                      : 'Force stop is only available when someone is connected (or in reconnect grace)'
-                  }
-                >
-                  {busyId === m.id && busyAction === 'stop' ? 'Stopping…' : 'Force stop'}
                 </button>
               </div>
             );

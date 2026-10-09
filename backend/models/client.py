@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -61,6 +61,20 @@ class Client(SQLModel, table=True):
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
     )
+    # A client tier's hourly rate replaces billing_rate_usd when set.
+    payment_tier_id: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payment_tiers.id", ondelete="SET NULL"), nullable=True),
+    )
+    # On: billed hours come from the Hours Log rows on this client's desktops.
+    # Off: the admin types the month's billed hours.
+    hours_from_desktops: bool = Field(
+        default=False, sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
+    payout_currency: Optional[str] = Field(default=None, sa_column=Column(String(3), nullable=True))
+    payout_email: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    payout_method: Optional[str] = Field(default=None, sa_column=Column(String(64), nullable=True))
+    payout_details: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
@@ -114,7 +128,12 @@ class ClientRevenueAgreement(SQLModel, table=True):
 
 
 class ClientPeriodEarning(SQLModel, table=True):
-    """Admin-entered gross client/platform earnings for one payroll period."""
+    """One client's billing for one working month, in USD.
+
+    `amount` is what was actually received (null until entered). The other
+    figures are written by services.client_billing each time the month is
+    worked out, so reports and statements read one consistent row.
+    """
 
     __tablename__ = "client_period_earnings"
     __table_args__ = (
@@ -136,8 +155,21 @@ class ClientPeriodEarning(SQLModel, table=True):
     payroll_period_id: uuid.UUID = Field(
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=False, index=True),
     )
-    amount: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))
+    amount: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    received_on: Optional[date] = Field(default=None, sa_column=Column(Date, nullable=True))
+    # Typed billed hours, used while the client's desktop-hours switch is off.
+    billed_hours_manual: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
+    # Costs charged to this client this month (taken off the client's share).
+    client_costs: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(14, 2), nullable=False, server_default="0"),
+    )
+    billed_hours: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(10, 2), nullable=True))
+    rate_used: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(12, 2), nullable=True))
+    expected_amount: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
+    client_pct_used: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(5, 2), nullable=True))
+    client_share: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
+    gs_share: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

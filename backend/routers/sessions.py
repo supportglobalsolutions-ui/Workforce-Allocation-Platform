@@ -12,8 +12,6 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.redis import get_redis
-from models.enums import RdpStatusEnum
-from models.rdp_machine import RDPResource
 from models.session import Session as WorkSession
 from schemas.session import (
     SessionCreate,
@@ -41,6 +39,7 @@ from services.security_risk import (
 from services.session_evidence import (
     MAX_SESSION_IMAGES,
     apply_image_duration,
+    set_work_blocks,
     clear_evidence_reminders,
     evidence_complete,
     notify_evidence_incomplete,
@@ -392,25 +391,24 @@ def submit_session_evidence(
         raise HTTPException(status_code=404, detail="Session not found")
 
     data = body.model_dump(exclude_unset=True)
+    blocks = data.pop("work_blocks", None)
     for key, value in data.items():
         setattr(session, key, value)
 
-    if not session.image_start_at or not session.image_end_at:
+    if blocks is not None:
+        pairs = [(b["start"], b["end"]) for b in blocks]
+    elif session.image_start_at and session.image_end_at:
+        # Single start/end pair: one block.
+        pairs = [(session.image_start_at, session.image_end_at)]
+    else:
         raise HTTPException(
             status_code=400,
             detail="Start time and stop / end time are required for every session.",
         )
-
-    start = session.image_start_at
-    end = session.image_end_at
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=timezone.utc)
-    if end <= start:
-        raise HTTPException(status_code=400, detail="Stop / end time must be after start time.")
-
-    apply_image_duration(session)
+    try:
+        set_work_blocks(session, pairs)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     clear_evidence_reminders(db, session)
     db.add(session)
     db.flush()
@@ -470,6 +468,9 @@ def update_session(
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
     apply_update(session, SessionUpdate(**updates))
+    if "image_start_at" in updates or "image_end_at" in updates:
+        # A direct edit of the overall start/end replaces any split work blocks.
+        session.work_blocks = []
     # Prefer image-based duration when both times exist.
     apply_image_duration(session)
     if evidence_complete(session):

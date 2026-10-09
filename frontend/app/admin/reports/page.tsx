@@ -1,16 +1,18 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   AlertCircle, Archive, Download, FileBarChart, FileText, PieChart,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
+import ShiftsReport from '@/components/reports/ShiftsReport';
 import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 import { pickCurrentPeriod } from '@/lib/periods';
+import { displayCurrencyFor, formatMoneyAmount, formatMoneyTotals, useMoneyDisplay } from '@/lib/money';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -54,8 +56,20 @@ interface RevenueShareRow {
   earnings_source?: 'entered' | 'calculated';
 }
 
-const fmt = (x: string | number | null | undefined) =>
-  Number(x ?? 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const fmt = formatMoneyAmount;
+
+function sumByCurrency<T>(
+  rows: T[],
+  currency: (row: T) => string,
+  value: (row: T) => string | number | null | undefined,
+): Map<string, number> {
+  const totals = new Map<string, number>();
+  for (const r of rows) {
+    const cur = currency(r);
+    totals.set(cur, (totals.get(cur) ?? 0) + Number(value(r) ?? 0));
+  }
+  return totals;
+}
 
 function Banner({ children }: { children: React.ReactNode }) {
   return (
@@ -84,6 +98,7 @@ const tdRight = 'px-4 py-3 text-brand-on-surface text-right font-mono text-xs';
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ReportsPage() {
+  const { display } = useMoneyDisplay();
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [periodId, setPeriodId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -137,24 +152,32 @@ export default function ReportsPage() {
   const currencies = Array.from(new Set(
     (selectedPeriod ? [selectedPeriod] : periods).map((period) => period.currency),
   ));
-  const baseCur = currencies.length === 1 ? currencies[0] : 'Mixed';
+  const baseCur = currencies.length === 1 ? displayCurrencyFor(currencies[0]) : (display ?? 'Mixed');
   const slug = (selectedPeriod?.label ?? 'all-working-months').replace(/\s+/g, '-').toLowerCase();
+
+  const periodCurrency = useCallback(
+    (rowPeriodId?: string) => periods.find((p) => p.id === (rowPeriodId ?? periodId))?.currency ?? 'USD',
+    [periods, periodId],
+  );
 
   const payrollTotals = useMemo(() => ({
     hours: payrollRows.reduce((s, r) => s + Number(r.hours_logged ?? 0), 0),
-    gross: payrollRows.reduce((s, r) => s + Number(r.gross_earned ?? 0), 0),
-    deductions: payrollRows.reduce((s, r) => s + Number(r.total_deductions ?? 0), 0),
-    net: payrollRows.reduce((s, r) => s + Number(r.final_net ?? 0), 0),
-    baseEquivalent: payrollRows.reduce((s, r) => s + Number(r.base_equivalent ?? 0), 0),
-  }), [payrollRows]);
+    gross: sumByCurrency(payrollRows, (r) => r.local_currency, (r) => r.gross_earned),
+    deductions: sumByCurrency(payrollRows, (r) => r.local_currency, (r) => r.total_deductions),
+    net: sumByCurrency(payrollRows, (r) => r.local_currency, (r) => r.final_net),
+    baseEquivalent: sumByCurrency(payrollRows, (r) => periodCurrency(r.period_id), (r) => r.base_equivalent),
+  }), [payrollRows, periodCurrency]);
 
-  const revenueTotals = useMemo(() => ({
-    earnings: revenueRows.reduce((s, r) => s + Number(r.earnings ?? 0), 0),
-    workerCost: revenueRows.reduce((s, r) => s + Number(r.worker_cost ?? 0), 0),
-    distributable: revenueRows.reduce((s, r) => s + Number(r.distributable ?? 0), 0),
-    gsShare: revenueRows.reduce((s, r) => s + Number(r.gs_share ?? 0), 0),
-    ownerShare: revenueRows.reduce((s, r) => s + Number(r.owner_share ?? 0), 0),
-  }), [revenueRows]);
+  const revenueTotals = useMemo(() => {
+    const cur = (r: RevenueShareRow) => periodCurrency(r.period_id);
+    return {
+      earnings: sumByCurrency(revenueRows, cur, (r) => r.earnings),
+      workerCost: sumByCurrency(revenueRows, cur, (r) => r.worker_cost),
+      distributable: sumByCurrency(revenueRows, cur, (r) => r.distributable),
+      gsShare: sumByCurrency(revenueRows, cur, (r) => r.gs_share),
+      ownerShare: sumByCurrency(revenueRows, cur, (r) => r.owner_share),
+    };
+  }, [revenueRows, periodCurrency]);
 
   async function handleDownload(key: string, path: string, filename: string) {
     setDownloading(key); setDownloadError(null);
@@ -247,21 +270,21 @@ export default function ReportsPage() {
                               </td>
                               <td className={td}>{r.worker_country}</td>
                               <td className={tdRight}>{Number(r.hours_logged ?? 0).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                              <td className={tdRight}>{fmt(r.gross_earned)}</td>
-                              <td className={tdRight}>{fmt(r.total_deductions)}</td>
-                              <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(r.final_net)}</td>
-                              <td className={td}>{r.local_currency}</td>
-                              <td className={`${tdRight} text-gold-accent`}>{fmt(r.base_equivalent)}</td>
+                              <td className={tdRight}>{fmt(r.gross_earned, r.local_currency)}</td>
+                              <td className={tdRight}>{fmt(r.total_deductions, r.local_currency)}</td>
+                              <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(r.final_net, r.local_currency)}</td>
+                              <td className={td}>{displayCurrencyFor(r.local_currency) || r.local_currency}</td>
+                              <td className={`${tdRight} text-gold-accent`}>{fmt(r.base_equivalent, periodCurrency(r.period_id))}</td>
                             </tr>
                           ))}
                           <tr className="bg-white/[0.03] border-t border-white/10">
                             <td className={`${td} font-bold text-theme-heading`} colSpan={2}>Totals ({payrollRows.length} workers)</td>
                             <td className={`${tdRight} font-bold`}>{payrollTotals.hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
-                            <td className={`${tdRight} font-bold`}>{fmt(payrollTotals.gross)}</td>
-                            <td className={`${tdRight} font-bold`}>{fmt(payrollTotals.deductions)}</td>
-                            <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(payrollTotals.net)}</td>
+                            <td className={`${tdRight} font-bold`}>{formatMoneyTotals(payrollTotals.gross)}</td>
+                            <td className={`${tdRight} font-bold`}>{formatMoneyTotals(payrollTotals.deductions)}</td>
+                            <td className={`${tdRight} font-bold text-emerald-accent`}>{formatMoneyTotals(payrollTotals.net)}</td>
                             <td className={td} />
-                            <td className={`${tdRight} font-bold text-gold-accent`}>{fmt(payrollTotals.baseEquivalent)}</td>
+                            <td className={`${tdRight} font-bold text-gold-accent`}>{formatMoneyTotals(payrollTotals.baseEquivalent)}</td>
                           </tr>
                         </>
                       )}
@@ -270,7 +293,9 @@ export default function ReportsPage() {
                 </div>
                 {payrollRows.length > 0 && (
                   <p className="px-5 py-3 text-[11px] text-theme-muted border-t border-white/[0.06]">
-                    Gross, deductions and net are shown in each worker&apos;s local currency; the {baseCur} equivalent column uses each working month&apos;s FX rates.
+                    {display
+                      ? <>All amounts are shown in {display} at today&apos;s catalog rates. Recorded amounts are unchanged.</>
+                      : <>Gross, deductions and net are shown in each worker&apos;s local currency; the {baseCur} equivalent column uses each working month&apos;s FX rates.</>}
                   </p>
                 )}
               </div>
@@ -314,28 +339,28 @@ export default function ReportsPage() {
                               </td>
                               <td className={td}>{r.platform}</td>
                               <td className={tdRight}>
-                                <div>{fmt(r.earnings)}</div>
+                                <div>{fmt(r.earnings, periodCurrency(r.period_id))}</div>
                                 <span className={`text-[9px] font-sans uppercase tracking-wider ${r.earnings_source === 'entered' ? 'text-emerald-accent' : 'text-theme-muted'}`}>
                                   {r.earnings_source === 'entered' ? 'Client entry' : 'Calculated fallback'}
                                 </span>
                               </td>
-                              <td className={tdRight}>{fmt(r.worker_cost)}</td>
-                              <td className={tdRight}>{fmt(r.distributable)}</td>
+                              <td className={tdRight}>{fmt(r.worker_cost, periodCurrency(r.period_id))}</td>
+                              <td className={tdRight}>{fmt(r.distributable, periodCurrency(r.period_id))}</td>
                               <td className={tdRight}>{Number(r.gs_pct).toLocaleString(undefined, { maximumFractionDigits: 1 })}%</td>
                               <td className={tdRight}>{Number(r.owner_pct).toLocaleString(undefined, { maximumFractionDigits: 1 })}%</td>
-                              <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(r.gs_share)}</td>
-                              <td className={`${tdRight} font-bold text-gold-accent`}>{fmt(r.owner_share)}</td>
+                              <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(r.gs_share, periodCurrency(r.period_id))}</td>
+                              <td className={`${tdRight} font-bold text-gold-accent`}>{fmt(r.owner_share, periodCurrency(r.period_id))}</td>
                             </tr>
                           ))}
                           <tr className="bg-white/[0.03] border-t border-white/10">
                             <td className={`${td} font-bold text-theme-heading`} colSpan={2}>Totals ({revenueRows.length} clients)</td>
-                            <td className={`${tdRight} font-bold`}>{fmt(revenueTotals.earnings)}</td>
-                            <td className={`${tdRight} font-bold`}>{fmt(revenueTotals.workerCost)}</td>
-                            <td className={`${tdRight} font-bold`}>{fmt(revenueTotals.distributable)}</td>
+                            <td className={`${tdRight} font-bold`}>{formatMoneyTotals(revenueTotals.earnings)}</td>
+                            <td className={`${tdRight} font-bold`}>{formatMoneyTotals(revenueTotals.workerCost)}</td>
+                            <td className={`${tdRight} font-bold`}>{formatMoneyTotals(revenueTotals.distributable)}</td>
                             <td className={tdRight} />
                             <td className={tdRight} />
-                            <td className={`${tdRight} font-bold text-emerald-accent`}>{fmt(revenueTotals.gsShare)}</td>
-                            <td className={`${tdRight} font-bold text-gold-accent`}>{fmt(revenueTotals.ownerShare)}</td>
+                            <td className={`${tdRight} font-bold text-emerald-accent`}>{formatMoneyTotals(revenueTotals.gsShare)}</td>
+                            <td className={`${tdRight} font-bold text-gold-accent`}>{formatMoneyTotals(revenueTotals.ownerShare)}</td>
                           </tr>
                         </>
                       )}
@@ -346,6 +371,12 @@ export default function ReportsPage() {
                   Client earnings entered on the Clients page are authoritative. If no entry exists, calculated payroll gross is shown as a fallback. Owner splits are applied after worker costs are deducted.
                 </p>
               </div>
+
+              {/* ── Shifts & RDP claim shifts ── */}
+              <ShiftsReport
+                range={selectedPeriod ? { start: selectedPeriod.start_date, end: selectedPeriod.end_date } : null}
+                label={selectedPeriod?.label ?? 'all-working-months'}
+              />
 
               {/* ── Payslips ── */}
               <div className="glass-panel rounded-2xl border border-white/5 overflow-hidden">

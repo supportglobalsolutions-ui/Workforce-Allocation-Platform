@@ -30,6 +30,7 @@ import { api } from '@/lib/api';
 import { withTimeout } from '@/lib/with-timeout';
 import { enteredPayMinutes, formatHoursLabel, rdpConnectedMinutes } from '@/lib/hours';
 import { coversDate, pickCurrentPeriod, type PeriodLike } from '@/lib/periods';
+import { convertMoney, useMoneyDisplay } from '@/lib/money';
 
 ChartJS.register(CategoryScale, LinearScale, BarElement, ArcElement, Filler, Tooltip, Legend);
 
@@ -65,7 +66,6 @@ interface LeaderboardEntry {
   global_rank: number | null;
 }
 interface QualityScore { composite_score: number }
-interface Partner { id: string; name: string }
 interface Client {
   id: string;
   owner_type?: string;
@@ -83,7 +83,6 @@ interface PayrollReportRow {
 
 const EMERALD = '#3FC7A0';
 const GOLD = '#D4AF37';
-const BLUE = '#60A5FA';
 const TICK = 'rgba(148, 163, 184, 0.9)';
 const GRID = 'rgba(148, 163, 184, 0.12)';
 
@@ -170,6 +169,7 @@ function MiniStat({ label, value }: { label: string; value: number }) {
 }
 
 export default function CeoCommandCenterPage() {
+  useMoneyDisplay();
   const [loading, setLoading] = useState(true);
   const [errors, setErrors] = useState<string[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
@@ -177,7 +177,6 @@ export default function CeoCommandCenterPage() {
   const [machines, setMachines] = useState<RdpResource[]>([]);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [scores, setScores] = useState<QualityScore[]>([]);
-  const [partners, setPartners] = useState<Partner[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [periodsLoadFailed, setPeriodsLoadFailed] = useState(false);
@@ -250,12 +249,11 @@ export default function CeoCommandCenterPage() {
         withTimeout(api.get<RdpResource[]>('/rdp'), 60_000, 'RDP'),
         withTimeout(api.get<LeaderboardEntry[]>('/leaderboard?limit=5'), 45_000, 'leaderboard'),
         withTimeout(api.get<QualityScore[]>('/quality/scores'), 45_000, 'quality'),
-        withTimeout(api.get<Partner[]>('/partners'), 45_000, 'partners'),
         withTimeout(api.get<Client[]>('/clients'), 45_000, 'clients'),
       ]);
       if (cancelled) return;
 
-      const labels = ['sessions', 'RDP', 'leaderboard', 'quality', 'partners', 'clients'] as const;
+      const labels = ['sessions', 'RDP', 'leaderboard', 'quality', 'clients'] as const;
       secondary.forEach((r, i) => {
         if (r.status === 'rejected') noteFail(labels[i], r.reason);
       });
@@ -264,8 +262,7 @@ export default function CeoCommandCenterPage() {
       setMachines(settled(secondary[1], [] as RdpResource[]));
       setLeaderboard(settled(secondary[2], [] as LeaderboardEntry[]));
       setScores(settled(secondary[3], [] as QualityScore[]));
-      setPartners(settled(secondary[4], [] as Partner[]));
-      setClients(settled(secondary[5], [] as Client[]));
+      setClients(settled(secondary[4], [] as Client[]));
       setErrors([...softFails]);
     })();
 
@@ -412,13 +409,17 @@ export default function CeoCommandCenterPage() {
     return { online, inUse, free, offline, total: machines.length };
   }, [machines]);
 
+  const shownPayout = payoutTotal == null
+    ? null
+    : convertMoney(payoutTotal, currency === 'Mixed' ? null : currency);
+  const payoutCurrency = shownPayout?.currency || currency;
   const payoutLabel = payoutLoading
     ? '…'
-    : payoutTotal == null
+    : shownPayout == null
       ? '—'
-      : payoutTotal >= 1000
-        ? `${currency} ${(payoutTotal / 1000).toFixed(1)}K`
-        : `${currency} ${payoutTotal.toFixed(0)}`;
+      : shownPayout.amount >= 1000
+        ? `${payoutCurrency} ${(shownPayout.amount / 1000).toFixed(1)}K`
+        : `${payoutCurrency} ${shownPayout.amount.toFixed(0)}`;
 
   const countryChart: ChartData<'bar'> = {
     labels: countryViz.map((r) => r.label),

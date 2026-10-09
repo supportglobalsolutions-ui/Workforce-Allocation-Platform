@@ -22,8 +22,12 @@ from .contact_message import ContactMessage                                     
 from .chat import ChatThread, ChatMessage                                                      # noqa: F401
 from .shift        import Shift                                                               # noqa: F401
 from .absence_report import AbsenceReport, MAX_ABSENCE_ATTACHMENTS                            # noqa: F401
+from .shift_change_request import ShiftChangeRequest                                          # noqa: F401
 from .allocation   import Allocation                                                          # noqa: F401
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary                   # noqa: F401
+from .cost_ledger  import CostLedgerEntry, CostLedgerAllocation, PeriodMemberApproval         # noqa: F401
+from .hours_log    import HoursLogEntry                                                       # noqa: F401
+from .client_payout import ClientPayout                                                       # noqa: F401
 from .session      import Session                                                             # noqa: F401
 from .rate_table   import RateTableEntry                                                      # noqa: F401
 from .payment_tier import PaymentTier                                                         # noqa: F401

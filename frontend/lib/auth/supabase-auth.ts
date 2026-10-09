@@ -14,7 +14,8 @@ import {
   ROLE_ALLOWED_PORTALS,
 } from './config';
 import { api } from '@/lib/api';
-import { isIdleExpired } from './inactivity';
+import { isIdleExpired, noteSignIn } from './inactivity';
+import { disableTestMode } from '@/lib/testMode';
 
 export async function sessionFromUser(user: User, accessToken?: string): Promise<AuthSession> {
   const appMeta = user.app_metadata || {};
@@ -177,6 +178,8 @@ export async function signIn(email: string, password: string): Promise<AuthSessi
 }
 
 export async function signOut(): Promise<void> {
+  // Test mode never outlives the session that turned it on.
+  disableTestMode();
   // Clear local UI auth first; server MFA clear is best-effort in background.
   void clearLoginOtp();
   const cookieClear = clearSessionCookie().catch(() => { /* retry on the next signed-out event */ });
@@ -205,6 +208,7 @@ async function settleAuthSession(
     callback(null);
     return;
   }
+  noteSignIn(session.user.id, session.user.last_sign_in_at);
   if (isIdleExpired(session.user.id)) {
     callback(null);
     // Avoid calling another Supabase auth method inside its auth-event lock.

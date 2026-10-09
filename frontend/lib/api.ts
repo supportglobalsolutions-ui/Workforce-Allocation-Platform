@@ -5,6 +5,7 @@
  */
 import { supabase } from '@/lib/supabase';
 import { AppError } from '@/lib/errors';
+import { isTestModeOn, leaveTestMode, TEST_MODE_NOT_READY, testModeHeaders } from '@/lib/testMode';
 
 const BASE = '/api';
 const SERVICE_UNAVAILABLE_MESSAGE = 'We’re having trouble connecting right now. Please wait a moment and try again.';
@@ -109,6 +110,7 @@ async function request<T>(
         headers: {
           'Content-Type': 'application/json',
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...testModeHeaders(),
         },
         ...(body !== undefined ? { body: JSON.stringify(body) } : {}),
       });
@@ -151,6 +153,11 @@ async function request<T>(
     res = await attempt(false);
   }
 
+  if (res.status === 409 && isTestModeOn()) {
+    const body = await res.clone().json().catch(() => null) as { code?: string } | null;
+    if (body?.code === TEST_MODE_NOT_READY) leaveTestMode();
+  }
+
   if (!res.ok) {
     const parsed = await parseErrorMessage(res);
     // Carries both audiences: .friendly for the UI, everything else for the
@@ -185,6 +192,7 @@ export const api = {
         method: 'POST',
         headers: {
           ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          ...testModeHeaders(),
         },
         body: formData,
       });

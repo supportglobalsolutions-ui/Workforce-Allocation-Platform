@@ -2,7 +2,7 @@
 
 import { FormEvent, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Mail, ArrowLeft, CheckCircle2, Lock, AlertCircle, Eye, EyeOff } from 'lucide-react';
+import { Mail, ArrowLeft, CheckCircle2, Lock, Eye, EyeOff } from 'lucide-react';
 import GlobalSolutionsLogo from '@/components/landing/GlobalSolutionsLogo';
 import AuthPageShell, { AuthGlassCard } from '@/components/landing/AuthPageShell';
 import { supabase } from '@/lib/supabase';

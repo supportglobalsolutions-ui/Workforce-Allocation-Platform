@@ -373,3 +373,24 @@ def list_sent_notifications(
         _build_response(n, senders.get(n.sender_admin_id), targets.get(n.target_worker_id))
         for n in notifications
     ]
+
+
+@router.delete("/{notification_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_notification(
+    notification_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Withdraw a notification.
+
+    Admin-only on purpose. A notification is one row read by everyone it
+    targets, so letting a worker delete theirs would remove it for the whole
+    audience — marking it read is the worker's control. This is for an admin
+    retracting something sent in error.
+    """
+    notification = db.get(Notification, notification_id)
+    if not notification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+    db.delete(notification)
+    db.commit()
+    return None

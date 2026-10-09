@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Briefcase, CircleDollarSign, Eye, FileCheck, Link2, Monitor, Percent, Plus, Search, Trash2, Upload, Users, X,
+  AlertCircle, Briefcase, CircleDollarSign, Download, Eye, FileCheck, Link2, Monitor, Percent, Plus, Search, Table2, Trash2, Upload, Users, X,
 } from 'lucide-react';
+import Link from 'next/link';
 import PageHeader from '@/components/platform/PageHeader';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
@@ -12,6 +13,8 @@ import SpinningDots from '@/components/shared/SpinningDots';
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import ConfirmModal from '@/components/platform/ConfirmModal';
 import { api } from '@/lib/api';
+import type { ClientLedgerSheet, ClientMonth } from '@/lib/client-billing';
+import { displayCurrencyFor, formatMoney, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
 import { pickCurrentPeriod, type PeriodLike } from '@/lib/periods';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -39,6 +42,23 @@ interface Client {
   rdp_count: number;
   gs_pct?: string | number | null;
   owner_pct?: string | number | null;
+  payment_tier_id?: string | null;
+  tier_name?: string | null;
+  hours_from_desktops?: boolean;
+  payout_currency?: string | null;
+  payout_email?: string | null;
+  payout_method?: string | null;
+  payout_details?: string | null;
+}
+
+interface ClientTierOption {
+  id: string;
+  name: string;
+  currency: string;
+  rate: string | number;
+  hourly_equivalent?: string | number | null;
+  applies_to?: string;
+  is_active?: boolean;
 }
 
 interface Agreement {
@@ -56,7 +76,7 @@ interface ClientPeriodEarning {
   id: string;
   client_id: string;
   payroll_period_id: string;
-  amount: string | number;
+  amount: string | number | null;
   notes: string | null;
   period_label: string | null;
   period_currency: string | null;
@@ -77,101 +97,6 @@ interface PayrollPeriodOption extends PeriodLike {
   id: string;
   label: string;
   currency?: string;
-}
-
-interface RdpWorkerEarn {
-  worker_name: string;
-  hours: string;
-  rate: string;
-  produced: string;
-  sessions: number;
-}
-
-interface RdpEarnRow {
-  rdp_id: string;
-  nickname: string;
-  country: string;
-  client_id: string | null;
-  hours: string;
-  produced: string;
-  session_count: number;
-  worker_count: number;
-  workers: RdpWorkerEarn[];
-  gs_pct: string;
-  owner_pct: string;
-  gs_share: string;
-  owner_share: string;
-}
-
-interface OwnerEarnRow {
-  owner_key: string;
-  owner_name: string;
-  owner_type: string;
-  client_ids: string[];
-  rdp_count: number;
-  hours: string;
-  produced: string;
-  gs_share: string;
-  owner_share: string;
-}
-
-interface RdpEarningsReport {
-  currency: string;
-  rdps: RdpEarnRow[];
-  owners: OwnerEarnRow[];
-}
-
-function aggregateRdpEarnings(reports: RdpEarningsReport[]): RdpEarningsReport {
-  const currencies = Array.from(new Set(reports.map((report) => report.currency).filter(Boolean)));
-  const rdpById = new Map<string, RdpEarnRow>();
-  for (const row of reports.flatMap((report) => report.rdps)) {
-    const current = rdpById.get(row.rdp_id);
-    if (!current) {
-      rdpById.set(row.rdp_id, { ...row, workers: [...row.workers] });
-      continue;
-    }
-    const workers = new Map<string, RdpWorkerEarn>();
-    for (const worker of [...current.workers, ...row.workers]) {
-      const existing = workers.get(worker.worker_name);
-      workers.set(worker.worker_name, existing ? {
-        ...existing,
-        hours: String(Number(existing.hours) + Number(worker.hours)),
-        produced: String(Number(existing.produced) + Number(worker.produced)),
-        sessions: existing.sessions + worker.sessions,
-      } : { ...worker });
-    }
-    const mergedWorkers = Array.from(workers.values());
-    rdpById.set(row.rdp_id, {
-      ...current,
-      hours: String(Number(current.hours) + Number(row.hours)),
-      produced: String(Number(current.produced) + Number(row.produced)),
-      session_count: current.session_count + row.session_count,
-      worker_count: mergedWorkers.length,
-      workers: mergedWorkers,
-      gs_share: String(Number(current.gs_share) + Number(row.gs_share)),
-      owner_share: String(Number(current.owner_share) + Number(row.owner_share)),
-    });
-  }
-
-  const ownerByKey = new Map<string, OwnerEarnRow>();
-  for (const row of reports.flatMap((report) => report.owners)) {
-    const current = ownerByKey.get(row.owner_key);
-    ownerByKey.set(row.owner_key, current ? {
-      ...current,
-      client_ids: Array.from(new Set([...current.client_ids, ...row.client_ids])),
-      rdp_count: Math.max(current.rdp_count, row.rdp_count),
-      hours: String(Number(current.hours) + Number(row.hours)),
-      produced: String(Number(current.produced) + Number(row.produced)),
-      gs_share: String(Number(current.gs_share) + Number(row.gs_share)),
-      owner_share: String(Number(current.owner_share) + Number(row.owner_share)),
-    } : { ...row, client_ids: [...row.client_ids] });
-  }
-
-  return {
-    currency: currencies.length === 1 ? currencies[0] : 'Mixed',
-    rdps: Array.from(rdpById.values()),
-    owners: Array.from(ownerByKey.values()),
-  };
 }
 
 const fmtMoney = (x: string | number | null | undefined) =>
@@ -225,6 +150,12 @@ interface ClientFormState {
   contract_status: ContractStatus;
   notes: string;
   document_urls: string[];
+  payment_tier_id: string;
+  hours_from_desktops: boolean;
+  payout_currency: string;
+  payout_email: string;
+  payout_method: string;
+  payout_details: string;
 }
 
 const EMPTY_FORM: ClientFormState = {
@@ -240,6 +171,12 @@ const EMPTY_FORM: ClientFormState = {
   contract_status: 'active',
   notes: '',
   document_urls: [],
+  payment_tier_id: '',
+  hours_from_desktops: false,
+  payout_currency: '',
+  payout_email: '',
+  payout_method: '',
+  payout_details: '',
 };
 
 function formFromClient(c: Client): ClientFormState {
@@ -256,6 +193,12 @@ function formFromClient(c: Client): ClientFormState {
     contract_status: c.contract_status,
     notes: c.notes ?? '',
     document_urls: c.document_urls ?? [],
+    payment_tier_id: c.payment_tier_id ?? '',
+    hours_from_desktops: !!c.hours_from_desktops,
+    payout_currency: c.payout_currency ?? '',
+    payout_email: c.payout_email ?? '',
+    payout_method: c.payout_method ?? '',
+    payout_details: c.payout_details ?? '',
   };
 }
 
@@ -277,6 +220,13 @@ function ClientForm({
   const [error, setError] = useState<string | null>(null);
   const [workers, setWorkers] = useState<WorkerOption[] | null>(null);
   const [partners, setPartners] = useState<PartnerOption[] | null>(null);
+  const [clientTiers, setClientTiers] = useState<ClientTierOption[]>([]);
+
+  useEffect(() => {
+    api.get<ClientTierOption[]>('/payment-tiers?scope=clients')
+      .then((list) => setClientTiers(list.filter((t) => t.is_active !== false || t.id === initial.payment_tier_id)))
+      .catch(() => setClientTiers([]));
+  }, []);
 
   useEffect(() => {
     if (form.owner_type === 'worker' && workers === null) {
@@ -307,6 +257,12 @@ function ClientForm({
       contract_status: form.contract_status,
       notes: form.notes.trim() || null,
       document_urls: form.document_urls.map((u) => u.trim()).filter(Boolean),
+      payment_tier_id: form.payment_tier_id || null,
+      hours_from_desktops: form.hours_from_desktops,
+      payout_currency: form.payout_currency.trim().toUpperCase() || null,
+      payout_email: form.payout_email.trim() || null,
+      payout_method: form.payout_method.trim() || null,
+      payout_details: form.payout_details.trim() || null,
     };
     try {
       if (clientId) await api.patch<Client>(`/clients/${clientId}`, payload);
@@ -404,6 +360,43 @@ function ClientForm({
             <option value="ended">Ended</option>
           </select>
         </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Client tier</label>
+          <select value={form.payment_tier_id} onChange={(e) => set('payment_tier_id', e.target.value)} className="input-field">
+            <option value="">None · use the billing rate</option>
+            {clientTiers.map((t) => (
+              <option key={t.id} value={t.id}>
+                {t.name} · {Number(t.hourly_equivalent ?? t.rate).toFixed(2)} {t.currency}/h
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-end">
+          <label className="flex items-center gap-2 text-sm cursor-pointer pb-2" title="On: billed hours come from the Hours Log on this client's desktops. Off: type them on the Client ledger.">
+            <input type="checkbox" checked={form.hours_from_desktops} onChange={(e) => set('hours_from_desktops', e.target.checked)} />
+            Bill hours from linked desktops
+          </label>
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Payout currency</label>
+          <input value={form.payout_currency} maxLength={3} onChange={(e) => set('payout_currency', e.target.value.toUpperCase())}
+            placeholder="USD" className="input-field uppercase" />
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Statement email</label>
+          <input type="email" value={form.payout_email} onChange={(e) => set('payout_email', e.target.value)}
+            placeholder="client@example.com" className="input-field" />
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Payout method</label>
+          <input value={form.payout_method} onChange={(e) => set('payout_method', e.target.value)}
+            placeholder="Bank, mobile money, Wise…" className="input-field" />
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Payout details</label>
+          <input value={form.payout_details} onChange={(e) => set('payout_details', e.target.value)}
+            placeholder="Account number or handle" className="input-field" />
+        </div>
         <div className="sm:col-span-2">
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Notes</label>
           <textarea rows={3} value={form.notes} onChange={(e) => set('notes', e.target.value)}
@@ -484,7 +477,7 @@ function ClientEarningsPanel({ clientId }: { clientId: string }) {
   useEffect(() => {
     if (!earnings || !periodId) return;
     const existing = earnings.find((row) => row.payroll_period_id === periodId);
-    setAmount(existing == null ? '' : String(existing.amount));
+    setAmount(existing?.amount == null ? '' : String(existing.amount));
     setNotes(existing?.notes ?? '');
   }, [earnings, periodId]);
 
@@ -577,6 +570,13 @@ function ClientEarningsPanel({ clientId }: { clientId: string }) {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-[11px] text-theme-muted">
               {existing ? `Existing entry last updated ${new Date(existing.updated_at).toLocaleString()}.` : 'No earnings entered for this period yet.'}
+              {' '}
+              <Link
+                href={`/admin/clients/ledger${periodId ? `?period=${periodId}` : ''}`}
+                className="font-semibold text-emerald-accent hover:underline"
+              >
+                Enter every client for this month →
+              </Link>
             </p>
             <div className="flex items-center gap-2">
               {saved && <span className="text-xs font-semibold text-emerald-accent">Saved</span>}
@@ -774,15 +774,21 @@ function LinkedRdpsTab({ clientId }: { clientId: string }) {
   );
 }
 
-// ── Finances tab (RDP hours × rate for this owner / month) ─────────────────────
+// ── Finances tab (this client's Client ledger rows) ────────────────────────────
+
+interface LedgerMonth {
+  period_id: string;
+  period_label: string;
+  row: ClientMonth;
+}
 
 function FinancesTab({ client }: { client: Client }) {
+  useMoneyDisplay();
   const [periods, setPeriods] = useState<PayrollPeriodOption[]>([]);
   const [periodId, setPeriodId] = useState('');
-  const [report, setReport] = useState<RdpEarningsReport | null>(null);
+  const [months, setMonths] = useState<LedgerMonth[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [openRdp, setOpenRdp] = useState<string | null>(null);
 
   useEffect(() => {
     api.get<PayrollPeriodOption[]>('/payroll/periods')
@@ -799,29 +805,32 @@ function FinancesTab({ client }: { client: Client }) {
     setError(null);
     const scope = periodId ? periods.filter((period) => period.id === periodId) : periods;
     Promise.allSettled(
-      scope.map((period) => api.get<RdpEarningsReport>(`/payroll/periods/${period.id}/reports/rdp-earnings`)),
+      scope.map((period) => api.get<ClientLedgerSheet>(`/client-billing/periods/${period.id}`)),
     )
       .then((results) => {
         const loaded = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
-        if (loaded.length === 0) throw new Error('Failed to load RDP earnings.');
-        setReport(periodId ? loaded[0] : aggregateRdpEarnings(loaded));
+        if (loaded.length === 0) throw new Error('Failed to load the client ledger.');
+        setMonths(loaded.flatMap((sheet) => sheet.rows
+          .filter((row) => row.client_id === client.id && (Number(row.basis) || Number(row.client_costs) || Number(row.billed_hours ?? 0)))
+          .map((row) => ({ period_id: sheet.period_id, period_label: sheet.period_label, row }))));
         const failed = results.length - loaded.length;
         if (failed > 0) setError(`${failed} working month${failed === 1 ? '' : 's'} did not load.`);
       })
-      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load RDP earnings.'))
+      .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load the client ledger.'))
       .finally(() => setLoading(false));
-  }, [periodId, periods]);
+  }, [periodId, periods, client.id]);
 
-  const rdps = (report?.rdps ?? []).filter((r) => r.client_id === client.id);
-  const owner = (report?.owners ?? []).find((o) => o.client_ids.includes(client.id));
-  const currency = report?.currency ?? 'USD';
+  const currency = 'USD';
+  const sum = (key: keyof ClientMonth) => months.reduce((s, m) => s + Number(m.row[key] ?? 0), 0);
 
   return (
     <div className="space-y-4">
       <p className="text-xs text-theme-muted">
-        Each RDP session is hours (finish − start) × that worker’s admin rate. Those session totals
-        add up to what the machine made this month. GS / owner shares follow the revenue agreement
-        on this client — edit them on Revenue Sharing or with Apply to many on the list.
+        Figures from the Client ledger: billed hours × rate gives the expected income; what was received
+        replaces it once entered. The client gets their % of that less any costs charged to them, and GS keeps the rest.{' '}
+        <Link href={`/admin/clients/ledger${periodId ? `?period=${periodId}` : ''}`} className="font-semibold text-emerald-accent hover:underline">
+          Open the Client ledger →
+        </Link>
       </p>
       {periods.length > 0 && (
         <PeriodFilter
@@ -839,66 +848,46 @@ function FinancesTab({ client }: { client: Client }) {
       ) : (
         <>
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-            <KpiCard compact label="RDPs" value={rdps.length} icon={Monitor} />
-            <KpiCard compact label="Hours" value={fmtMoney(owner?.hours ?? rdps.reduce((s, r) => s + Number(r.hours), 0))} icon={Link2} accent="blue" />
-            <KpiCard compact label={`Produced ${currency}`} value={fmtMoney(owner?.produced ?? 0)} icon={Briefcase} accent="gold" />
-            <KpiCard compact label={`Owner share ${currency}`} value={fmtMoney(owner?.owner_share ?? 0)} icon={Percent} accent="emerald" highlight />
+            <KpiCard compact label="RDPs" value={client.rdp_count ?? 0} icon={Monitor} />
+            <KpiCard compact label="Hours" value={fmtMoney(sum('billed_hours'))} icon={Link2} accent="blue" />
+            <KpiCard compact label={`Income ${displayCurrencyFor(currency)}`} value={formatMoneyAmount(sum('basis'), currency)} icon={Briefcase} accent="gold" />
+            <KpiCard compact label={`Client share ${displayCurrencyFor(currency)}`} value={formatMoneyAmount(sum('client_share'), currency)} icon={Percent} accent="emerald" highlight />
           </div>
-          {rdps.length === 0 ? (
+          {months.length === 0 ? (
             <p className="text-sm text-theme-muted text-center py-8">
-              No RDP work on this client for {periodId ? 'the selected month' : 'any working month'}.
+              Nothing on the Client ledger for this client in {periodId ? 'the selected month' : 'any working month'}.
             </p>
           ) : (
             <div className="space-y-2">
-              {rdps.map((r) => (
-                <div key={r.rdp_id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+              {months.map(({ period_id, period_label, row: r }) => (
+                <div key={period_id} className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
                   <div className="flex flex-wrap items-start justify-between gap-3">
                     <div>
-                      <p className="text-sm font-bold text-white">{r.nickname}</p>
+                      <p className="text-sm font-bold text-white">{period_label}</p>
                       <p className="text-[11px] text-theme-muted">
-                        {r.country} · {r.session_count} session{r.session_count === 1 ? '' : 's'} · {r.worker_count} worker{r.worker_count === 1 ? '' : 's'}
-                        {' · '}GS {Number(r.gs_pct)}% / Owner {Number(r.owner_pct)}%
+                        {r.billed_hours != null ? `${fmtMoney(r.billed_hours)} h ${r.hours_source === 'desktops' ? 'from desktops' : 'typed'}` : 'No hours'}
+                        {r.rate != null ? ` · ${formatMoneyAmount(r.rate, currency)}/h${r.tier_name && r.rate_source === 'tier' ? ` (${r.tier_name})` : ''}` : ''}
+                        {' · '}Client {Number(r.client_pct)}% / GS {Number(r.gs_pct)}%
                       </p>
                     </div>
                     <div className="text-right tabular-nums">
-                      <p className="text-sm font-bold text-emerald-accent">{fmtMoney(r.owner_share)} {currency}</p>
+                      <p className="text-sm font-bold text-emerald-accent">{formatMoney(r.client_share, currency)}</p>
                       <p className="text-[11px] text-theme-muted">
-                        {fmtMoney(r.hours)} h · produced {fmtMoney(r.produced)} · GS {fmtMoney(r.gs_share)}
+                        {r.basis_source === 'actual' ? 'received' : 'expected'} {formatMoneyAmount(r.basis, currency)}
+                        {Number(r.client_costs) > 0 ? ` · costs ${formatMoneyAmount(r.client_costs, currency)}` : ''}
+                        {' · '}GS {formatMoneyAmount(r.gs_share, currency)}
                       </p>
                     </div>
                   </div>
-                  {r.workers.length > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setOpenRdp((id) => (id === r.rdp_id ? null : r.rdp_id))}
-                      className="mt-2 text-[11px] font-semibold text-emerald-accent hover:underline"
-                    >
-                      {openRdp === r.rdp_id ? 'Hide workers' : 'Show workers on this RDP'}
-                    </button>
+                  {r.variance != null && Number(r.variance) !== 0 && (
+                    <p className={`mt-2 text-[11px] ${Number(r.variance) < 0 ? 'text-danger' : 'text-emerald-accent'}`}>
+                      Received {Number(r.variance) > 0 ? 'more' : 'less'} than expected by {formatMoneyAmount(Math.abs(Number(r.variance)), currency)}.
+                    </p>
                   )}
-                  {openRdp === r.rdp_id && (
-                    <div className="mt-2 overflow-x-auto">
-                      <table className="w-full text-xs">
-                        <thead>
-                          <tr className="text-theme-muted">
-                            <th className="text-left py-1 font-semibold">Worker</th>
-                            <th className="text-right py-1 font-semibold">Hours</th>
-                            <th className="text-right py-1 font-semibold">Rate/hr</th>
-                            <th className="text-right py-1 font-semibold">Produced</th>
-                          </tr>
-                        </thead>
-                        <tbody>
-                          {r.workers.map((w) => (
-                            <tr key={`${r.rdp_id}-${w.worker_name}`} className="border-t border-white/[0.06]">
-                              <td className="py-1.5 text-white">{w.worker_name}</td>
-                              <td className="py-1.5 text-right tabular-nums">{fmtMoney(w.hours)}</td>
-                              <td className="py-1.5 text-right tabular-nums">{fmtMoney(w.rate)}</td>
-                              <td className="py-1.5 text-right tabular-nums text-emerald-accent">{fmtMoney(w.produced)}</td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                  {r.warnings.length > 0 && (
+                    <ul className="mt-2 text-[11px] text-amber-400 list-disc pl-4">
+                      {r.warnings.map((w) => <li key={w}>{w}</li>)}
+                    </ul>
                   )}
                 </div>
               ))}
@@ -964,6 +953,37 @@ function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onC
 
 // ── Import clients (CSV / Excel) ───────────────────────────────────────────────
 
+/** Columns the importer understands (services/client_import.py), with sample TEST rows. */
+const CLIENT_TEMPLATE_HEADERS = [
+  'Client', 'Platform', 'Billing Rate USD/hr', 'Active?', 'Account Email', 'Account ID', 'Login Reference', 'Notes',
+  'Client %', 'Client Tier', 'Desktop Hours', 'Payout Currency', 'Payout Email', 'Payout Method', 'Payout Details',
+];
+const CLIENT_TEMPLATE_ROWS = [1, 2, 3].map((n) => [
+  `Test Client ${n}`, `Test Platform ${n}`, String(10 * n), 'Yes',
+  `test${n}@example.com`, `TEST-${n}`, `test-login-${n}`, `Test ${n} - replace with real data`,
+  String(10 * n), '', n === 1 ? 'Yes' : 'No', n === 2 ? 'EUR' : 'USD', `payouts${n}@example.com`, 'Bank transfer', `IBAN TEST-${n}`,
+]);
+
+function csvCell(value: string): string {
+  return /[",\n]/.test(value) ? `"${value.replace(/"/g, '""')}"` : value;
+}
+
+function downloadClientTemplate(): void {
+  const csv = [CLIENT_TEMPLATE_HEADERS, ...CLIENT_TEMPLATE_ROWS]
+    .map((row) => row.map(csvCell).join(','))
+    .join('\r\n');
+  // BOM so Excel opens the dash and other symbols correctly.
+  const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = 'clients-import-template.csv';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
 interface ClientImportResult {
   created: number;
   updated: number;
@@ -1017,6 +1037,13 @@ function ImportClientsModal({
         </div>
 
         <div className="p-5 space-y-4">
+          <p className="text-xs text-theme-muted">
+            Not sure of the columns?{' '}
+            <button type="button" onClick={downloadClientTemplate} className="font-semibold text-emerald-accent hover:underline">
+              Download the template
+            </button>{' '}
+            — it has sample Test rows to replace with your clients.
+          </p>
           <label className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-white/15 bg-white/[0.03] px-4 py-8 cursor-pointer hover:border-emerald-accent/40 transition-colors">
             <Upload size={22} className="text-emerald-accent" />
             <span className="text-sm text-theme-heading font-medium">
@@ -1082,6 +1109,7 @@ function ImportClientsModal({
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function ClientManagementPage() {
+  useMoneyDisplay();
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -1097,6 +1125,7 @@ export default function ClientManagementPage() {
   const [ownerPct, setOwnerPct] = useState('60');
   const [applying, setApplying] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
+  const [sheetCols, setSheetCols] = useState(false);
 
   async function load() {
     setError(null);
@@ -1109,7 +1138,11 @@ export default function ClientManagementPage() {
     }
   }
 
-  useEffect(() => { load(); }, []);
+  useEffect(() => {
+    load();
+    const linked = new URLSearchParams(window.location.search).get('client');
+    if (linked) setSelectedId(linked);
+  }, []);
 
   const platforms = useMemo(
     () => Array.from(new Set(clients.map((c) => c.platform))).sort(),
@@ -1185,6 +1218,23 @@ export default function ClientManagementPage() {
         title="Client Management"
         actions={
           <div className="flex items-center gap-2">
+            <Link
+              href="/admin/payroll/ledger?tab=clients"
+              title="Enter this month's earnings for every client on one page."
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <Table2 size={15} /> Month earnings
+            </Link>
+            <Link
+              href="/admin/clients/ledger"
+              title="Every client's month on one sheet: hours, rate, expected and received income, the split and costs."
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
+            >
+              <CircleDollarSign size={15} /> Client ledger
+            </Link>
+            <button type="button" onClick={downloadClientTemplate} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4">
+              <Download size={15} /> Download template
+            </button>
             <button type="button" onClick={() => setShowImport(true)} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4">
               <Upload size={15} /> Import
             </button>
@@ -1229,6 +1279,10 @@ export default function ClientManagementPage() {
         </select>
         <span className="text-xs text-theme-muted ml-1">{filtered.length} client{filtered.length !== 1 ? 's' : ''}</span>
         <div className="flex-1" />
+        <label className="flex items-center gap-1.5 text-xs text-theme-muted cursor-pointer mr-1" title="Also show tier, desktop-hours switch, client % and payout currency">
+          <input type="checkbox" checked={sheetCols} onChange={(e) => setSheetCols(e.target.checked)} className="accent-emerald-400" />
+          Sheet columns
+        </label>
         <button
           type="button"
           onClick={toggleAllVisible}
@@ -1278,12 +1332,12 @@ export default function ClientManagementPage() {
             { key: 'platform', header: 'Platform', render: (r) => (r._client as Client).platform },
             {
               key: 'rate',
-              header: 'USD/hr',
+              header: 'Rate/hr',
               render: (r) => {
                 const rate = (r._client as Client).billing_rate_usd;
                 if (rate == null || rate === '') return <span className="text-theme-muted">—</span>;
                 const n = Number(rate);
-                return Number.isFinite(n) ? `$${n.toFixed(2)}` : String(rate);
+                return Number.isFinite(n) ? formatMoney(n, 'USD') : String(rate);
               },
             },
             {
@@ -1326,6 +1380,38 @@ export default function ClientManagementPage() {
                 return <span className="tabular-nums text-xs">{Number(c.gs_pct)}% / {Number(c.owner_pct)}%</span>;
               },
             },
+            ...(sheetCols ? [
+              {
+                key: 'tier', header: 'Tier',
+                render: (r: Record<string, unknown>) => (r._client as Client).tier_name
+                  ?? <span className="text-theme-muted">—</span>,
+              },
+              {
+                key: 'desktop_hours', header: 'Desktop hrs',
+                render: (r: Record<string, unknown>) => ((r._client as Client).hours_from_desktops
+                  ? <span className="text-emerald-accent text-xs font-semibold">On</span>
+                  : <span className="text-theme-muted text-xs">Off</span>),
+              },
+              {
+                key: 'client_pct', header: 'Client %',
+                render: (r: Record<string, unknown>) => {
+                  const c = r._client as Client;
+                  return c.owner_pct == null ? <span className="text-theme-muted">—</span> : <span className="tabular-nums text-xs">{Number(c.owner_pct)}%</span>;
+                },
+              },
+              {
+                key: 'payout', header: 'Payout',
+                render: (r: Record<string, unknown>) => {
+                  const c = r._client as Client;
+                  return (
+                    <div>
+                      <p className="text-xs">{c.payout_currency || 'USD'}{c.payout_method ? ` · ${c.payout_method}` : ''}</p>
+                      {c.payout_email && <p className="text-[11px] text-theme-muted">{c.payout_email}</p>}
+                    </div>
+                  );
+                },
+              },
+            ] : []),
             {
               key: 'actions', header: '',
               render: (r) => (

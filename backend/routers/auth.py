@@ -12,7 +12,6 @@ from core.auth_errors import http_error_from_auth
 from core.config import settings
 from core.database import get_db
 from core.supabase_auth import (
-    SUPER_ADMIN_EMAIL,
     VALID_ROLES,
     approve_auth_user,
     ban_auth_user,

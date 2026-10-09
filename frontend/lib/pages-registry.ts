@@ -5,6 +5,8 @@ export interface PageEntry {
   id: string;
   title: string;
   href: string;
+  /** One-line summary, where `purpose` would be too long to show. */
+  description?: string;
   portal: Portal;
   purpose: string;
   features: string[];
@@ -226,8 +228,58 @@ export const PAGES: PageEntry[] = [
     title: 'Finance',
     href: '/admin/payroll',
     portal: 'admin',
-    purpose: 'Period ledger, payment tiers, approve, wallets, and receipts.',
-    features: ['Period ledger', 'Payment tiers', 'Approve & wallets', 'Payslip export'],
+    purpose: 'Monthly payroll, ledger, payment tiers, approve, wallets, and receipts.',
+    features: ['Monthly payroll', 'Ledger', 'Payment tiers', 'Approve & wallets', 'Payslip export'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
+    id: 'payroll-ledger',
+    title: 'Ledger',
+    href: '/admin/payroll/ledger',
+    portal: 'admin',
+    purpose: 'Enter the whole month on one page: client earnings, shared costs, and every payslip field for every worker.',
+    features: ['Client earnings', 'Shared costs', 'Hours, rate, bonus, costs, FX', 'Apply to many'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
+    id: 'payroll-month',
+    title: 'Month Overview',
+    href: '/admin/payroll/month',
+    portal: 'admin',
+    purpose: 'One page for the working month: the steps left to close it, the money in and out, and every client’s split.',
+    features: ['Six-step checklist', 'Received vs expected', 'Workers / clients / GS split', 'Per-client table'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
+    id: 'payroll-hours',
+    title: 'Hours Log',
+    href: '/admin/payroll/hours',
+    portal: 'admin',
+    purpose: 'Paid hours per worker per desktop for the month, filled from sessions and editable by hand.',
+    features: ['Session vs typed hours', 'Group by worker, desktop or client', 'Reset to sessions', 'CSV import'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
+    id: 'client-ledger',
+    title: 'Client Ledger',
+    href: '/admin/clients/ledger',
+    portal: 'admin',
+    purpose: 'Every client’s month on one sheet: billed hours, rate, expected and received income, the split and costs.',
+    features: ['Expected vs received', 'Desktop-hours switch', 'Client % and costs', 'Apply to many'],
+    status: 'live',
+    roles: ['Handler', 'Operations Lead', 'CEO'],
+  },
+  {
+    id: 'client-payouts',
+    title: 'Client Payouts',
+    href: '/admin/payroll/client-payouts',
+    portal: 'admin',
+    purpose: 'What each client is owed for the month, in their own currency, with a statement to send and a paid record.',
+    features: ['Statement PDF', 'Email statement', 'Mark paid with reference', 'Frozen exchange rate'],
     status: 'live',
     roles: ['Handler', 'Operations Lead', 'CEO'],
   },
@@ -323,8 +375,9 @@ export const PAGES: PageEntry[] = [
   },
   {
     id: 'audit-logs',
-    title: 'Audit Logs',
+    title: 'Activity log',
     href: '/admin/audit-logs',
+    description: 'Who did what — desktops, training, workers, admin actions.',
     portal: 'audit',
     purpose: 'Append-only audit trail of every material action in the system.',
     features: ['Actor & action', 'Entity & timestamp', 'Old/new values', 'Advanced filters'],
@@ -358,6 +411,16 @@ export const PAGES: PageEntry[] = [
     portal: 'audit',
     purpose: 'Reply to signed-in workers who messaged from Chat with admin.',
     features: ['Thread list', 'Unread badges', 'Archive', 'Alert email on new messages'],
+    status: 'live',
+    roles: ['Admin', 'Super Admin'],
+  },
+  {
+    id: 'admin-shift-changes',
+    title: 'Shift Changes',
+    href: '/admin/notifications/shift-changes',
+    portal: 'audit',
+    purpose: 'Approve or reject workers’ requests to change the hours of, or delete, shifts already approved.',
+    features: ['Pending requests', 'Old vs new times', 'Approve / reject with note', 'Past decisions'],
     status: 'live',
     roles: ['Admin', 'Super Admin'],
   },

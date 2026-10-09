@@ -19,7 +19,6 @@ import json
 import logging
 from dataclasses import dataclass
 from typing import Any
-from uuid import UUID
 
 import redis as redis_lib
 from sqlmodel import Session, select

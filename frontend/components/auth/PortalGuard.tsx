@@ -25,9 +25,19 @@ export default function PortalGuard({
 
     redirecting.current = true;
     if (!session) {
-      router.replace('/login');
+      // Carry the page we were on, exactly as middleware does. Without it a
+      // refresh that briefly loses the session sends you to /login, which then
+      // sees the session restored and drops you at your role's landing page —
+      // so a super admin reading a worker page lands on CEO Command instead of
+      // back where they were.
+      // Read from location rather than useSearchParams: this runs only in the
+      // browser, and the hook would force every portal layout under Suspense.
+      const returnTo = `${window.location.pathname}${window.location.search}`;
+      router.replace(`/login?returnTo=${encodeURIComponent(returnTo)}`);
       return;
     }
+    // A real permission problem — this portal is not theirs. Landing page is
+    // the right destination here.
     router.replace(ROLE_LANDING[session.primaryPortal]);
   }, [isLoading, allowed, session, router]);
 

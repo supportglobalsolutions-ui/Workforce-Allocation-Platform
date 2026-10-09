@@ -2,7 +2,7 @@ import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, text
+from sqlalchemy import Column, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -33,6 +33,12 @@ class Shift(SQLModel, table=True):
     scheduled_start: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     scheduled_end: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     status: ShiftStatusEnum = Field(sa_column=Column(ShiftStatusType, nullable=False))
+    # "shift" = normal schedule; "rdp_claim" = a shift booked on rdp_resource_id
+    # that holds that machine for the worker during its hours once approved.
+    kind: str = Field(
+        default="shift",
+        sa_column=Column(String(16), nullable=False, server_default=text("'shift'")),
+    )
     approved_by: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),

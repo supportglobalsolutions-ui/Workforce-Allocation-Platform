@@ -17,7 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from core.config import settings
-from core.guacamole import GuacamoleClient, raw_connection_id
+from core.guacamole import raw_connection_id
 from models.allocation import Allocation
 from models.enums import (
     AllocationLifecycleEnum,
@@ -270,6 +270,16 @@ def claim(
             ),
             http_status=status.HTTP_403_FORBIDDEN,
         )
+    if not staff_claim:
+        from services.cost_ledger import is_worker_approved
+
+        if not is_worker_approved(db, worker.id):
+            return RdpOutcome(
+                ok=False,
+                code="not_approved_this_month",
+                friendly="You are not approved for this work month yet — an admin must approve you first.",
+                http_status=status.HTTP_403_FORBIDDEN,
+            )
 
     open_on_this = repair_fn(db, resource)
     if open_on_this:
@@ -321,18 +331,8 @@ def claim(
     if approved_shift:
         shift_id = approved_shift.id
 
-    if not staff_claim:
-        from services.rdp_day_budget import assert_worker_may_use_budget
-
-        try:
-            assert_worker_may_use_budget(db, resource, is_staff=False)
-        except HTTPException as exc:
-            return RdpOutcome(
-                ok=False,
-                code="day_budget_exhausted",
-                friendly=str(exc.detail),
-                http_status=exc.status_code,
-            )
+    # The daily window / time left is shown to workers for guidance only; a
+    # worker is never blocked from claiming because it reads 0 or is closed.
 
     preflight = preflight_fn(resource)
     if not preflight["ok"]:

@@ -113,10 +113,7 @@ export default function CollapsibleSidebar({
         )}
       </div>
 
-      <nav className="flex-1 px-2 py-3 space-y-0.5 overflow-y-auto overscroll-contain">
-        {!collapsed && (
-          <p className="px-3 py-1 text-[10px] font-bold uppercase tracking-wider text-gold-accent/80">Navigation</p>
-        )}
+      <nav className="flex-1 px-2 pt-2 pb-3 space-y-0.5 overflow-y-auto overscroll-contain">
         {items.map((item) => (
           <SidebarLink
             key={item.href}

@@ -1,8 +1,9 @@
 import logging
+import ssl
 import time
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from sqlalchemy import event
-from sqlalchemy.pool import NullPool
 from sqlmodel import create_engine, Session, SQLModel  # noqa: F401
 
 from .config import settings
@@ -21,6 +22,65 @@ engine_options = {
 }
 
 DATABASE_URL, _url_is_pooled = normalize_db_url(settings.DATABASE_URL)
+
+
+def _native_postgres_driver_available() -> bool:
+    """Return whether psycopg2 can be imported on this machine.
+
+    Some managed Windows machines permit Python itself but block psycopg2's
+    compiled extension through Application Control.  In that case use pg8000,
+    a pure-Python PostgreSQL driver, so local development can still run.
+    """
+    try:
+        import psycopg2  # noqa: F401
+    except (ImportError, OSError):
+        return False
+    return True
+
+
+def _pg8000_ssl_context(sslmode: str, root_cert: str | None) -> ssl.SSLContext | None:
+    """Mirror libpq ``sslmode`` so switching drivers keeps the same security.
+
+    ``require`` (what Supabase documents) encrypts without verifying the
+    certificate, exactly as psycopg2 does; Supabase signs with its own root CA,
+    which is not in the system trust store. ``verify-ca``/``verify-full``
+    verify, against ``sslrootcert`` when given.
+    """
+    mode = (sslmode or "prefer").lower()
+    if mode == "disable":
+        return None
+    if mode in {"verify-ca", "verify-full"}:
+        context = ssl.create_default_context(cafile=root_cert or None)
+        context.check_hostname = mode == "verify-full"
+        return context
+    context = ssl.create_default_context()
+    context.check_hostname = False
+    context.verify_mode = ssl.CERT_NONE
+    return context
+
+
+USING_PG8000 = not _native_postgres_driver_available()
+if USING_PG8000:
+    parsed_url = urlparse(DATABASE_URL)
+    driver_url = parsed_url._replace(scheme="postgresql+pg8000")
+    query = parse_qsl(driver_url.query, keep_blank_values=True)
+    libpq_options = {key.lower(): value for key, value in query}
+    # libpq-only options; pg8000 receives an SSL context instead.
+    params = [
+        (key, value)
+        for key, value in query
+        if key.lower() not in {"sslmode", "sslrootcert", "connect_timeout"}
+    ]
+    DATABASE_URL = urlunparse(driver_url._replace(query=urlencode(params)))
+    engine_options["connect_args"] = {
+        "timeout": 10,
+        "ssl_context": _pg8000_ssl_context(
+            libpq_options.get("sslmode", ""), libpq_options.get("sslrootcert"),
+        ),
+    }
+    logger.warning(
+        "psycopg2 is unavailable; using the pure-Python pg8000 PostgreSQL driver."
+    )
 
 # Trust the DSN over the flag: a :6543 URL is pgbouncer whether or not anyone
 # remembered to set DATABASE_USE_PGBOUNCER.
@@ -108,8 +168,13 @@ def _connect_with_retry(dialect, conn_rec, cargs, cparams):
 
 
 def get_db():
-    """FastAPI dependency — yields a SQLModel Session and guarantees close."""
-    with Session(engine) as session:
+    """FastAPI dependency — yields a SQLModel Session and guarantees close.
+
+    In test mode the session is bound to the caller's sandbox schema.
+    """
+    from .sandbox import current_engine
+
+    with Session(current_engine()) as session:
         yield session
 
 

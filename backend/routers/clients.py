@@ -8,6 +8,7 @@ from sqlmodel import Session, func, select
 from core.database import get_db
 from core.permissions import require_admin
 from models.client import Client, ClientPeriodEarning, ClientRevenueAgreement
+from models.payment_tier import PaymentTier
 from models.payroll import PayrollPeriod
 from models.rdp_machine import RDPResource
 from models.worker import Worker
@@ -22,6 +23,7 @@ from schemas.client import (
     ClientRevenueAgreementUpdate,
     ClientUpdate,
 )
+from services import client_billing
 from services.client_import import parse_client_import_file, upsert_clients_from_rows
 from services.client_owners import client_owner_name
 from .deps import apply_update
@@ -46,6 +48,16 @@ def _earning_response(db: Session, earning: ClientPeriodEarning) -> ClientPeriod
     return resp
 
 
+def _check_client_tier(db: Session, tier_id: UUID | None) -> None:
+    if tier_id is None:
+        return
+    tier = db.get(PaymentTier, tier_id)
+    if not tier:
+        raise HTTPException(status_code=404, detail="Tier not found")
+    if tier.applies_to not in client_billing.CLIENT_TIER_SCOPES:
+        raise HTTPException(status_code=400, detail=f"{tier.name} is a worker tier. Set it to apply to clients first.")
+
+
 def _to_response(db: Session, client: Client, rdp_counts: dict | None = None, splits: dict | None = None) -> ClientResponse:
     resp = ClientResponse.model_validate(client)
     resp.owner_name = client_owner_name(db, client)
@@ -53,6 +65,11 @@ def _to_response(db: Session, client: Client, rdp_counts: dict | None = None, sp
         resp.rdp_count = rdp_counts.get(client.id, 0)
     if splits is not None and client.id in splits:
         resp.gs_pct, resp.owner_pct = splits[client.id]
+    if client.payment_tier_id:
+        tier = db.get(PaymentTier, client.payment_tier_id)
+        resp.tier_name = tier.name if tier else None
+    if client.payout_currency:
+        resp.payout_currency = client.payout_currency.upper()
     return resp
 
 
@@ -83,7 +100,10 @@ def create_client(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    _check_client_tier(db, body.payment_tier_id)
     client = Client(**body.model_dump())
+    if client.payout_currency:
+        client.payout_currency = client.payout_currency.strip().upper() or None
     db.add(client)
     db.commit()
     db.refresh(client)
@@ -141,7 +161,13 @@ def update_client(
     client = db.get(Client, client_id)
     if not client:
         raise HTTPException(status_code=404, detail="Client not found")
+    if "payment_tier_id" in body.model_fields_set:
+        _check_client_tier(db, body.payment_tier_id)
     apply_update(client, body)
+    if "payment_tier_id" in body.model_fields_set and body.payment_tier_id is None:
+        client.payment_tier_id = None
+    if client.payout_currency:
+        client.payout_currency = client.payout_currency.strip().upper() or None
     db.add(client)
     db.commit()
     db.refresh(client)
@@ -177,8 +203,13 @@ def upsert_client_earning(
 ):
     if not db.get(Client, client_id):
         raise HTTPException(status_code=404, detail="Client not found")
-    if not db.get(PayrollPeriod, period_id):
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
+    try:
+        client_billing._require_open(db, period, client_id)
+    except client_billing.BillingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     earning = db.exec(
         select(ClientPeriodEarning).where(

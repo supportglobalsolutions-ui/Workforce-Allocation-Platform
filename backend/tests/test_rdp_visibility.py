@@ -11,8 +11,16 @@ from __future__ import annotations
 import uuid
 from types import SimpleNamespace
 
+import pytest
+
 from models.enums import RdpStatusEnum
-from services import rdp_state
+from services import cost_ledger, rdp_state
+
+
+@pytest.fixture(autouse=True)
+def _approved_this_month(monkeypatch):
+    """Visibility rules below assume the member is approved for the work month."""
+    monkeypatch.setattr(cost_ledger, "is_worker_approved", lambda db, worker_id: True)
 
 
 class FakeResult:
@@ -173,3 +181,22 @@ def test_list_visible_includes_marked_machines_only():
         db, viewer={"role": "user"}, viewer_worker_id=worker
     )
     assert visible == [marked]
+
+
+def test_unapproved_member_sees_no_machines_even_assigned(monkeypatch):
+    monkeypatch.setattr(cost_ledger, "is_worker_approved", lambda db, worker_id: False)
+    worker = uuid.uuid4()
+    mine = _machine(assigned_to=worker, status=RdpStatusEnum.assigned)
+    db = FakeDb(resources=[mine])
+    assert rdp_state.list_visible_rdp_resources(
+        db, viewer={"role": "user"}, viewer_worker_id=worker
+    ) == []
+    assert not rdp_state.worker_may_see_resource(db, mine, worker)
+
+
+def test_unapproved_member_still_sees_machine_they_hold(monkeypatch):
+    monkeypatch.setattr(cost_ledger, "is_worker_approved", lambda db, worker_id: False)
+    worker = uuid.uuid4()
+    held = _machine(assigned_to=worker, status=RdpStatusEnum.active)
+    db = FakeDb(resources=[held], open_allocs=[SimpleNamespace(id=uuid.uuid4())])
+    assert rdp_state.worker_may_see_resource(db, held, worker)

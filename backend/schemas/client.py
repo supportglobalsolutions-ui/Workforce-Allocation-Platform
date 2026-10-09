@@ -22,6 +22,12 @@ class ClientBase(SQLModel):
     contract_status:         ClientContractStatusEnum = ClientContractStatusEnum.active
     notes:                   Optional[str] = None
     document_urls:           list[Any] = []
+    payment_tier_id:         Optional[UUID] = None
+    hours_from_desktops:     bool = False
+    payout_currency:         Optional[str] = None
+    payout_email:            Optional[str] = None
+    payout_method:           Optional[str] = None
+    payout_details:          Optional[str] = None
 
 
 class ClientCreate(ClientBase):
@@ -41,6 +47,12 @@ class ClientUpdate(SQLModel):
     contract_status:         Optional[ClientContractStatusEnum] = None
     notes:                   Optional[str] = None
     document_urls:           Optional[list[Any]] = None
+    payment_tier_id:         Optional[UUID] = None
+    hours_from_desktops:     Optional[bool] = None
+    payout_currency:         Optional[str] = None
+    payout_email:            Optional[str] = None
+    payout_method:           Optional[str] = None
+    payout_details:          Optional[str] = None
 
 
 class ClientResponse(ClientBase):
@@ -52,6 +64,7 @@ class ClientResponse(ClientBase):
     rdp_count:  Optional[int] = None
     gs_pct:     Optional[Decimal] = None
     owner_pct:  Optional[Decimal] = None
+    tier_name:  Optional[str] = None
 
     @field_validator("document_urls", mode="before")
     @classmethod
@@ -133,8 +146,15 @@ class ClientPeriodEarningResponse(SQLModel):
     id: UUID
     client_id: UUID
     payroll_period_id: UUID
-    amount: Decimal
+    amount: Optional[Decimal] = None
     notes: Optional[str] = None
+    received_on: Optional[date] = None
+    billed_hours: Optional[Decimal] = None
+    rate_used: Optional[Decimal] = None
+    expected_amount: Optional[Decimal] = None
+    client_costs: Decimal = Decimal("0")
+    client_share: Optional[Decimal] = None
+    gs_share: Optional[Decimal] = None
     created_at: datetime
     updated_at: datetime
     period_label: Optional[str] = None

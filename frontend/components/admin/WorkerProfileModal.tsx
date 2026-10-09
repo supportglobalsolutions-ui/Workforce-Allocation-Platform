@@ -147,7 +147,7 @@ export default function WorkerProfileModal({
       api.get<PartnerEntity[]>('/partners').then(setCompanies).catch(() => setCompanies([]));
     }
     if (paymentTiers === null) {
-      api.get<{ name: string; is_active: boolean }[]>('/payment-tiers?active_only=true')
+      api.get<{ name: string; is_active: boolean }[]>('/payment-tiers?active_only=true&scope=workers')
         .then((t) => setPaymentTiers(t.map((x) => ({ name: x.name }))))
         .catch(() => setPaymentTiers([]));
     }

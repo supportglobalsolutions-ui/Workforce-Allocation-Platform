@@ -34,7 +34,7 @@ export default function SiteFooter({ className = '' }: { className?: string }) {
         </p>
 
         <div
-          className="flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-sm sm:text-base font-mono tabular-nums"
+          className="flex flex-wrap items-center justify-center gap-x-2 gap-y-0.5 text-xs font-mono tabular-nums"
           suppressHydrationWarning
         >
           {dayDate && time ? (

@@ -43,18 +43,69 @@ def evidence_complete(session: WorkSession) -> bool:
     )
 
 
+MAX_WORK_BLOCKS = 10
+
+
+def _aware(dt: datetime) -> datetime:
+    return dt.replace(tzinfo=timezone.utc) if dt.tzinfo is None else dt
+
+
+def _parse(value) -> Optional[datetime]:
+    if isinstance(value, datetime):
+        return _aware(value)
+    if isinstance(value, str) and value:
+        try:
+            return _aware(datetime.fromisoformat(value.replace("Z", "+00:00")))
+        except ValueError:
+            return None
+    return None
+
+
+def session_blocks(session: WorkSession) -> list[tuple[datetime, datetime]]:
+    """The session's worked blocks; a single start/end pair counts as one block."""
+    blocks = []
+    for raw in getattr(session, "work_blocks", None) or []:
+        start, end = _parse(raw.get("start")), _parse(raw.get("end"))
+        if start and end and end > start:
+            blocks.append((start, end))
+    if not blocks and session.image_start_at and session.image_end_at:
+        start, end = _aware(session.image_start_at), _aware(session.image_end_at)
+        if end > start:
+            blocks.append((start, end))
+    return blocks
+
+
+def work_minutes(session: WorkSession) -> int:
+    """Paid work time: the sum of the worked blocks (breaks between them are not paid)."""
+    return sum(int((end - start).total_seconds() // 60) for start, end in session_blocks(session))
+
+
+def set_work_blocks(session: WorkSession, blocks: Sequence[tuple[datetime, datetime]]) -> None:
+    """Validate and store worked blocks; keeps image_start_at/image_end_at as first start / last end.
+
+    Raises ValueError with a worker-facing message when the blocks are invalid.
+    """
+    if not blocks:
+        raise ValueError("Add at least one start and end time.")
+    if len(blocks) > MAX_WORK_BLOCKS:
+        raise ValueError(f"A session can have at most {MAX_WORK_BLOCKS} work blocks.")
+    ordered = sorted((_aware(s), _aware(e)) for s, e in blocks)
+    for i, (start, end) in enumerate(ordered):
+        if end <= start:
+            raise ValueError("Each end time must be after its start time.")
+        if i and start < ordered[i - 1][1]:
+            raise ValueError("Work blocks cannot overlap — each one must start after the previous one ends.")
+    session.work_blocks = [{"start": s.isoformat(), "end": e.isoformat()} for s, e in ordered]
+    session.image_start_at = ordered[0][0]
+    session.image_end_at = ordered[-1][1]
+    apply_image_duration(session)
+
+
 def apply_image_duration(session: WorkSession) -> None:
-    """Set duration_minutes from image times when both are present."""
+    """Set duration_minutes to the worked time when start/end times are present."""
     if not session.image_start_at or not session.image_end_at:
         return
-    start = session.image_start_at
-    end = session.image_end_at
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=timezone.utc)
-    minutes = int((end - start).total_seconds() // 60)
-    session.duration_minutes = max(0, minutes)
+    session.duration_minutes = max(0, work_minutes(session))
 
 
 def effective_duration_minutes(session: WorkSession) -> int:

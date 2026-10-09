@@ -2,8 +2,9 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import {
-  Briefcase, AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, User, Users, X,
+  Briefcase, AlertCircle, Bell, CheckCircle, Mail, Monitor, Search, Send, Trash2, User, Users, X,
 } from 'lucide-react';
+import ConfirmModal from '@/components/platform/ConfirmModal';
 import PageHeader from '@/components/platform/PageHeader';
 import NotificationTabs from '@/components/admin/NotificationTabs';
 import { api } from '@/lib/api';
@@ -64,7 +65,7 @@ function emailValidationError(value: string): string | null {
   return null;
 }
 
-function SentCard({ n }: { n: NotificationResponse }) {
+function SentCard({ n, onDelete }: { n: NotificationResponse; onDelete: (n: NotificationResponse) => void }) {
   const audienceLabel =
     n.target_type === 'all' ? 'All Workers'
       : n.target_type === 'partners' ? 'Partners only'
@@ -86,9 +87,20 @@ function SentCard({ n }: { n: NotificationResponse }) {
           <AudienceIcon size={14} className={`${iconClass} shrink-0`} />
           <span className="text-sm font-semibold text-white truncate">{n.title}</span>
         </div>
-        <span className="text-[10px] text-theme-muted shrink-0 whitespace-nowrap">
-          {new Date(n.created_at).toLocaleString()}
-        </span>
+        <div className="flex shrink-0 items-center gap-2">
+          <span className="text-[10px] text-theme-muted whitespace-nowrap">
+            {new Date(n.created_at).toLocaleString()}
+          </span>
+          <button
+            type="button"
+            title={`Delete "${n.title}"`}
+            aria-label={`Delete ${n.title}`}
+            onClick={() => onDelete(n)}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-lg border border-white/10 bg-white/[0.03] text-theme-muted transition-colors hover:border-danger/30 hover:bg-danger/10 hover:text-danger"
+          >
+            <Trash2 size={13} />
+          </button>
+        </div>
       </div>
       <p className="text-xs text-theme-muted leading-relaxed">{n.message}</p>
       <div className="flex items-center gap-2 text-[10px] text-theme-muted flex-wrap">
@@ -116,6 +128,9 @@ const emptyForm = {
 
 export default function AdminNotificationsPage() {
   const [sent, setSent] = useState<NotificationResponse[]>([]);
+  const [toDelete, setToDelete] = useState<NotificationResponse | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
   const [recipients, setRecipients] = useState<NotificationRecipient[]>([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -220,6 +235,21 @@ export default function AdminNotificationsPage() {
     }
     return merged;
   }
+
+  const confirmDeleteNotification = async () => {
+    if (!toDelete) return;
+    setDeleting(true);
+    setDeleteError('');
+    try {
+      await api.delete<void>(`/notifications/${toDelete.id}`);
+      setSent((prev) => prev.filter((n) => n.id !== toDelete.id));
+      setToDelete(null);
+    } catch (e: unknown) {
+      setDeleteError(e instanceof Error ? e.message : 'Failed to delete notification.');
+    } finally {
+      setDeleting(false);
+    }
+  };
 
   const handleSend = async () => {
     setSendSummary(null);
@@ -635,6 +665,8 @@ export default function AdminNotificationsPage() {
           <Bell size={13} /> Sent Notifications (in-app)
         </h2>
 
+        {deleteError && <p className="text-sm text-danger">{deleteError}</p>}
+
         {loading ? (
           <p className="text-theme-muted text-sm animate-pulse">Loading…</p>
         ) : sent.length === 0 ? (
@@ -643,10 +675,33 @@ export default function AdminNotificationsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {sent.map((n) => <SentCard key={n.id} n={n} />)}
+            {sent.map((n) => (
+              <SentCard key={n.id} n={n} onDelete={(row) => { setDeleteError(''); setToDelete(row); }} />
+            ))}
           </div>
         )}
       </div>
+
+      <ConfirmModal
+        open={!!toDelete}
+        title="Delete this notification?"
+        body={
+          toDelete ? (
+            <>
+              Permanently delete{' '}
+              <span className="font-semibold text-theme-heading">{toDelete.title}</span>. It
+              disappears from every worker it was sent to, read or not, and cannot
+              be recovered.
+            </>
+          ) : null
+        }
+        confirmLabel="Delete"
+        tone="danger"
+        icon={Trash2}
+        busy={deleting}
+        onCancel={() => { if (!deleting) setToDelete(null); }}
+        onConfirm={() => { void confirmDeleteNotification(); }}
+      />
     </div>
   );
 }

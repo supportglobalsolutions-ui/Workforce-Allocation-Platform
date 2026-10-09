@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import AppShell from '@/components/navigation/AppShell';
+import MonthApprovalBanner from '@/components/worker/MonthApprovalBanner';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 
@@ -50,5 +51,10 @@ export default function WorkerShellLayout({ children }: { children: React.ReactN
     );
   }
 
-  return <AppShell role="worker">{children}</AppShell>;
+  return (
+    <AppShell role="worker">
+      <MonthApprovalBanner />
+      {children}
+    </AppShell>
+  );
 }

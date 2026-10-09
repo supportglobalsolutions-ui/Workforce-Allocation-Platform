@@ -27,7 +27,6 @@ from schemas.rdp import (
     RdpForceReleaseBody,
     RdpJoinTicket,
 )
-from services import rdp_join_ticket
 from services.rdp_day_budget import reservations_overlap
 from services.rdp_gateway import issue_join_ticket
 from services.rdp_engine import (

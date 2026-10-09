@@ -107,6 +107,13 @@ class Session(SQLModel, table=True):
     image_end_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
     )
+    # Worked blocks inside one RDP session, e.g. 10:00–11:00 then 13:00–14:00
+    # ([{"start": iso, "end": iso}], at most 10). When present, paid work time is
+    # their sum and image_start_at/image_end_at hold the first start / last end.
+    work_blocks: list[dict[str, Any]] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),
+    )
     type_specific_fields: Optional[dict[str, Any]] = Field(
         default=None,
         sa_column=Column(JSONB, nullable=False, server_default=text("'{}'")),

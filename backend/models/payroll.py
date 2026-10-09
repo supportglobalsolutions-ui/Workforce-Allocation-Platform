@@ -37,6 +37,12 @@ class PayrollPeriod(SQLModel, table=True):
     currency: str = Field(sa_column=Column(String(3), nullable=False))
     status: PayrollPeriodStatusEnum = Field(sa_column=Column(PayrollPeriodStatus, nullable=False))
     is_current: bool = Field(default=False, sa_column=Column(Boolean, nullable=False, server_default="false"))
+    # When True, only members approved for this month may reach RDPs / shifts.
+    # Months created before the feature keep False so nobody is locked out.
+    member_approval_required: bool = Field(
+        default=True,
+        sa_column=Column(Boolean, nullable=False, server_default="false"),
+    )
     approved_by: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),

@@ -7,7 +7,7 @@ export default function AdminRdpClaimPage() {
   return (
     <div>
       <AdminRdpSubnav />
-      <RdpClaimBoard resourcesHref="/admin/rdp" />
+      <RdpClaimBoard resourcesHref="/admin/rdp" settingsBase="/admin/rdp/claim" />
     </div>
   );
 }

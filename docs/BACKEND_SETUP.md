@@ -511,7 +511,6 @@ Frontend runs at `http://localhost:3000`
 | Job | File | What it does |
 |-----|------|--------------|
 | Leaderboard sync | `services/leaderboard_sync.py` | Every 5 min, recalculates leaderboard from `quality_composite_scores` |
-| RDP lifecycle | `services/rdp_lifecycle.py` | Every 60s, marks machines `idle` without session heartbeat (10m) and auto-releases after 20m idle |
 
 Uptime Kuma runs separately in Docker (port **3001**) and pushes TCP up/down events to the backend webhook — it does not start inside uvicorn.
 

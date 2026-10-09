@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import logging
 import socket
-from datetime import datetime, timezone
+from datetime import datetime
 from typing import Any
 
 from sqlmodel import Session, select

@@ -36,7 +36,7 @@ export default function LoginCard({ onSuccess, className = '' }: LoginCardProps)
   const [error, setError] = useState('');
   // After a few wrong attempts the problem is usually not the typing —
   // offer the contact form, which works without an account.
-  const [failedAttempts, setFailedAttempts] = useState(0);
+  const [, setFailedAttempts] = useState(0);
   const [helpToast, setHelpToast] = useState(false);
   const [loading, setLoading] = useState(false);
   const submitLock = useRef(false);

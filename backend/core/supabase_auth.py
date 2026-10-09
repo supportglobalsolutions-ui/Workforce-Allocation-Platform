@@ -62,6 +62,9 @@ def _auth_base() -> str:
 
 def _public_auth_request(path: str, payload: dict[str, Any]) -> None:
     """Call a public GoTrue endpoint without ever exposing the service key."""
+    from .sandbox import block_in_test_mode
+
+    block_in_test_mode("Sending account emails")
     if not settings.SUPABASE_URL or not settings.SUPABASE_PUBLISHABLE_KEY:
         raise RuntimeError("Supabase password recovery is not configured.")
     with httpx.Client(timeout=30.0) as client:
@@ -203,6 +206,10 @@ def verify_supabase_token(access_token: str) -> dict:
 # ── admin REST helpers ───────────────────────────────────────────────────
 
 def _admin_request(method: str, path: str, **kwargs: Any) -> Any:
+    if method.upper() != "GET":
+        from .sandbox import block_in_test_mode
+
+        block_in_test_mode("Changing real login accounts")
     require_auth_config()
     key = _service_key()
     headers = {

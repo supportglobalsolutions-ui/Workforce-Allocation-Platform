@@ -40,6 +40,11 @@ interface WalletTransaction {
   amount: number;
   currency: string;
   period_label: string | null;
+  period_start: string | null;
+  period_end: string | null;
+  hours_logged: number | null;
+  rate_per_hour: number | null;
+  rate_currency: string | null;
   note: string | null;
   created_at: string;
 }
@@ -491,7 +496,7 @@ export default function WalletPage() {
       {/* Tabs */}
       <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1 w-fit">
         {([
-          { key: 'transactions', label: 'Transactions', count: transactions.length },
+          { key: 'transactions', label: 'Payment history', count: transactions.length },
           { key: 'payslips', label: 'Payslip History', count: payslips.length },
         ] as { key: WalletTab; label: string; count: number }[]).map(({ key, label, count }) => (
           <button
@@ -516,30 +521,44 @@ export default function WalletPage() {
       {tab === 'transactions' && (
         transactions.length === 0 ? (
           <div className="rounded-xl border border-dashed border-white/10 bg-white/[0.02] px-4 py-12 text-center">
-            <p className="text-sm text-theme-muted">No transactions yet. Payroll credits will appear here once a pay period is approved.</p>
+            <p className="text-sm text-theme-muted">No payments yet. When finance sends your pay, it appears here with the month you worked and the date you received it.</p>
           </div>
         ) : (
           <div className="space-y-2">
             {transactions.map((tx) => {
               const chip = TX_CHIP[tx.tx_type] ?? { label: tx.tx_type, classes: 'bg-white/10 text-theme-muted border-white/10' };
               const { sign, color } = txSign(tx);
+              const hasWork = !!(tx.period_start && tx.period_end);
               return (
                 <div
                   key={tx.id}
-                  className="glass-panel rounded-xl border border-white/[0.06] px-4 py-3.5 flex flex-wrap items-center gap-3"
+                  className="glass-panel rounded-xl border border-white/[0.06] px-4 py-3.5 flex flex-wrap items-start gap-3"
                 >
-                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border ${chip.classes}`}>
+                  <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider border mt-0.5 ${chip.classes}`}>
                     {chip.label}
                   </span>
-                  <div className="min-w-0 flex-1">
+                  <div className="min-w-0 flex-1 space-y-0.5">
                     {tx.period_label && <p className="text-sm font-semibold text-white truncate">{tx.period_label}</p>}
-                    {tx.note && <p className="text-xs text-theme-muted truncate">{tx.note}</p>}
+                    {hasWork && (
+                      <p className="text-xs text-theme-muted">
+                        For work {formatDateRange(tx.period_start as string, tx.period_end as string)}
+                      </p>
+                    )}
+                    {tx.hours_logged != null && tx.rate_per_hour != null && (
+                      <p className="text-xs text-theme-muted tabular-nums">
+                        {fmt(tx.hours_logged)} h × {fmt(tx.rate_per_hour)} {tx.rate_currency ?? tx.currency}/hr
+                      </p>
+                    )}
+                    {tx.note && !hasWork && <p className="text-xs text-theme-muted">{tx.note}</p>}
                   </div>
                   <div className="text-right">
                     <p className={`text-sm font-black tabular-nums ${color}`}>
                       {sign}{fmt(Math.abs(Number(tx.amount)))} {tx.currency}
                     </p>
-                    <p className="text-[11px] text-theme-muted">{new Date(tx.created_at).toLocaleDateString()}</p>
+                    <p className="text-[11px] text-theme-muted">
+                      {Number(tx.amount) >= 0 ? 'Received' : 'On'}{' '}
+                      {new Date(tx.created_at).toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' })}
+                    </p>
                   </div>
                 </div>
               );

@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import {
   AlertCircle, ArrowLeft, Award, CheckCircle, ChevronDown, ChevronUp,
   ClipboardList, Clock, ExternalLink, Plus, Send, Trash2, XCircle,
@@ -400,10 +401,12 @@ function TaskCard({
   task,
   latestResult,
   onSubmitted,
+  highlighted = false,
 }: {
   task: TaskAssessment;
   latestResult: TaskResult | null;
   onSubmitted: () => void;
+  highlighted?: boolean;
 }) {
   const [showInstructions, setShowInstructions] = useState(false);
   const [showForm, setShowForm] = useState(false);
@@ -442,7 +445,10 @@ function TaskCard({
       : `${retakeLimitLabel(retakesAllowed)}. You have used them all.`);
 
   return (
-    <div className="glass-panel rounded-2xl p-6 flex flex-col gap-4">
+    <div
+      id={`test-task-${task.id}`}
+      className={`glass-panel rounded-2xl p-6 flex flex-col gap-4 scroll-mt-24 transition-shadow ${highlighted ? LINKED_HIGHLIGHT : ''}`}
+    >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 className="text-sm font-bold text-white">{task.title}</h3>
@@ -608,8 +614,26 @@ function TaskCard({
 
 // ── Page ───────────────────────────────────────────────────────────────────────
 
+const LINKED_HIGHLIGHT = 'ring-2 ring-gold-accent shadow-[0_0_24px_rgba(212,175,55,0.35)]';
+
 export default function AssessmentCenterPage() {
-  const [tab, setTab] = useState<Tab>('mcq');
+  return (
+    <Suspense
+      fallback={<div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>}
+    >
+      <AssessmentCenter />
+    </Suspense>
+  );
+}
+
+function AssessmentCenter() {
+  const searchParams = useSearchParams();
+  const linkedMcqId = searchParams.get('mcq');
+  const linkedTaskId = searchParams.get('task');
+  const [tab, setTab] = useState<Tab>(linkedTaskId && !linkedMcqId ? 'tasks' : 'mcq');
+  const [highlightId, setHighlightId] = useState<string | null>(null);
+  const [linkNotice, setLinkNotice] = useState<string | null>(null);
+  const handledLink = useRef<string | null>(null);
 
   const [mcqs, setMcqs] = useState<AvailableAssessment[]>([]);
   const [tasks, setTasks] = useState<TaskAssessment[]>([]);
@@ -651,6 +675,37 @@ export default function AssessmentCenterPage() {
     return map;
   }, [taskResults]);
 
+  // Deep link from a training module (?mcq=<id> or ?task=<id>): open the right
+  // tab, then scroll to and highlight that test once the lists have loaded.
+  useEffect(() => {
+    if (loading) return;
+    const kind: Tab | null = linkedMcqId ? 'mcq' : linkedTaskId ? 'tasks' : null;
+    const id = linkedMcqId ?? linkedTaskId;
+    if (!kind || !id) return;
+    const linkKey = `${kind}:${id}`;
+    if (handledLink.current === linkKey) return;
+    handledLink.current = linkKey;
+
+    const found = kind === 'mcq' ? mcqs.some((a) => a.id === id) : tasks.some((t) => t.id === id);
+    setTab(kind);
+    if (!found) {
+      setLinkNotice('The linked test is not available to you right now. It may be inactive or not assigned to you.');
+      return;
+    }
+    setLinkNotice(null);
+    setHighlightId(id);
+    const domId = `test-${kind === 'mcq' ? 'mcq' : 'task'}-${id}`;
+    requestAnimationFrame(() => {
+      document.getElementById(domId)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, [loading, linkedMcqId, linkedTaskId, mcqs, tasks]);
+
+  useEffect(() => {
+    if (!highlightId) return;
+    const t = window.setTimeout(() => setHighlightId(null), 4000);
+    return () => window.clearTimeout(t);
+  }, [highlightId]);
+
   if (taking) {
     return (
       <McqTakeView
@@ -691,6 +746,12 @@ export default function AssessmentCenterPage() {
         ))}
       </div>
 
+      {linkNotice && (
+        <div className="flex items-center gap-2 p-4 mb-6 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm">
+          <AlertCircle size={16} className="shrink-0" /> {linkNotice}
+        </div>
+      )}
+
       {loading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
       ) : error ? (
@@ -705,7 +766,11 @@ export default function AssessmentCenterPage() {
         ) : (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {mcqs.map((a) => (
-              <div key={a.id} className="glass-panel rounded-2xl p-6 flex flex-col gap-4">
+              <div
+                key={a.id}
+                id={`test-mcq-${a.id}`}
+                className={`glass-panel rounded-2xl p-6 flex flex-col gap-4 scroll-mt-24 transition-shadow ${highlightId === a.id ? LINKED_HIGHLIGHT : ''}`}
+              >
                 <div className="flex items-start justify-between gap-3">
                   <div className="min-w-0">
                     <h3 className="text-sm font-bold text-white">{a.title}</h3>
@@ -787,6 +852,7 @@ export default function AssessmentCenterPage() {
                 task={t}
                 latestResult={latestByTask.get(t.id) ?? null}
                 onSubmitted={load}
+                highlighted={highlightId === t.id}
               />
             ))}
           </div>

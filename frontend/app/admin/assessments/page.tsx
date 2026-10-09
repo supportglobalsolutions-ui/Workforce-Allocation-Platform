@@ -958,7 +958,7 @@ function GradePanel({
   const [activities, setActivities] = useState<TaskActivity[]>([]);
   const [awarded, setAwarded] = useState<Record<string, string>>({});
   const [score, setScore]   = useState(String(result.score_pct ?? ''));
-  const [passed, setPassed] = useState(result.passed ?? false);
+  const [passed] = useState(result.passed ?? false);
   const [notes, setNotes]   = useState(result.grader_notes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError]   = useState('');

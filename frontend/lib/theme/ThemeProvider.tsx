@@ -21,13 +21,11 @@ function getInitialTheme(): ThemeMode {
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
   const [theme, setThemeState] = useState<ThemeMode>('dark');
-  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
     const initial = getInitialTheme();
     setThemeState(initial);
     applyThemeToDocument(initial);
-    setMounted(true);
   }, []);
 
   const setTheme = useCallback((mode: ThemeMode) => {

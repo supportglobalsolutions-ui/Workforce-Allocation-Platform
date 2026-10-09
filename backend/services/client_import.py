@@ -40,6 +40,26 @@ _HEADER_ALIASES: dict[str, str] = {
     "account_id": "account_id",
     "login reference": "login_reference",
     "login_reference": "login_reference",
+    "client %": "client_pct",
+    "client pct": "client_pct",
+    "client_pct": "client_pct",
+    "client share %": "client_pct",
+    "owner %": "client_pct",
+    "client tier": "tier",
+    "tier": "tier",
+    "desktop hours": "hours_from_desktops",
+    "hours from desktops": "hours_from_desktops",
+    "hours_from_desktops": "hours_from_desktops",
+    "payout currency": "payout_currency",
+    "payout_currency": "payout_currency",
+    "currency": "payout_currency",
+    "payout email": "payout_email",
+    "payout_email": "payout_email",
+    "payout method": "payout_method",
+    "payout_method": "payout_method",
+    "payout details": "payout_details",
+    "payout_details": "payout_details",
+    "bank details": "payout_details",
 }
 
 
@@ -84,6 +104,42 @@ def parse_active_status(value: Any) -> ClientContractStatusEnum | None:
         return ClientContractStatusEnum.ended
     # Anything else (No, paused, inactive, …) → paused
     return ClientContractStatusEnum.paused
+
+
+def parse_client_pct(value: Any) -> Decimal | None:
+    """Accept `30`, `30%`, `0.3` (a fraction of one), blanks → None."""
+    text = _cell_str(value).replace("%", "").replace(",", ".").strip()
+    if not text:
+        return None
+    try:
+        pct = Decimal(text)
+    except InvalidOperation as exc:
+        raise ValueError(f"Invalid client %: {value!r}") from exc
+    if Decimal("0") < pct < Decimal("1") and "%" not in _cell_str(value):
+        pct *= 100
+    if pct < 0 or pct > 100:
+        raise ValueError(f"Client % must be between 0 and 100: {value!r}")
+    return pct.quantize(Decimal("0.01"))
+
+
+def parse_yes_no(value: Any) -> bool | None:
+    text = _cell_str(value).lower()
+    if not text:
+        return None
+    if text in {"yes", "y", "true", "1", "on"}:
+        return True
+    if text in {"no", "n", "false", "0", "off"}:
+        return False
+    raise ValueError(f"Expected Yes or No: {value!r}")
+
+
+def parse_currency(value: Any) -> str | None:
+    text = _cell_str(value).upper()
+    if not text:
+        return None
+    if not re.fullmatch(r"[A-Z]{3}", text):
+        raise ValueError(f"Payout currency must be a 3-letter code like USD: {value!r}")
+    return text
 
 
 def _map_headers(raw_headers: list[Any]) -> dict[int, str]:
@@ -149,6 +205,35 @@ def rows_from_xlsx(data: bytes) -> list[dict[str, Any]]:
         wb.close()
 
 
+def read_sheet(filename: str, data: bytes, aliases: dict[str, str]) -> list[dict[str, Any]]:
+    """Rows of a CSV / Excel sheet keyed by the canonical names in ``aliases``."""
+    lower = (filename or "").lower()
+    if lower.endswith(".xls"):
+        raise ValueError("Legacy .xls is not supported — save as .xlsx or CSV.")
+    if lower.endswith((".xlsx", ".xlsm")) or (not lower.endswith(".csv") and data[:2] == b"PK"):
+        try:
+            from openpyxl import load_workbook
+        except ImportError as exc:
+            raise ValueError("Excel import requires openpyxl on the server.") from exc
+        wb = load_workbook(io.BytesIO(data), read_only=True, data_only=True)
+        try:
+            table = [list(cells or ()) for cells in wb.active.iter_rows(values_only=True)]
+        finally:
+            wb.close()
+    else:
+        table = list(csv.reader(io.StringIO(data.decode("utf-8-sig", errors="replace"))))
+    if not table:
+        return []
+    col_map = {
+        idx: aliases[_norm_header(h)] for idx, h in enumerate(table[0]) if _norm_header(h) in aliases
+    }
+    return [_row_dict(cells, col_map) for cells in table[1:] if any(_cell_str(c) for c in cells)]
+
+
+def cell_text(value: Any) -> str:
+    return _cell_str(value)
+
+
 def parse_client_import_file(filename: str, data: bytes) -> list[dict[str, Any]]:
     lower = (filename or "").lower()
     if lower.endswith(".csv"):
@@ -165,8 +250,17 @@ def parse_client_import_file(filename: str, data: bytes) -> list[dict[str, Any]]
 
 def upsert_clients_from_rows(db: Session, rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Create or update clients by name (case-insensitive). Empty cells do not clear existing values."""
+    from models.payment_tier import PaymentTier
+    from services.client_billing import CLIENT_TIER_SCOPES, set_client_pct
+    from services.period_current import resolve_current_period
+
     existing = db.exec(select(Client)).all()
     by_name = {c.name.strip().lower(): c for c in existing if c.name}
+    client_tiers = {
+        t.name.strip().lower(): t
+        for t in db.exec(select(PaymentTier).where(PaymentTier.applies_to.in_(CLIENT_TIER_SCOPES))).all()
+    }
+    pct_period = None
 
     created = 0
     updated = 0
@@ -190,6 +284,16 @@ def upsert_clients_from_rows(db: Session, rows: list[dict[str, Any]]) -> dict[st
             account_email = _cell_str(raw.get("account_email")) or None
             account_id = _cell_str(raw.get("account_id")) or None
             login_reference = _cell_str(raw.get("login_reference")) or None
+            client_pct = parse_client_pct(raw.get("client_pct"))
+            from_desktops = parse_yes_no(raw.get("hours_from_desktops"))
+            payout_currency = parse_currency(raw.get("payout_currency"))
+            payout_email = _cell_str(raw.get("payout_email")) or None
+            payout_method = _cell_str(raw.get("payout_method")) or None
+            payout_details = _cell_str(raw.get("payout_details")) or None
+            tier_name = _cell_str(raw.get("tier"))
+            tier = client_tiers.get(tier_name.lower()) if tier_name else None
+            if tier_name and tier is None:
+                raise ValueError(f"No client tier called {tier_name!r}")
 
             key = name.lower()
             client = by_name.get(key)
@@ -227,6 +331,26 @@ def upsert_clients_from_rows(db: Session, rows: list[dict[str, Any]]) -> dict[st
                     client.login_reference = login_reference
                 db.add(client)
                 updated += 1
+
+            if tier is not None:
+                client.payment_tier_id = tier.id
+            if from_desktops is not None:
+                client.hours_from_desktops = from_desktops
+            if payout_currency is not None:
+                client.payout_currency = payout_currency
+            if payout_email is not None:
+                client.payout_email = payout_email
+            if payout_method is not None:
+                client.payout_method = payout_method
+            if payout_details is not None:
+                client.payout_details = payout_details
+            if client_pct is not None:
+                if pct_period is None:
+                    pct_period = resolve_current_period(db)
+                    if pct_period is None:
+                        raise ValueError("Client % needs a current work month: create one first.")
+                db.flush()
+                set_client_pct(db, client, pct_period, client_pct)
         except ValueError as exc:
             errors.append(f"Row {index}: {exc}")
             skipped += 1

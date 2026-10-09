@@ -60,6 +60,7 @@ class SessionResponse(SessionBase):
     image_urls:             list[str]          = []
     image_start_at:         Optional[datetime] = None
     image_end_at:           Optional[datetime] = None
+    work_blocks:            list[dict[str, Any]] = []
     evidence_complete:      Optional[bool]     = None
     created_at:             Optional[datetime] = None
     updated_at:             Optional[datetime] = None
@@ -70,10 +71,20 @@ class SessionResponse(SessionBase):
         return v if isinstance(v, dict) else {}
 
 
+class WorkBlock(SQLModel):
+    start: datetime
+    end:   datetime
+
+
 class SessionEvidenceUpdate(SQLModel):
-    """Worker submits on-image times (and optionally confirms image URLs already uploaded)."""
+    """Worker submits on-image times (and optionally confirms image URLs already uploaded).
+
+    ``work_blocks`` (up to 10 start/end pairs) replaces the single start/end pair
+    when a worker took breaks inside one session.
+    """
     image_start_at: Optional[datetime] = None
     image_end_at:   Optional[datetime] = None
+    work_blocks:    Optional[list[WorkBlock]] = None
     start_image_url: Optional[str] = None
     end_image_url:   Optional[str] = None
 

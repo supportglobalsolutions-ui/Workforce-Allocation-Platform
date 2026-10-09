@@ -77,12 +77,12 @@ def _notify_alert_email(
     """Email the platform settings alert address when a worker writes in chat."""
     from sqlmodel import Session as SQLSession
 
-    from core.database import engine
+    from core.sandbox import current_engine
     from services.admin_otp import get_platform_settings
     from services.email_resend import render_broadcast_html, render_broadcast_text, send_email
 
     try:
-        with SQLSession(engine) as db:
+        with SQLSession(current_engine()) as db:
             alert_email = get_platform_settings(db).alert_email
             if not alert_email:
                 logger.warning(

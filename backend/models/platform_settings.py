@@ -3,6 +3,7 @@ from datetime import datetime
 from typing import Optional
 
 from sqlalchemy import Column, DateTime, String, text
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlmodel import Field, SQLModel
 
@@ -29,6 +30,11 @@ class PlatformSettings(SQLModel, table=True):
     alert_email_previous: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
     alert_email_changed_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
+    # Extra inboxes that may receive emails sent while an admin is in test mode.
+    test_mode_emails: list[str] = Field(
+        default_factory=list,
+        sa_column=Column(JSONB, nullable=False, server_default=text("'[]'::jsonb")),
     )
     updated_at: Optional[datetime] = Field(
         default=None,

@@ -133,6 +133,15 @@ const nextConfig = {
   async redirects() {
     return [
       { source: '/auth/login', destination: '/login', permanent: true },
+      // Temporary on purpose: other local apps on this port use /signin, so the
+      // browser must not cache it.
+      {
+        source: '/signin',
+        has: [{ type: 'query', key: 'next', value: '(?<next>.*)' }],
+        destination: '/login?returnTo=:next',
+        permanent: false,
+      },
+      { source: '/signin', destination: '/login', permanent: false },
       { source: '/worker/worker_portal_home', destination: '/worker/dashboard', permanent: true },
       { source: '/worker/active_work_session', destination: '/worker/active-session', permanent: true },
       { source: '/worker/active-work-session', destination: '/worker/active-session', permanent: true },

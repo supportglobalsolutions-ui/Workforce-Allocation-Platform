@@ -13,7 +13,6 @@ import hmac
 import logging
 import secrets
 from datetime import timedelta
-from typing import Optional
 from uuid import UUID
 
 import redis as redis_lib

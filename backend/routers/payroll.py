@@ -31,11 +31,10 @@ from schemas.payroll import (
     PayrollWorkerSummaryUpdate,
     WorkerPayrollOverviewResponse,
 )
-from services import payroll_engine
+from services import client_payouts, hours_log, payroll_engine
 from services.admin_otp import PURPOSE_DELETE_PERIOD, issue_otp, verify_otp
 from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
-from services.fx import currency_for_country
 from services.period_lifecycle import ensure_current_work_month
 from services.period_current import pin_current_period, resolve_current_period
 from services.period_labels import period_label_from_date
@@ -335,9 +334,16 @@ def approve_period(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
     try:
+        client_payouts.prepare(db, period, refresh_fx=True)
+        db.commit()
+    except Exception:
+        db.rollback()
+        logger.exception("Preparing client payouts after approve failed")
+    try:
         generate_period_pdfs(db, period_id, force=True)
     except Exception:
         logger.exception("Payslip PDF generation after approve failed")
+    db.refresh(period)
     return period
 
 
@@ -413,10 +419,32 @@ def _summary_response(db: Session, summary: PayrollWorkerSummary, period: Payrol
         hours, incomplete, session_count = evidence_hours_for_worker(
             db, summary.worker_id, start, end, period_id=period.id,
         )
-        resp.suggested_hours = hours
+        resp.suggested_hours = hours_log.totals(db, period.id, [summary.worker_id]).get(summary.worker_id, hours)
         resp.evidence_incomplete = incomplete
         resp.session_count = session_count
     return resp
+
+
+def _payslip_hours(db: Session, period: PayrollPeriod, worker_id: UUID) -> Decimal:
+    """Hours Log total; months from before the log fall back to session hours."""
+    total = hours_log.worker_total(db, period, worker_id)
+    if hours_log.entries(db, period.id, [worker_id]):
+        return total
+    start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
+    end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+    hours, _, _ = evidence_hours_for_worker(db, worker_id, start, end, period_id=period.id)
+    return hours
+
+
+def _typed_payslip_hours(
+    db: Session, period: PayrollPeriod, worker_id: UUID, hours: Decimal, actor_id: UUID | None,
+) -> Decimal:
+    try:
+        return hours_log.set_worker_total(
+            db, period, worker_id, Decimal(hours), actor_id=actor_id, note="Payslip hours edited",
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
 
 
 def _summary_responses(
@@ -455,6 +483,7 @@ def _summary_responses(
             datetime.combine(period.end_date, time.max, tzinfo=timezone.utc),
             period_id=period.id,
         )
+    logged = hours_log.totals(db, period.id, worker_ids) if period is not None else {}
 
     responses = []
     for summary in summaries:
@@ -470,7 +499,7 @@ def _summary_responses(
                 resp.worker_email = admin_user.email if admin_user else None
         if summary.worker_id in evidence:
             hours, incomplete, session_count = evidence[summary.worker_id]
-            resp.suggested_hours = hours
+            resp.suggested_hours = logged.get(summary.worker_id, hours)
             resp.evidence_incomplete = incomplete
             resp.session_count = session_count
         responses.append(resp)
@@ -558,28 +587,36 @@ def period_ledger_sheet(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Anytime finance ledger: all active workers + suggested evidence hours + summary if any."""
+    """Anytime finance ledger: active workers (plus inactive ones paid this month) + evidence hours + summary."""
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
 
-    workers = db.exec(
-        select(Worker).where(Worker.status == WorkerStatusEnum.active).order_by(Worker.display_name)
-    ).all()
     summaries = {
         s.worker_id: s
         for s in db.exec(
             select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
         ).all()
     }
+    # Inactive workers still appear when they have a payslip row in this month.
+    workers = db.exec(
+        select(Worker)
+        .where((Worker.status == WorkerStatusEnum.active) | Worker.id.in_(list(summaries)))
+        .order_by(Worker.display_name)
+    ).all()
     start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
     end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
+    if hours_log.refreshes(period):
+        hours_log.refresh(db, period)
+        db.commit()
+    logged = hours_log.totals(db, period.id)
 
     rows: list[LedgerSheetRow] = []
     for w in workers:
         hours, incomplete, session_count = evidence_hours_for_worker(
             db, w.id, start, end, period_id=period.id,
         )
+        hours = logged.get(w.id, hours)
         summary = summaries.get(w.id)
         rows.append(
             LedgerSheetRow(
@@ -588,6 +625,7 @@ def period_ledger_sheet(
                 worker_country=w.country,
                 worker_type=w.worker_type.value if w.worker_type else None,
                 worker_pay_tier=w.pay_tier,
+                worker_status=w.status.value if w.status else None,
                 partner_entity_id=w.partner_entity_id,
                 suggested_hours=hours,
                 evidence_incomplete=incomplete,
@@ -603,13 +641,34 @@ def bulk_upsert_summaries(
     period_id: UUID,
     body: PayrollSummaryBulkRequest,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
+    actor: AdminUser | None = None
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
     if period.status == PayrollPeriodStatusEnum.paid:
         raise HTTPException(status_code=400, detail="This period is already paid.")
+
+    tier_terms: dict[UUID, payroll_engine.PayTerms] = {}
+    no_tier: list[str] = []
+    for item in body.rows:
+        if not item.use_tier:
+            continue
+        worker = db.get(Worker, item.worker_id)
+        if not worker:
+            continue
+        terms = payroll_engine.pay_terms(db, worker, period)
+        if terms.rate_local is None:
+            no_tier.append(worker.display_name)
+        else:
+            tier_terms[item.worker_id] = terms
+    if no_tier:
+        raise HTTPException(
+            status_code=400,
+            detail=f"No tier allocated: {', '.join(sorted(no_tier))}. "
+                   "Assign a payment tier first, or type a rate.",
+        )
 
     existing = {
         s.worker_id: s
@@ -629,32 +688,49 @@ def bulk_upsert_summaries(
             summary = PayrollWorkerSummary(
                 payroll_period_id=period_id,
                 worker_id=item.worker_id,
-                local_currency=currency_for_country(db, worker.country) or period.currency,
+                local_currency=payroll_engine.pay_terms(db, worker, period).currency,
                 base_currency=period.currency,
             )
             existing[item.worker_id] = summary
 
-        data = item.model_dump(exclude_unset=True, exclude={"worker_id", "local_currency", "hours_logged"})
+        terms = tier_terms.get(item.worker_id)
+        excluded = {"worker_id", "local_currency", "hours_logged", "use_tier"}
+        if terms is not None:
+            excluded |= {"rate_per_hour", "fx_rate", "admin_locked"}
+        data = item.model_dump(exclude_unset=True, exclude=excluded)
         dumped = item.model_dump(exclude_unset=True)
         for key, value in data.items():
             if value is not None:
                 setattr(summary, key, value)
-        start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
-        end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
-        session_hours, _, _ = evidence_hours_for_worker(
-            db, item.worker_id, start, end, period_id=period.id,
-        )
-        summary.hours_logged = item.hours_logged if item.hours_logged is not None else session_hours
+        if item.hours_logged is not None:
+            if actor is None:
+                actor = get_admin_user(db, current_user)
+            summary.hours_logged = _typed_payslip_hours(db, period, item.worker_id, item.hours_logged, actor.id)
+        else:
+            summary.hours_logged = _payslip_hours(db, period, item.worker_id)
+        if terms is not None:
+            # Unlocked so later tier edits and recalculations keep it on the tier.
+            _apply_currency_switch(summary, period, terms.currency, None, db)
+            summary.rate_per_hour = payroll_engine._q(terms.rate_local)
+            summary.fx_rate = terms.fx
+            summary.admin_locked = False
+            db.add(summary)
+            db.flush()
+            results.append(payroll_engine.recompute_summary(db, summary))
+            continue
         _apply_currency_switch(summary, period, item.local_currency, item.fx_rate, db)
         if "rate_per_hour" not in dumped:
             worker = db.get(Worker, item.worker_id)
             if worker:
-                rate_base = payroll_engine._hourly_rate_for(db, worker, period)
-                if rate_base is not None:
+                terms = payroll_engine.pay_terms(db, worker, period)
+                row_currency = (summary.local_currency or period.currency).upper()
+                if terms.rate_local is not None and row_currency == terms.currency:
+                    summary.rate_per_hour = payroll_engine._q(terms.rate_local)
+                elif terms.rate_base is not None:
                     fx = summary.fx_rate or payroll_engine._fx_to_local(
-                        db, period, summary.local_currency or period.currency,
+                        db, period, row_currency,
                     ) or Decimal("1")
-                    summary.rate_per_hour = payroll_engine._q(rate_base * fx)
+                    summary.rate_per_hour = payroll_engine._q(terms.rate_base * fx)
         if item.admin_locked is None:
             summary.admin_locked = True
         db.add(summary)
@@ -675,7 +751,7 @@ def update_summary(
     summary_id: UUID,
     body: PayrollWorkerSummaryUpdate,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    current_user: dict = Depends(require_admin),
 ):
     """Admin cost evaluation: adjust bonus/costs/rate — derived totals recompute."""
     summary = db.get(PayrollWorkerSummary, summary_id)
@@ -689,12 +765,12 @@ def update_summary(
     if period:
         _apply_currency_switch(summary, period, body.local_currency, body.fx_rate, db)
         if body.hours_logged is None:
-            start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
-            end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
-            hours, _, _ = evidence_hours_for_worker(
-                db, summary.worker_id, start, end, period_id=period.id,
+            summary.hours_logged = _payslip_hours(db, period, summary.worker_id)
+        else:
+            admin = get_admin_user(db, current_user)
+            summary.hours_logged = _typed_payslip_hours(
+                db, period, summary.worker_id, body.hours_logged, admin.id if admin else None,
             )
-            summary.hours_logged = hours
     if body.model_dump(exclude_unset=True):
         summary.admin_locked = True if body.admin_locked is not False else summary.admin_locked
         if body.admin_locked is None:
@@ -750,17 +826,11 @@ def my_payroll_overview(
     rate_amount = None
     rate_currency = None
     if current:
-        rate_entry = payroll_engine._rate_entry_for(db, worker, current)
-        if rate_entry is not None:
-            rate_amount = rate_entry.amount
-            rate_currency = rate_entry.currency
-            local_currency = currency_for_country(db, worker.country)
-            # Workers see the rate they will actually be paid in. The payroll
-            # engine uses the same resolver, including the live FX fallback.
-            fx = payroll_engine._fx_to_local(db, current, local_currency)
-            if fx is not None and fx > 0:
-                rate_amount = payroll_engine._q(rate_entry.amount * fx)
-                rate_currency = local_currency
+        # Workers see the rate exactly as set on their tier, in the tier's currency.
+        terms = payroll_engine.pay_terms(db, worker, current)
+        if terms.rate_local is not None:
+            rate_amount = payroll_engine._q(terms.rate_local)
+            rate_currency = terms.currency
 
     period_summary = None
     if current:
@@ -961,13 +1031,13 @@ def revenue_share_report(
         out = io.StringIO()
         writer = csv.writer(out)
         writer.writerow([
-            "Client", "Platform", "Earnings", "Earnings Source", "Worker Cost", "Distributable",
+            "Client", "Platform", "Earnings", "Earnings Source", "Worker Cost", "Shared Cost", "Distributable",
             "GS %", "Owner %", "GS Share", "Owner Share",
         ])
         for r in rows:
             writer.writerow([
                 r["client_name"], r["platform"], r["earnings"], r["earnings_source"], r["worker_cost"],
-                r["distributable"], r["gs_pct"], r["owner_pct"], r["gs_share"], r["owner_share"],
+                r["shared_cost"], r["distributable"], r["gs_pct"], r["owner_pct"], r["gs_share"], r["owner_share"],
             ])
         return Response(
             content=out.getvalue(),

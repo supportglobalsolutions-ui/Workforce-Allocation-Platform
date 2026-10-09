@@ -1,6 +1,6 @@
 'use client';
 
-import { Users, Globe, CheckSquare, Zap, Shield, TrendingUp } from 'lucide-react';
+import { Users, Globe, CheckSquare, Zap, Shield } from 'lucide-react';
 
 export function GlobalWorkforceCard({ className = '' }: { className?: string }) {
   return (

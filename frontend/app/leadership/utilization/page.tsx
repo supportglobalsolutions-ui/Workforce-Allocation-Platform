@@ -39,6 +39,7 @@ import KpiCard from '@/components/platform/KpiCard';
 import PageHeader from '@/components/platform/PageHeader';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { convertMoney, formatMoneyTotals, getDisplayTarget, useMoneyDisplay } from '@/lib/money';
 
 ChartJS.register(
   CategoryScale,
@@ -369,7 +370,8 @@ function formatHours(minutes: number): string {
   return `${hours.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}h`;
 }
 
-function formatMoney(value: number, currency: string): string {
+function formatMoney(recorded: number, recordedCurrency: string): string {
+  const { amount: value, currency } = convertMoney(recorded, recordedCurrency);
   try {
     return new Intl.NumberFormat(undefined, {
       style: 'currency',
@@ -384,6 +386,7 @@ function formatMoney(value: number, currency: string): string {
 function formatRevenue(values: Record<string, number>): string {
   const entries = Object.entries(values).filter(([, value]) => value !== 0);
   if (entries.length === 0) return '—';
+  if (getDisplayTarget()) return formatMoneyTotals(values);
   return entries.map(([currency, value]) => formatMoney(value, currency)).join(' · ');
 }
 
@@ -450,6 +453,7 @@ function MiniStat({ label, value, accent = 'text-theme-heading' }: {
 }
 
 export default function UtilizationDashboardPage() {
+  useMoneyDisplay();
   const [machines, setMachines] = useState<RdpResource[]>([]);
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);

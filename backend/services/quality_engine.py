@@ -38,6 +38,7 @@ from models.task_assessment import TaskAssessmentResult
 from models.worker import Worker
 from services.period_current import resolve_current_period
 from services.period_labels import period_label_from_date
+from services.session_evidence import work_minutes
 
 logger = logging.getLogger(__name__)
 
@@ -199,16 +200,8 @@ def _session_day(session: WorkSession) -> date:
 
 
 def _paid_minutes(session: WorkSession) -> int:
-    """Screenshot start/end only. Does not write duration_minutes."""
-    start, end = session.image_start_at, session.image_end_at
-    if not start or not end:
-        return 0
-    if start.tzinfo is None:
-        start = start.replace(tzinfo=timezone.utc)
-    if end.tzinfo is None:
-        end = end.replace(tzinfo=timezone.utc)
-    minutes = int((end - start).total_seconds() // 60)
-    return max(0, minutes)
+    """Worked blocks from the screenshots (breaks excluded). Does not write duration_minutes."""
+    return work_minutes(session)
 
 
 def _cap100(actual: Decimal, cap: Decimal) -> Decimal:

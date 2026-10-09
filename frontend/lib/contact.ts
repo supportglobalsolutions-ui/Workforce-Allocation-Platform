@@ -28,3 +28,12 @@ export const contactUnreadCount = () => api.get<{ unread: number }>('/contact/un
 
 export const setContactStatus = (id: string, status: ContactMessage['status']) =>
   api.patch<{ id: string; status: string }>(`/contact/${id}?new_status=${status}`, {});
+
+/**
+ * Permanently remove an enquiry.
+ *
+ * Archiving keeps the message and only moves it out of the working view; this
+ * is for spam and test submissions, and does not come back.
+ */
+export const deleteContactMessage = (id: string) =>
+  api.delete<void>(`/contact/${id}`);

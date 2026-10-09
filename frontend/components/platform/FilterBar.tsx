@@ -3,6 +3,7 @@
 import { Search } from 'lucide-react';
 
 interface FilterBarProps {
+  singleRow?: boolean;
   searchPlaceholder?: string;
   filters?: { label: string; options: string[] }[];
   onSearch?: (value: string) => void;
@@ -11,6 +12,7 @@ interface FilterBarProps {
 }
 
 export default function FilterBar({
+  singleRow = false,
   searchPlaceholder = 'Search...',
   filters = [],
   onSearch,
@@ -18,8 +20,8 @@ export default function FilterBar({
   children,
 }: FilterBarProps) {
   return (
-    <div className="flex flex-col sm:flex-row gap-3 mb-6">
-      <div className="relative flex-1 max-w-md">
+    <div className={singleRow ? 'flex flex-nowrap items-center gap-3 mb-6 overflow-x-auto pb-1' : 'flex flex-col sm:flex-row gap-3 mb-6'}>
+      <div className={singleRow ? 'relative flex-1 min-w-[12rem] max-w-md' : 'relative flex-1 max-w-md'}>
         <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant" />
         <input
           type="text"
@@ -32,7 +34,7 @@ export default function FilterBar({
         <select
           key={f.label}
           onChange={(e) => onFilterChange?.(f.label, e.target.value)}
-          className="px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 w-full sm:w-auto"
+          className={`px-4 py-2.5 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 ${singleRow ? 'w-auto shrink-0' : 'w-full sm:w-auto'}`}
         >
           <option value="">{f.label}</option>
           {f.options.map((o) => (

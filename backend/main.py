@@ -1,4 +1,5 @@
 import asyncio
+import re
 import uuid
 import logging
 import traceback
@@ -10,14 +11,25 @@ from fastapi.responses import JSONResponse
 
 from core.config import settings
 from core.database import warm_connection_pool
-from core.supabase_auth import is_auth_ready
+from core.supabase_auth import is_auth_ready, verify_supabase_token
+from core.sandbox import (
+    TEST_MODE_HEADER,
+    TEST_MODE_ROLES,
+    is_ready as sandbox_is_ready,
+    load_test_mode_emails,
+    reset_request_test_mode,
+    schema_for as sandbox_schema_for,
+    set_request_test_mode,
+)
 from core.rate_limit import enforce_global_rate_limit
 from core.security_validation import validate_production_settings
 from routers import (
     absence_reports,
-    assessments, audit, auth, chat, clients, communications, contact, currencies, intelligence, leaderboard,
+    assessments, audit, auth, chat, client_billing, client_payouts, clients, communications, contact, cost_ledger, currencies, intelligence,
+    hours_log, leaderboard,
     notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
-    settings as platform_settings, task_assessments, training, uptime_kuma, wallets, workers,
+    settings as platform_settings, task_assessments, test_mode, training, uptime_kuma, wallets,
+    workers,
 )
 from services.email_dispatch import run_email_dispatch_loop
 from services.email_resend import close_http_client
@@ -118,6 +130,66 @@ async def rate_limit_middleware(request: Request, call_next):
         except HTTPException as exc:
             return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     return await call_next(request)
+
+
+_TEST_MODE_BLOCKED_PATHS = re.compile(
+    r"^/rdp/(tunnel|gateways/.+|[^/]+/(claim|join-ticket|end-connection|release|force-release"
+    r"|provision|repair|lock|unlock|maintenance))/?$"
+)
+# These read or change real login accounts and test-mode settings, so they
+# always use the real tables; their writes are blocked separately.
+_TEST_MODE_REAL_DATA_PREFIXES = ("/auth/", "/test-mode", "/health", "/integrations/")
+
+
+@app.middleware("http")
+async def test_mode_middleware(request: Request, call_next):
+    """Point a Super Admin's requests at their private sandbox while test mode is on.
+
+    The header alone grants nothing: the token must belong to an admin or
+    super_admin, otherwise the request is served normally on real data.
+    """
+    if request.headers.get(TEST_MODE_HEADER) != "1":
+        return await call_next(request)
+
+    auth = request.headers.get("authorization") or ""
+    token = auth[7:].strip() if auth.lower().startswith("bearer ") else ""
+    try:
+        identity = await asyncio.to_thread(verify_supabase_token, token) if token else None
+    except ValueError:
+        identity = None
+    if not identity or identity.get("role") not in TEST_MODE_ROLES:
+        return await call_next(request)
+
+    path = request.url.path
+    if _TEST_MODE_BLOCKED_PATHS.match(path) or (
+        request.method != "GET" and re.match(r"^/auth/users(/|$)", path)
+    ):
+        return JSONResponse(
+            status_code=403,
+            content={"detail": "This is turned off in test mode so nothing reaches real people or machines."},
+        )
+
+    schema = None
+    if not path.startswith(_TEST_MODE_REAL_DATA_PREFIXES):
+        schema = sandbox_schema_for(identity["uid"])
+        if not await asyncio.to_thread(sandbox_is_ready, schema):
+            return JSONResponse(
+                status_code=409,
+                content={
+                    "detail": "Your test workspace isn't ready. Turn test mode on again in Settings.",
+                    "code": "test_mode_not_ready",
+                },
+            )
+
+    # Read from the real settings row — inside the request every query hits the sandbox.
+    extra_emails = await asyncio.to_thread(load_test_mode_emails)
+    tokens = set_request_test_mode(True, schema, identity.get("email") or "", extra_emails)
+    try:
+        response = await call_next(request)
+    finally:
+        reset_request_test_mode(tokens)
+    response.headers["X-Test-Mode"] = "on"
+    return response
 
 
 @app.middleware("http")
@@ -256,6 +328,11 @@ app.include_router(absence_reports.router, prefix="/absence-reports", tags=["abs
 app.include_router(rdp.router, prefix="/rdp", tags=["rdp"])
 app.include_router(sessions.router, prefix="/sessions", tags=["sessions"])
 app.include_router(payroll.router, prefix="/payroll", tags=["payroll"])
+app.include_router(cost_ledger.router, prefix="/cost-ledger", tags=["cost-ledger"])
+app.include_router(hours_log.router, prefix="/hours-log", tags=["hours-log"])
+app.include_router(client_billing.router, prefix="/client-billing", tags=["client-billing"])
+app.include_router(client_payouts.router, prefix="/client-payouts", tags=["client-payouts"])
+app.include_router(cost_ledger.approvals_router, prefix="/member-approvals", tags=["member-approvals"])
 app.include_router(intelligence.router, prefix="/intelligence", tags=["intelligence"])
 app.include_router(quality.router, prefix="/quality", tags=["quality"])
 app.include_router(leaderboard.router, prefix="/leaderboard", tags=["leaderboard"])
@@ -265,4 +342,5 @@ app.include_router(notifications.router, prefix="/notifications", tags=["notific
 app.include_router(contact.router, prefix="/contact", tags=["contact"])
 # Signed-in accounts chatting with the admin team (contact.py is the no-account path).
 app.include_router(chat.router, prefix="/chat", tags=["chat"])
+app.include_router(test_mode.router, prefix="/test-mode", tags=["test-mode"])
 app.include_router(uptime_kuma.router, prefix="/integrations/uptime-kuma", tags=["integrations"])

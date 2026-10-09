@@ -39,6 +39,7 @@ import {
   type Source,
 } from '@/lib/intelligence/engine';
 import { pickCurrentPeriod } from '@/lib/periods';
+import { formatMoney, formatMoneyTotals, useMoneyDisplay } from '@/lib/money';
 
 ChartJS.register(
   CategoryScale,
@@ -117,8 +118,7 @@ const doughnutOptions: ChartOptions<'doughnut'> = {
   },
 };
 
-const fmt = (x: number, currency = 'USD') =>
-  `${currency} ${x.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+const fmt = (x: number, currency = 'USD') => formatMoney(x, currency);
 
 function inPeriod(iso: string, period: PayrollPeriod): boolean {
   const day = iso.slice(0, 10);
@@ -367,6 +367,7 @@ function Modal({
 }
 
 export default function FinancialIntelligencePage() {
+  useMoneyDisplay();
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [periodId, setPeriodId] = useState('');
   const [loading, setLoading] = useState(true);
@@ -424,12 +425,17 @@ export default function FinancialIntelligencePage() {
   const sessions = snap?.sessions.data ?? [];
 
   const kpis = useMemo(() => {
-    const workerEarnings = payslips.reduce((s, r) => s + num(r.gross_earned), 0);
-    const workerPayouts = payslips.reduce((s, r) => s + num(r.final_net), 0);
+    const workerEarnings = new Map<string, number>();
+    const workerPayouts = new Map<string, number>();
+    for (const r of payslips) {
+      const cur = r.local_currency || currency;
+      workerEarnings.set(cur, (workerEarnings.get(cur) ?? 0) + num(r.gross_earned));
+      workerPayouts.set(cur, (workerPayouts.get(cur) ?? 0) + num(r.final_net));
+    }
     const hours = payslips.reduce((s, r) => s + num(r.hours_logged), 0);
     const clientRevenue = buildClientRevenueRows(snap).reduce((s, r) => s + r.earned, 0);
     return { workerEarnings, workerPayouts, hours, clientRevenue };
-  }, [payslips, snap]);
+  }, [payslips, snap, currency]);
 
   const ranked = useMemo(
     () => [...payslips].sort((a, b) => num(b.final_net) - num(a.final_net) || num(b.gross_earned) - num(a.gross_earned)),
@@ -558,10 +564,10 @@ export default function FinancialIntelligencePage() {
           {view === 'cards' ? (
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
               <ClickableKpi onClick={() => setModal('earnings')}>
-                <KpiCard label="Total worker earnings" value={fmt(kpis.workerEarnings, currency)} icon={DollarSign} accent="gold" />
+                <KpiCard label="Total worker earnings" value={formatMoneyTotals(kpis.workerEarnings, `${currency} 0.00`)} icon={DollarSign} accent="gold" />
               </ClickableKpi>
               <ClickableKpi onClick={() => setModal('payouts')}>
-                <KpiCard label="Paid to workers" value={fmt(kpis.workerPayouts, currency)} icon={Wallet} />
+                <KpiCard label="Paid to workers" value={formatMoneyTotals(kpis.workerPayouts, `${currency} 0.00`)} icon={Wallet} />
               </ClickableKpi>
               <ClickableKpi onClick={() => setModal('hours')}>
                 <KpiCard label="Hours logged" value={`${kpis.hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}h`} icon={Clock} />
@@ -605,7 +611,7 @@ export default function FinancialIntelligencePage() {
                 <option value="">All workers ({payslips.length} payslips)</option>
                 {ranked.map((r) => (
                   <option key={r.worker_id} value={r.worker_id}>
-                    {r.worker_display_name} · {fmt(num(r.gross_earned), currency)}
+                    {r.worker_display_name} · {fmt(num(r.gross_earned), r.local_currency || currency)}
                   </option>
                 ))}
               </select>
@@ -647,8 +653,8 @@ export default function FinancialIntelligencePage() {
                     >
                       <span className="text-theme-heading truncate">#{idx + 1} {r.worker_display_name}</span>
                       <span className="font-mono text-emerald-accent shrink-0">
-                        {fmt(num(r.final_net), currency)}
-                        <span className="text-theme-muted ml-2">earned {fmt(num(r.gross_earned), currency)}</span>
+                        {fmt(num(r.final_net), r.local_currency || currency)}
+                        <span className="text-theme-muted ml-2">earned {fmt(num(r.gross_earned), r.local_currency || currency)}</span>
                       </span>
                     </button>
                   </li>
@@ -667,7 +673,7 @@ export default function FinancialIntelligencePage() {
                 <button type="button" className="text-left text-theme-heading truncate hover:underline" onClick={() => { setWorkerFilter(r.worker_id); setModal('worker'); }}>
                   {r.worker_display_name}
                 </button>
-                <span className="font-mono text-gold-accent shrink-0">{fmt(num(r.gross_earned), currency)}</span>
+                <span className="font-mono text-gold-accent shrink-0">{fmt(num(r.gross_earned), r.local_currency || currency)}</span>
               </li>
             ))}
           </ul>
@@ -679,7 +685,7 @@ export default function FinancialIntelligencePage() {
             {ranked.map((r) => (
               <li key={r.worker_id} className="flex justify-between py-2 text-sm gap-3">
                 <span className="text-theme-heading truncate">{r.worker_display_name}</span>
-                <span className="font-mono text-emerald-accent shrink-0">{fmt(num(r.final_net), currency)}</span>
+                <span className="font-mono text-emerald-accent shrink-0">{fmt(num(r.final_net), r.local_currency || currency)}</span>
               </li>
             ))}
           </ul>
@@ -764,11 +770,11 @@ export default function FinancialIntelligencePage() {
           <div className="grid grid-cols-3 gap-3 mb-5">
             <div>
               <p className="text-[10px] font-bold uppercase text-theme-muted">Earned</p>
-              <p className="font-mono font-bold text-gold-accent">{fmt(num(modalWorker.gross_earned), currency)}</p>
+              <p className="font-mono font-bold text-gold-accent">{fmt(num(modalWorker.gross_earned), modalWorker.local_currency || currency)}</p>
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase text-theme-muted">Paid</p>
-              <p className="font-mono font-bold text-emerald-accent">{fmt(num(modalWorker.final_net), currency)}</p>
+              <p className="font-mono font-bold text-emerald-accent">{fmt(num(modalWorker.final_net), modalWorker.local_currency || currency)}</p>
             </div>
             <div>
               <p className="text-[10px] font-bold uppercase text-theme-muted">Hours</p>

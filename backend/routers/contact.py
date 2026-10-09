@@ -21,7 +21,6 @@ from core.database import get_db
 from core.permissions import require_admin
 from core.rate_limit import check_rate_limit
 from models.contact_message import ContactMessage
-from .deps import get_admin_user
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -62,12 +61,12 @@ def _notify_admins(message_id: str, name: str, email: str, subject: str, body: s
     """
     from sqlmodel import Session as SQLSession
 
-    from core.database import engine
+    from core.sandbox import current_engine
     from services.admin_otp import get_platform_settings
     from services.email_resend import render_broadcast_html, render_broadcast_text, send_email
 
     try:
-        with SQLSession(engine) as db:
+        with SQLSession(current_engine()) as db:
             alert_email = get_platform_settings(db).alert_email
             if not alert_email:
                 logger.warning("Contact message %s stored but no alert email configured", message_id)
@@ -190,3 +189,24 @@ def update_contact_message(
     db.commit()
     db.refresh(entry)
     return {"id": str(entry.id), "status": entry.status}
+
+
+@router.delete("/{message_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_contact_message(
+    message_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Remove an enquiry for good.
+
+    Distinct from archiving, which keeps the message and only moves it out of
+    the working view. This is for spam and test submissions — things with no
+    reason to be kept — so it really deletes the row rather than hiding it
+    behind another status.
+    """
+    entry = db.get(ContactMessage, message_id)
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Message not found")
+    db.delete(entry)
+    db.commit()
+    return None

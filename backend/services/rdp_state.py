@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Optional
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -217,6 +216,10 @@ def validate_worker_may_claim(
     assert_reservation_allows_claim(
         db, resource, worker_id, is_staff=is_staff
     )
+    # So does an approved RDP claim shift during its hours.
+    from services.claim_shifts import assert_claim_shift_allows_claim
+
+    assert_claim_shift_allows_claim(db, resource, worker_id, is_staff=is_staff)
 
     if resource.status == RdpStatusEnum.online_free:
         return None
@@ -245,12 +248,34 @@ def validate_worker_may_claim(
     )
 
 
+def _holds_open_allocation(db: Session, resource_id: UUID, worker_id: UUID) -> bool:
+    return db.exec(
+        select(Allocation.id).where(
+            Allocation.rdp_resource_id == resource_id,
+            Allocation.worker_id == worker_id,
+            Allocation.released_at.is_(None),
+        ).limit(1)
+    ).first() is not None
+
+
 def worker_may_see_resource(
     db: Session,
     resource: RDPResource,
     worker_id: UUID,
+    *,
+    approved: bool | None = None,
 ) -> bool:
-    """Workers see machines they are marked on, hold, or are scheduled onto."""
+    """
+    Workers see machines they are marked on, hold, or are scheduled onto.
+    A member not approved for this work month sees none — except a machine
+    they still hold, so they can end that connection.
+    """
+    if approved is None:
+        from services.cost_ledger import is_worker_approved
+
+        approved = is_worker_approved(db, worker_id)
+    if not approved:
+        return _holds_open_allocation(db, resource.id, worker_id)
     if resource.assigned_worker_id == worker_id:
         return True
     marked = db.exec(
@@ -261,14 +286,7 @@ def worker_may_see_resource(
     ).first()
     if marked:
         return True
-    open_alloc = db.exec(
-        select(Allocation).where(
-            Allocation.rdp_resource_id == resource.id,
-            Allocation.worker_id == worker_id,
-            Allocation.released_at.is_(None),
-        )
-    ).first()
-    if open_alloc:
+    if _holds_open_allocation(db, resource.id, worker_id):
         return True
     shift = db.exec(
         select(Shift.id).where(
@@ -294,6 +312,11 @@ def list_visible_rdp_resources(
         return list(all_rows)
     if not viewer_worker_id:
         return []
+    from services.cost_ledger import is_worker_approved
+
+    approved = is_worker_approved(db, viewer_worker_id)
+    if not approved:
+        return [r for r in all_rows if _holds_open_allocation(db, r.id, viewer_worker_id)]
     # One query for the marked machines, so the common case skips the
     # per-row allocation and shift lookups below it.
     marked_ids = set(
@@ -305,7 +328,7 @@ def list_visible_rdp_resources(
     )
     return [
         r for r in all_rows
-        if r.id in marked_ids or worker_may_see_resource(db, r, viewer_worker_id)
+        if r.id in marked_ids or worker_may_see_resource(db, r, viewer_worker_id, approved=True)
     ]
 
 

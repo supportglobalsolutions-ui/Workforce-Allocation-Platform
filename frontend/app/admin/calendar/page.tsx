@@ -14,6 +14,7 @@ import PeriodDatesEditor from '@/components/payroll/PeriodDatesEditor';
 import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import { api } from '@/lib/api';
+import { formatMoney, useMoneyDisplay } from '@/lib/money';
 import { coversToday, pickCurrentPeriod } from '@/lib/periods';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -64,7 +65,7 @@ function n(v: string | number | null | undefined): number {
 }
 
 function money(amount: number, currency = 'USD'): string {
-  return `${currency} ${amount.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return formatMoney(amount, currency);
 }
 
 function isoDay(d: string): string {
@@ -128,6 +129,7 @@ function buildMonthCells(year: number, month: number): (number | null)[] {
 // ── Page ───────────────────────────────────────────────────────────────────────
 
 export default function WorkingPeriodCalendarPage() {
+  useMoneyDisplay();
   const [periods, setPeriods] = useState<WorkingPeriod[]>([]);
   const [statsById, setStatsById] = useState<Record<string, PeriodStats>>({});
   const [loading, setLoading] = useState(true);

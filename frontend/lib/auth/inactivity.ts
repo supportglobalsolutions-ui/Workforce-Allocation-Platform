@@ -23,6 +23,20 @@ export function writeActivity(uid: string, timestamp = Date.now()): void {
   try { window.localStorage.setItem(activityKey(uid), String(timestamp)); } catch { /* use memory */ }
 }
 
+/**
+ * A real sign-in counts as activity in every tab. Without this, a tab still
+ * holding the previous session's expired timestamp signs the shared Supabase
+ * session out the moment a new login lands (e.g. mid-OTP in another tab).
+ * Token refreshes don't change last_sign_in_at, so idle sessions still expire.
+ */
+export function noteSignIn(uid: string, lastSignInAt: string | null | undefined, now = Date.now()): void {
+  const signedInAt = Date.parse(lastSignInAt ?? '');
+  if (!Number.isFinite(signedInAt) || signedInAt < now - IDLE_TIMEOUT_MS) return;
+  // Clamp: a server clock ahead of ours would otherwise read as "expired".
+  const at = Math.min(signedInAt, now);
+  if (at > (readActivity(uid) ?? 0)) writeActivity(uid, at);
+}
+
 export function isIdleExpired(uid: string, now = Date.now()): boolean {
   const activity = readActivity(uid);
   // Existing logins receive the policy on their first visit after rollout.

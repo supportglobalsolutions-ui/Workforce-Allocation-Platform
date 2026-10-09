@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
-  AlertTriangle, ArrowLeft, AlertCircle, BookOpen, Check, CheckCircle,
+  AlertTriangle, ArrowLeft, AlertCircle, BookOpen, Check, CheckCircle, ChevronRight,
   ExternalLink, FileText, GraduationCap, Link2, PlayCircle, Star,
 } from 'lucide-react';
 
@@ -40,6 +40,38 @@ interface TrainingModule {
   lessons: Lesson[];
   progress_status: 'not_started' | 'in_progress' | 'completed' | null;
   completed_lesson_ids: string[];
+  mcq_set_title?: string | null;
+  task_assessment_title?: string | null;
+  linked_assessment_passed?: boolean | null;
+}
+
+interface LinkedTest {
+  key: string;
+  label: string;
+  title: string;
+  href: string;
+}
+
+/** The test(s) a module links to, each pointing at that exact test. */
+function linkedTests(m: TrainingModule): LinkedTest[] {
+  const tests: LinkedTest[] = [];
+  if (m.mcq_set_id) {
+    tests.push({
+      key: `mcq-${m.mcq_set_id}`,
+      label: 'MCQ test',
+      title: m.mcq_set_title || 'Linked MCQ test',
+      href: `/worker/assessments?mcq=${m.mcq_set_id}`,
+    });
+  }
+  if (m.task_assessment_id) {
+    tests.push({
+      key: `task-${m.task_assessment_id}`,
+      label: 'Task test',
+      title: m.task_assessment_title || 'Linked task test',
+      href: `/worker/assessments?task=${m.task_assessment_id}`,
+    });
+  }
+  return tests;
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
@@ -286,14 +318,38 @@ function ModuleViewer({
       </div>
 
       {hasLinkedAssessment && (
-        <div className="glass-panel rounded-2xl p-4 flex flex-wrap items-center gap-3 border border-gold-accent/20">
-          <GraduationCap size={16} className="text-gold-accent shrink-0" />
-          <p className="text-xs text-theme-muted flex-1">
-            Finish by passing the linked assessment — this module completes automatically once all lessons are done and the assessment is passed.
-          </p>
-          <Link href="/worker/assessments" className="btn-secondary text-xs py-1.5 px-3">
-            Go to assessments
-          </Link>
+        <div className="glass-panel rounded-2xl p-4 border border-gold-accent/20 space-y-3">
+          <div className="flex items-start gap-3">
+            <GraduationCap size={16} className="text-gold-accent shrink-0 mt-0.5" />
+            <p className="text-xs text-theme-muted flex-1">
+              Finish by passing the linked test. This module completes automatically once all lessons are done and the test is passed.
+            </p>
+          </div>
+          <div className="flex flex-col gap-2">
+            {linkedTests(module).map((t) => (
+              <Link
+                key={t.key}
+                href={t.href}
+                className="group flex items-center justify-between gap-3 rounded-xl border border-gold-accent/25 bg-gold-accent/[0.06] px-4 py-3 hover:border-gold-accent/50 hover:bg-gold-accent/10 transition-colors"
+              >
+                <span className="min-w-0">
+                  <span className="block text-[10px] font-bold uppercase tracking-wider text-theme-muted">{t.label}</span>
+                  <span className="block text-sm font-semibold text-theme-heading truncate">{t.title}</span>
+                </span>
+                <span className="flex items-center gap-2 shrink-0">
+                  {module.linked_assessment_passed && (
+                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wider bg-emerald-accent/20 text-emerald-accent border border-emerald-accent/30">
+                      <CheckCircle size={10} /> Passed
+                    </span>
+                  )}
+                  <span className="text-xs font-semibold text-gold-accent group-hover:underline">
+                    {module.linked_assessment_passed ? 'View test' : 'Take test'}
+                  </span>
+                  <ChevronRight size={14} className="text-gold-accent" />
+                </span>
+              </Link>
+            ))}
+          </div>
         </div>
       )}
     </div>
@@ -378,12 +434,21 @@ export default function TrainingPage() {
             const total = m.lessons.length;
             const done = (m.completed_lesson_ids ?? []).length;
             const pct = total > 0 ? Math.round((done / total) * 100) : 0;
+            const tests = linkedTests(m);
             return (
-              <button
+              <div
                 key={m.id}
-                type="button"
+                role="button"
+                tabIndex={0}
                 onClick={() => setOpenModuleId(m.id)}
-                className="glass-panel glass-panel-hover rounded-2xl p-6 text-left flex flex-col gap-3 transition-all duration-300"
+                onKeyDown={(e) => {
+                  if (e.target !== e.currentTarget) return;
+                  if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    setOpenModuleId(m.id);
+                  }
+                }}
+                className="glass-panel glass-panel-hover rounded-2xl p-6 text-left flex flex-col gap-3 transition-all duration-300 cursor-pointer focus:outline-none focus-visible:ring-2 focus-visible:ring-emerald-accent/50"
               >
                 <div className="flex items-start justify-between gap-3">
                   <h3 className="text-sm font-bold text-white">{m.title}</h3>
@@ -406,6 +471,21 @@ export default function TrainingPage() {
                     {total} lesson{total !== 1 ? 's' : ''}
                   </span>
                 </div>
+                {tests.map((t) => (
+                  <Link
+                    key={t.key}
+                    href={t.href}
+                    onClick={(e) => e.stopPropagation()}
+                    title={`Open ${t.title}`}
+                    className="flex items-center gap-2 rounded-lg border border-gold-accent/25 bg-gold-accent/[0.06] px-3 py-2 text-xs hover:border-gold-accent/50 hover:bg-gold-accent/10 transition-colors"
+                  >
+                    <GraduationCap size={13} className="text-gold-accent shrink-0" />
+                    <span className="text-theme-muted shrink-0">{t.label}:</span>
+                    <span className="font-semibold text-theme-heading truncate flex-1">{t.title}</span>
+                    {m.linked_assessment_passed && <CheckCircle size={13} className="text-emerald-accent shrink-0" />}
+                    <ChevronRight size={13} className="text-gold-accent shrink-0" />
+                  </Link>
+                ))}
                 <div className="mt-auto">
                   <div className="flex items-center justify-between text-[11px] text-theme-muted mb-1.5">
                     <span>{done} / {total} lessons</span>
@@ -418,7 +498,7 @@ export default function TrainingPage() {
                     />
                   </div>
                 </div>
-              </button>
+              </div>
             );
           })}
         </div>

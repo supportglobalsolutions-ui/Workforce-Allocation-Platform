@@ -17,6 +17,7 @@ from fastapi import HTTPException, Request, status
 from sqlmodel import Session, select
 
 from core.database import engine
+from core.sandbox import block_in_test_mode, in_test_mode
 from core.guacamole import GuacamoleClient, raw_connection_id
 from core.permissions import STAFF_ROLES
 from core.redis import get_redis
@@ -217,6 +218,7 @@ def rdp_response(
     resp.remaining_minutes_today = budget.remaining_minutes
     resp.window_starts_at = budget.window_start
     resp.window_ends_at = budget.window_end
+    resp.window_open = budget.window_open
 
     reservation = active_reservation(db, resource.id)
     if reservation:
@@ -641,6 +643,11 @@ def provision_guacamole(
     Returns an error string instead of raising unless `strict` is set, so an
     unreachable Guacamole never blocks saving the machine record.
     """
+    if in_test_mode():
+        if strict:
+            block_in_test_mode("Connecting real desktops")
+        return "Test mode — no real desktop connection was made."
+
     # Re-read before writing. The reconcile loop runs in its own session and
     # may have just repaired guacamole_connection_id; committing a request's
     # stale copy of this row would silently revert it to a connection that no

@@ -28,6 +28,10 @@ class PaymentTier(SQLModel, table=True):
         sa_column=Column(Boolean, nullable=False, server_default="true"),
     )
     description: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # workers | clients | both. Client tiers set a client's billing rate.
+    applies_to: str = Field(
+        default="workers", sa_column=Column(String(16), nullable=False, server_default="workers"),
+    )
     created_at: Optional[datetime] = Field(
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),

@@ -36,6 +36,7 @@ class PayrollPeriodUpdate(SQLModel):
     status:              Optional[PayrollPeriodStatusEnum] = None
     approved_by:         Optional[UUID]                   = None
     export_generated_at: Optional[datetime]               = None
+    member_approval_required: Optional[bool]              = None
 
 
 class PayrollPeriodResponse(PayrollPeriodBase):
@@ -46,6 +47,7 @@ class PayrollPeriodResponse(PayrollPeriodBase):
     export_generated_at: Optional[datetime]
     wallet_pushed_at:    Optional[datetime] = None
     paid_at:             Optional[datetime] = None
+    member_approval_required: bool = False
     created_at:          datetime
 
 
@@ -184,6 +186,9 @@ class PayrollSummaryBulkItem(SQLModel):
     local_currency: Optional[str] = None
     fx_rate:        Optional[Decimal] = None
     admin_locked:   Optional[bool] = True
+    # Pay this row at the worker's own tier (rate + currency) and keep it
+    # following that tier; rate_per_hour / local_currency are then ignored.
+    use_tier:       Optional[bool] = None
 
     @field_validator(
         "hours_logged",
@@ -229,6 +234,7 @@ class LedgerSheetRow(SQLModel):
     worker_country: str
     worker_type: Optional[str] = None
     worker_pay_tier: Optional[str] = None
+    worker_status: Optional[str] = None
     partner_entity_id: Optional[UUID] = None
     suggested_hours: Decimal = Decimal("0")
     evidence_incomplete: bool = False

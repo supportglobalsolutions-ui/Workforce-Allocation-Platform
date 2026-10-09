@@ -30,3 +30,8 @@ class AuditLogResponse(SQLModel):
     reason_note:    Optional[str]
     ip_address:     Optional[str]
     created_at:     datetime
+    # Human-readable enrichment (filled by the list/get endpoints).
+    actor_name:     Optional[str] = None
+    action_label:   Optional[str] = None
+    target_label:   Optional[str] = None
+    summary:        Optional[str] = None

@@ -18,6 +18,7 @@ import httpx
 from sqlmodel import Session
 
 from core.config import settings
+from core.sandbox import in_test_mode, test_mode_recipients, test_subject
 from models.email_log import EmailLog
 
 logger = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ def is_valid_email_address(to_email: str) -> bool:
 
 def blocked_recipient_reason(to_email: str) -> str | None:
     addr = (to_email or "").strip()
+    if in_test_mode() and addr.lower() not in test_mode_recipients():
+        return "Not sent — test mode only emails you and the test addresses listed in Settings."
     if not is_valid_email_address(addr):
         return (
             f"Invalid email address `{addr}`. Use a full address like name@gmail.com "
@@ -118,6 +121,8 @@ def send_email_detailed(
     `attachments` items: {"filename": str, "content": base64-encoded str}.
     """
     status, error, resend_id = "sent", None, None
+    if in_test_mode():
+        subject = test_subject(subject)
 
     blocked = blocked_recipient_reason(to_email)
     if blocked:
@@ -277,7 +282,7 @@ def send_email_batch(
                 item: dict[str, Any] = {
                     "from": settings.RESEND_FROM_EMAIL,
                     "to": [msg.to_email],
-                    "subject": msg.subject,
+                    "subject": test_subject(msg.subject) if in_test_mode() else msg.subject,
                     "html": msg.html,
                 }
                 if msg.text:
@@ -549,6 +554,85 @@ def render_payslip_text(
         "",
         "Questions about this payslip? Contact your GlobalSolutions administrator.",
     ]
+    return "\n".join(lines)
+
+
+def render_client_statement_html(
+    *,
+    client_name: str,
+    period_label: str,
+    currency: str,
+    amount_local: str,
+    rows: list[tuple[str, str, str]],
+) -> str:
+    """rows: (item, USD figure, meaning); the last row is the amount due."""
+    body_rows = ""
+    for i, (item, usd, meaning) in enumerate(rows):
+        is_final = i == len(rows) - 1
+        bg = _SECONDARY if is_final else (_CARD if i % 2 == 0 else _SURFACE)
+        weight = "700" if is_final else "400"
+        color = _GOLD if is_final else _HEADING
+        body_rows += f"""
+        <tr bgcolor="{bg}" style="background-color:{bg};">
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; font-weight:700; color:{_HEADING};">{html.escape(item)}</td>
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; text-align:right; font-weight:{weight}; color:{color};">{html.escape(usd)}</td>
+          <td style="padding:9px 12px; border:1px solid {_SECONDARY}; font-size:12px; color:{_MUTED};">{html.escape(meaning)}</td>
+        </tr>"""
+
+    body = f"""
+        <p style="margin:0 0 18px; font-size:14px; color:{_TEXT};">
+          Hi {html.escape(client_name)}, your statement for <strong style="color:{_HEADING};">{html.escape(period_label)}</strong> is attached.
+        </p>
+        <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0"
+               bgcolor="{_HEADER}"
+               style="margin:0 0 20px; background-color:{_HEADER}; border:1px solid {_GOLD}; border-radius:10px;">
+          <tr>
+            <td style="padding:18px 20px; text-align:center;">
+              <p style="margin:0; font-size:11px; font-weight:700; letter-spacing:0.12em;
+                         text-transform:uppercase; color:{_GOLD};">Amount due to you</p>
+              <p style="margin:8px 0 0; font-size:28px; font-weight:700; color:{_EMERALD};">
+                {html.escape(currency)} {html.escape(amount_local)}
+              </p>
+              <p style="margin:6px 0 0; font-size:12px; color:{_MUTED};">{html.escape(period_label)}</p>
+            </td>
+          </tr>
+        </table>
+        <table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse; font-size:13px;">
+          <tr bgcolor="{_SECONDARY}" style="background-color:{_SECONDARY};">
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:left; color:{_TEXT};">Item</th>
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:right; color:{_TEXT};">USD</th>
+            <th style="padding:8px 12px; border:1px solid {_SECONDARY}; text-align:left; color:{_TEXT};">Meaning</th>
+          </tr>
+          {body_rows}
+        </table>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Finance",
+        heading="Your monthly statement",
+        body=body,
+        footer="Questions about this statement? Reply to your GlobalSolutions contact.",
+    )
+
+
+def render_client_statement_text(
+    *,
+    client_name: str,
+    period_label: str,
+    currency: str,
+    amount_local: str,
+    rows: list[tuple[str, str, str]],
+) -> str:
+    lines = [
+        f"Hi {client_name},",
+        "",
+        f"Your GlobalSolutions statement for {period_label} is attached.",
+        f"Amount due to you: {currency} {amount_local}",
+        "",
+        "In USD:",
+    ]
+    for item, usd, _meaning in rows:
+        lines.append(f"  {item}: {usd}")
+    lines += ["", "Questions about this statement? Reply to your GlobalSolutions contact."]
     return "\n".join(lines)
 
 

@@ -3,11 +3,12 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { AlertTriangle, Inbox, MessageSquare, Send } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Inbox, MessageSquare, Send } from 'lucide-react';
 
 import { contactUnreadCount } from '@/lib/contact';
 import { chatThreadsUnread } from '@/lib/chat';
 import { absenceSummary } from '@/lib/absence-reports';
+import { shiftRequestSummary } from '@/lib/shift-requests';
 
 /**
  * Sub-navigation for the Notifications section.
@@ -21,6 +22,7 @@ export default function NotificationTabs() {
   const [unread, setUnread] = useState(0);
   const [chatUnread, setChatUnread] = useState(0);
   const [absencesPending, setAbsencesPending] = useState(0);
+  const [shiftChangesPending, setShiftChangesPending] = useState(0);
 
   useEffect(() => {
     let cancelled = false;
@@ -28,11 +30,13 @@ export default function NotificationTabs() {
       contactUnreadCount().catch(() => ({ unread: 0 })),
       chatThreadsUnread().catch(() => ({ unread: 0, messages: 0 })),
       absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
-    ]).then(([contact, chat, absences]) => {
+      shiftRequestSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
+    ]).then(([contact, chat, absences, shiftChanges]) => {
       if (cancelled) return;
       setUnread(contact.unread);
       setChatUnread(chat.unread);
       setAbsencesPending(absences.pending);
+      setShiftChangesPending(shiftChanges.pending);
     });
     return () => { cancelled = true; };
   }, [pathname]);
@@ -42,6 +46,7 @@ export default function NotificationTabs() {
     { href: '/admin/notifications/inbox', label: 'Enquiries inbox', icon: Inbox, badge: unread },
     { href: '/admin/notifications/chat', label: 'Worker chat', icon: MessageSquare, badge: chatUnread },
     { href: '/admin/notifications/absences', label: 'Absence reports', icon: AlertTriangle, badge: absencesPending },
+    { href: '/admin/notifications/shift-changes', label: 'Shift changes', icon: CalendarClock, badge: shiftChangesPending },
   ];
 
   return (

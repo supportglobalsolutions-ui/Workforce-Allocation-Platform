@@ -7,6 +7,14 @@ import AdminSectionTabs, { PAYROLL_TABS } from '@/components/platform/AdminSecti
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
 import { worldCurrencies, type WorldCurrency } from '@/lib/world-currencies';
+import { convertMoney, formatMoney, useMoneyDisplay } from '@/lib/money';
+
+/** "≈ KES 1,935.00" when the top-bar display currency differs from the tier's own. */
+function Equivalent({ amount, currency }: { amount: number; currency: string }) {
+  const c = convertMoney(amount, currency);
+  if (!c.converted) return null;
+  return <span className="block text-[11px] font-semibold text-emerald-accent">≈ {formatMoney(amount, currency)}</span>;
+}
 
 type TierUnit = 'per_hour' | 'per_day' | 'per_week' | 'per_month' | 'per_task';
 
@@ -20,6 +28,25 @@ interface PaymentTier {
   description: string | null;
   hourly_equivalent: string | number | null;
   member_count?: number;
+  applies_to?: TierScope;
+  client_count?: number;
+}
+
+type TierScope = 'workers' | 'clients' | 'both';
+
+const SCOPE_LABELS: Record<TierScope, string> = {
+  workers: 'Workers',
+  clients: 'Clients',
+  both: 'Workers and clients',
+};
+
+interface ClientLite {
+  id: string;
+  name: string;
+  platform: string;
+  contract_status: string;
+  payment_tier_id?: string | null;
+  tier_name?: string | null;
 }
 
 interface WorkerLite {
@@ -46,9 +73,16 @@ const emptyForm = {
   rate: '',
   unit: 'per_hour' as TierUnit,
   description: '',
+  applies_to: 'workers' as TierScope,
 };
 
+const scopeOf = (t: PaymentTier): TierScope => t.applies_to ?? 'workers';
+const forWorkers = (t: PaymentTier) => scopeOf(t) !== 'clients';
+const forClients = (t: PaymentTier) => scopeOf(t) !== 'workers';
+
 export default function PaymentTiersPage() {
+  // Re-render when the top-bar display currency changes.
+  useMoneyDisplay();
   const [tiers, setTiers] = useState<PaymentTier[]>([]);
   const [workers, setWorkers] = useState<WorkerLite[]>([]);
   const currencies: WorldCurrency[] = useMemo(() => worldCurrencies(), []);
@@ -68,16 +102,20 @@ export default function PaymentTiersPage() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [applying, setApplying] = useState(false);
   const [applyMsg, setApplyMsg] = useState<string | null>(null);
+  const [clients, setClients] = useState<ClientLite[]>([]);
+  const [applyTarget, setApplyTarget] = useState<'workers' | 'clients'>('workers');
 
   const load = useCallback(() => {
     setLoading(true);
     Promise.all([
       api.get<PaymentTier[]>('/payment-tiers'),
       api.get<WorkerLite[]>('/workers'),
+      api.get<ClientLite[]>('/clients').catch(() => [] as ClientLite[]),
     ])
-      .then(([t, w]) => {
+      .then(([t, w, c]) => {
         setTiers(t);
         setWorkers(w.filter((x) => x.status === 'active'));
+        setClients(c);
       })
       .catch((e) => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
@@ -86,6 +124,18 @@ export default function PaymentTiersPage() {
   useEffect(() => { load(); }, [load]);
 
   const activeApplyTier = tiers.find((t) => t.id === applyTierId);
+
+  const clientList = useMemo(() => {
+    if (!activeApplyTier) return [];
+    const q = search.trim().toLowerCase();
+    return clients.filter((c) => {
+      const onTier = c.payment_tier_id === activeApplyTier.id;
+      if (applyTab === 'pending' ? onTier : !onTier) return false;
+      if (!q) return true;
+      return c.name.toLowerCase().includes(q) || c.platform.toLowerCase().includes(q);
+    });
+  }, [clients, search, applyTab, activeApplyTier]);
+  const clientsOnTier = activeApplyTier ? clients.filter((c) => c.payment_tier_id === activeApplyTier.id).length : 0;
 
   const pendingWorkers = useMemo(() => {
     if (!activeApplyTier) return [];
@@ -113,7 +163,9 @@ export default function PaymentTiersPage() {
     });
   }, [workers, search, typeFilter, activeApplyTier]);
 
-  const visibleList = applyTab === 'pending' ? pendingWorkers : memberWorkers;
+  const visibleList: { id: string }[] = applyTarget === 'clients'
+    ? clientList
+    : applyTab === 'pending' ? pendingWorkers : memberWorkers;
 
   const openCreate = () => {
     setForm(emptyForm);
@@ -129,6 +181,7 @@ export default function PaymentTiersPage() {
       rate: String(t.rate),
       unit: t.unit,
       description: t.description || '',
+      applies_to: scopeOf(t),
     });
     setShowCreate(true);
   };
@@ -143,6 +196,7 @@ export default function PaymentTiersPage() {
       rate: Number(form.rate),
       unit: form.unit,
       description: form.description.trim() || null,
+      applies_to: form.applies_to,
     };
     try {
       if (editTier) {
@@ -185,8 +239,35 @@ export default function PaymentTiersPage() {
     }
   };
 
+  const runClients = async (assign: boolean) => {
+    if (!applyTierId) return;
+    if (!selected.size) {
+      setError('Select at least one client.');
+      return;
+    }
+    setApplying(true);
+    setApplyMsg(null);
+    setError(null);
+    try {
+      const res = await api.post<{ changed: number; tier_name: string }>(
+        `/payment-tiers/${applyTierId}/${assign ? 'assign-clients' : 'unassign-clients'}`,
+        { client_ids: Array.from(selected) },
+      );
+      setApplyMsg(assign
+        ? `Assigned “${res.tier_name}” to ${res.changed} client${res.changed === 1 ? '' : 's'}.`
+        : `Removed ${res.changed} client${res.changed === 1 ? '' : 's'} from “${res.tier_name}”.`);
+      setSelected(new Set());
+      load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Update failed');
+    } finally {
+      setApplying(false);
+    }
+  };
+
   const runAssign = async () => {
     if (!applyTierId) return;
+    if (applyTarget === 'clients') return runClients(true);
     if (!selected.size) {
       setError('Select at least one worker.');
       return;
@@ -211,6 +292,7 @@ export default function PaymentTiersPage() {
 
   const runUnassign = async () => {
     if (!applyTierId) return;
+    if (applyTarget === 'clients') return runClients(false);
     if (!selected.size) {
       setError('Select at least one member to remove.');
       return;
@@ -278,13 +360,35 @@ export default function PaymentTiersPage() {
                   <tr><td colSpan={7} className="px-4 py-10 text-center text-theme-muted">No payment tiers yet.</td></tr>
                 ) : tiers.map((t) => (
                   <tr key={t.id} className="border-b border-white/[0.04] last:border-0">
-                    <td className="px-4 py-3 text-white font-medium">{t.name}</td>
-                    <td className="px-4 py-3 text-theme-muted">{Number(t.rate).toFixed(2)} {t.currency}</td>
+                    <td className="px-4 py-3 text-white font-medium">
+                      {t.name}
+                      {forClients(t) && (
+                        <span className="ml-2 text-[9px] font-bold uppercase px-1.5 py-0.5 rounded border border-sky-400/30 text-sky-300 align-middle">
+                          {scopeOf(t) === 'both' ? 'Workers + clients' : 'Clients'}
+                        </span>
+                      )}
+                    </td>
+                    <td className="px-4 py-3 text-theme-muted">
+                      {Number(t.rate).toFixed(2)} {t.currency}
+                      <Equivalent amount={Number(t.rate)} currency={t.currency} />
+                    </td>
                     <td className="px-4 py-3 text-theme-muted">{UNIT_LABELS[t.unit]}</td>
                     <td className="px-4 py-3 text-theme-muted">
-                      {t.hourly_equivalent != null ? `${Number(t.hourly_equivalent).toFixed(2)} /hr` : '—'}
+                      {t.hourly_equivalent != null ? (
+                        <>
+                          {`${Number(t.hourly_equivalent).toFixed(2)} /hr`}
+                          <Equivalent amount={Number(t.hourly_equivalent)} currency={t.currency} />
+                        </>
+                      ) : '—'}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-white">{t.member_count ?? 0}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-white">
+                      {forWorkers(t) && <span>{t.member_count ?? 0}</span>}
+                      {forClients(t) && (
+                        <span className={`${forWorkers(t) ? 'ml-1 text-theme-muted text-xs' : ''}`}>
+                          {forWorkers(t) ? `· ${t.client_count ?? 0} clients` : `${t.client_count ?? 0} clients`}
+                        </span>
+                      )}
+                    </td>
                     <td className="px-4 py-3">
                       <span className={`text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border ${
                         t.is_active ? 'text-emerald-accent border-emerald-accent/30 bg-emerald-accent/10' : 'text-theme-muted border-white/10'
@@ -299,7 +403,13 @@ export default function PaymentTiersPage() {
                       <button
                         type="button"
                         disabled={!t.is_active}
-                        onClick={() => { setApplyTierId(t.id); setApplyTab('pending'); setSelected(new Set()); setApplyMsg(null); }}
+                        onClick={() => {
+                          setApplyTierId(t.id);
+                          setApplyTab('pending');
+                          setApplyTarget(forWorkers(t) ? 'workers' : 'clients');
+                          setSelected(new Set());
+                          setApplyMsg(null);
+                        }}
                         className="btn-secondary text-xs py-1.5 px-3 mr-1"
                       >
                         Apply
@@ -320,13 +430,34 @@ export default function PaymentTiersPage() {
                 <div>
                   <h2 className="text-sm font-bold text-theme-heading">Apply “{activeApplyTier.name}”</h2>
                   <p className="text-xs text-theme-muted mt-0.5">
-                    {workers.filter((w) => w.pay_tier === activeApplyTier.name).length} on this tier · pending list is people not yet attached
+                    {applyTarget === 'clients'
+                      ? `${clientsOnTier} client${clientsOnTier === 1 ? '' : 's'} billed at this rate · pending list is clients not yet attached`
+                      : `${workers.filter((w) => w.pay_tier === activeApplyTier.name).length} on this tier · pending list is people not yet attached`}
                   </p>
                 </div>
                 <button type="button" onClick={() => setApplyTierId(null)} className="text-theme-muted hover:text-white">
                   <X size={16} />
                 </button>
               </div>
+
+              {scopeOf(activeApplyTier) === 'both' && (
+                <div className="flex gap-2">
+                  {(['workers', 'clients'] as const).map((target) => (
+                    <button
+                      key={target}
+                      type="button"
+                      onClick={() => { setApplyTarget(target); setSelected(new Set()); }}
+                      className={`text-xs py-1.5 px-3 rounded-lg border ${
+                        applyTarget === target
+                          ? 'border-sky-400/40 bg-sky-400/10 text-sky-300'
+                          : 'border-white/10 text-theme-muted'
+                      }`}
+                    >
+                      {target === 'workers' ? 'Workers' : 'Clients'}
+                    </button>
+                  ))}
+                </div>
+              )}
 
               <div className="flex gap-2">
                 <button
@@ -338,7 +469,7 @@ export default function PaymentTiersPage() {
                       : 'border-white/10 text-theme-muted'
                   }`}
                 >
-                  Pending ({pendingWorkers.length})
+                  Pending ({applyTarget === 'clients' ? clients.length - clientsOnTier : pendingWorkers.length})
                 </button>
                 <button
                   type="button"
@@ -349,7 +480,7 @@ export default function PaymentTiersPage() {
                       : 'border-white/10 text-theme-muted'
                   }`}
                 >
-                  On this tier ({memberWorkers.length})
+                  On this tier ({applyTarget === 'clients' ? clientsOnTier : memberWorkers.length})
                 </button>
               </div>
 
@@ -359,11 +490,11 @@ export default function PaymentTiersPage() {
                   <input
                     value={search}
                     onChange={(e) => setSearch(e.target.value)}
-                    placeholder="Search workers…"
+                    placeholder={applyTarget === 'clients' ? 'Search clients…' : 'Search workers…'}
                     className="input-field pl-9 w-full"
                   />
                 </div>
-                <select
+                {applyTarget === 'workers' && <select
                   value={typeFilter}
                   onChange={(e) => setTypeFilter(e.target.value as typeof typeFilter)}
                   className="input-field w-full sm:w-auto"
@@ -371,7 +502,7 @@ export default function PaymentTiersPage() {
                   <option value="all">All types</option>
                   <option value="gs_registered">GS members</option>
                   <option value="partner_worker">Partners</option>
-                </select>
+                </select>}
               </div>
 
               <div className="flex flex-wrap gap-2">
@@ -393,19 +524,47 @@ export default function PaymentTiersPage() {
                       <th className="px-3 py-2 text-left">
                         <input type="checkbox" checked={selected.size === visibleList.length && visibleList.length > 0} onChange={toggleAll} />
                       </th>
-                      <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">Worker</th>
-                      <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">Type</th>
+                      <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">{applyTarget === 'clients' ? 'Client' : 'Worker'}</th>
+                      <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">{applyTarget === 'clients' ? 'Platform' : 'Type'}</th>
                       <th className="text-left px-3 py-2 text-[10px] font-bold uppercase text-theme-muted">Current tier</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {visibleList.length === 0 ? (
+                    {applyTarget === 'clients' ? (
+                      clientList.length === 0 ? (
+                        <tr>
+                          <td colSpan={4} className="px-3 py-8 text-center text-theme-muted text-xs">
+                            {applyTab === 'pending' ? 'Every client is already on this tier.' : 'No clients on this tier yet.'}
+                          </td>
+                        </tr>
+                      ) : clientList.map((c) => (
+                        <tr key={c.id} className="border-b border-white/[0.04]">
+                          <td className="px-3 py-2">
+                            <input
+                              type="checkbox"
+                              checked={selected.has(c.id)}
+                              onChange={() => {
+                                setSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (next.has(c.id)) next.delete(c.id);
+                                  else next.add(c.id);
+                                  return next;
+                                });
+                              }}
+                            />
+                          </td>
+                          <td className="px-3 py-2 text-white">{c.name}</td>
+                          <td className="px-3 py-2 text-theme-muted text-xs">{c.platform}</td>
+                          <td className="px-3 py-2 text-theme-muted text-xs">{c.tier_name || 'own rate'}</td>
+                        </tr>
+                      ))
+                    ) : visibleList.length === 0 ? (
                       <tr>
                         <td colSpan={4} className="px-3 py-8 text-center text-theme-muted text-xs">
                           {applyTab === 'pending' ? 'Everyone is already on this tier.' : 'No members on this tier yet.'}
                         </td>
                       </tr>
-                    ) : visibleList.map((w) => (
+                    ) : (visibleList as WorkerLite[]).map((w) => (
                       <tr key={w.id} className="border-b border-white/[0.04]">
                         <td className="px-3 py-2">
                           <input
@@ -472,6 +631,17 @@ export default function PaymentTiersPage() {
               </select>
               <p className="text-[10px] text-theme-muted mt-1">
                 Changing name, rate, or currency updates every worker on this tier.
+              </p>
+            </label>
+            <label className="block">
+              <span className="text-[10px] font-bold uppercase text-theme-muted">Applies to</span>
+              <select value={form.applies_to} onChange={(e) => setForm((f) => ({ ...f, applies_to: e.target.value as TierScope }))} className="input-field mt-1">
+                {(Object.keys(SCOPE_LABELS) as TierScope[]).map((s) => (
+                  <option key={s} value={s}>{SCOPE_LABELS[s]}</option>
+                ))}
+              </select>
+              <p className="text-[10px] text-theme-muted mt-1">
+                Client tiers set the hourly rate a client is billed. It overrides the client&apos;s own rate.
               </p>
             </label>
             <label className="block">

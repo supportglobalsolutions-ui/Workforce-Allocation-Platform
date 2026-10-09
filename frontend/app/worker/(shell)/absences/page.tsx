@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { AlertTriangle, Eye } from 'lucide-react';
+import { AlertTriangle, CalendarClock, Eye } from 'lucide-react';
 
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
@@ -47,6 +47,16 @@ export default function WorkerAbsencesPage() {
       <PageHeader
         title="My absences"
         description="Reports you have sent. Anything still pending can be amended."
+        actions={
+          <Link
+            href="/worker/my-shifts"
+            title="See the shifts you are on for"
+            className="inline-flex shrink-0 items-center gap-2 rounded-xl bg-gold-accent px-3.5 py-2 text-xs font-bold text-brand-background transition-colors hover:bg-gold-accent/90 active:scale-[0.98]"
+          >
+            <CalendarClock size={15} />
+            My shifts
+          </Link>
+        }
       />
 
       {error && <p className="text-sm text-danger">{error}</p>}

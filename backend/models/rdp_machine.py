@@ -3,7 +3,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Column, DateTime, ForeignKey, Integer, Numeric, String, Text, text
+from sqlalchemy import SmallInteger, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -170,6 +170,12 @@ class RDPResource(SQLModel, table=True):
     daily_limit_hours: Decimal = Field(
         default=Decimal("12"),
         sa_column=Column(Numeric(4, 2), nullable=False, server_default=text("12")),
+    )
+    # Hour (EAT, 0–23) the daily window opens; it stays open for daily_limit_hours.
+    # 10 → 10:00–22:00, 22 → 22:00–10:00 next day. Admin-configurable per machine.
+    daily_window_start_hour: int = Field(
+        default=10,
+        sa_column=Column(SmallInteger, nullable=False, server_default=text("10")),
     )
 
     # Relationships

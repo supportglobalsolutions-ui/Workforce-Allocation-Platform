@@ -7,9 +7,9 @@ from sqlmodel import Session, delete, select
 from core.database import get_db
 from core.permissions import require_admin, require_user
 from models.enums import TrainingProgressEnum
-from models.mcq import McqResult
+from models.mcq import McqAssessmentSet, McqResult
 from models.notification import Notification
-from models.task_assessment import TaskAssessmentResult
+from models.task_assessment import TaskAssessment, TaskAssessmentResult
 from models.training import TrainingLesson, TrainingModule, TrainingProgress
 from schemas.training import (
     TrainingLessonCreate,
@@ -26,7 +26,13 @@ from .deps import apply_update, get_admin_user, get_worker_for_user
 router = APIRouter()
 
 
-def _module_response(module: TrainingModule, progress: TrainingProgress | None = None) -> TrainingModuleResponse:
+def _module_response(
+    module: TrainingModule,
+    progress: TrainingProgress | None = None,
+    *,
+    db: Session | None = None,
+    worker_id: UUID | None = None,
+) -> TrainingModuleResponse:
     resp = TrainingModuleResponse.model_validate(module)
     resp.lessons = sorted(
         [TrainingLessonResponse.model_validate(l) for l in module.lessons],
@@ -35,6 +41,15 @@ def _module_response(module: TrainingModule, progress: TrainingProgress | None =
     if progress:
         resp.progress_status = progress.status
         resp.completed_lesson_ids = progress.completed_lesson_ids or []
+    if db is not None:
+        if module.mcq_set_id:
+            mcq = db.get(McqAssessmentSet, module.mcq_set_id)
+            resp.mcq_set_title = mcq.title if mcq else None
+        if module.task_assessment_id:
+            task = db.get(TaskAssessment, module.task_assessment_id)
+            resp.task_assessment_title = task.title if task else None
+        if worker_id is not None and (module.mcq_set_id or module.task_assessment_id):
+            resp.linked_assessment_passed = _assessment_passed(db, module, worker_id)
     return resp
 
 
@@ -69,7 +84,7 @@ def list_modules(
     _: dict = Depends(require_admin),
 ):
     modules = db.exec(select(TrainingModule).order_by(TrainingModule.created_at.desc())).all()
-    return [_module_response(m) for m in modules]
+    return [_module_response(m, db=db) for m in modules]
 
 
 @router.post("/modules", response_model=TrainingModuleResponse, status_code=status.HTTP_201_CREATED)
@@ -93,7 +108,7 @@ def create_module(
             target_type="all",
         ))
         db.commit()
-    return _module_response(module)
+    return _module_response(module, db=db)
 
 
 @router.patch("/modules/{module_id}", response_model=TrainingModuleResponse)
@@ -110,7 +125,7 @@ def update_module(
     db.add(module)
     db.commit()
     db.refresh(module)
-    return _module_response(module)
+    return _module_response(module, db=db)
 
 
 @router.delete("/modules/{module_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -215,7 +230,7 @@ def my_modules(
             select(TrainingProgress).where(TrainingProgress.worker_id == worker.id)
         ).all()
     }
-    return [_module_response(m, progress.get(m.id)) for m in modules]
+    return [_module_response(m, progress.get(m.id), db=db, worker_id=worker.id) for m in modules]
 
 
 @router.post("/modules/{module_id}/start", response_model=TrainingProgressResponse)

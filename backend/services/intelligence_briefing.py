@@ -65,6 +65,8 @@ def _parse_dt(value: str | None) -> datetime | None:
 
 
 def _work_minutes(session: dict[str, Any]) -> int:
+    if session.get("work_minutes") is not None:
+        return int(session["work_minutes"])  # sum of worked blocks, breaks excluded
     start = _parse_dt(session.get("image_start_at"))
     end = _parse_dt(session.get("image_end_at"))
     if not start or not end or end <= start:

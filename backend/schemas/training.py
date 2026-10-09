@@ -61,9 +61,13 @@ class TrainingModuleResponse(TrainingModuleBase):
     id:         UUID
     created_at: datetime
     lessons:    list[TrainingLessonResponse] = []
+    #: Titles of the linked tests, so clients can name and link them.
+    mcq_set_title:         Optional[str] = None
+    task_assessment_title: Optional[str] = None
     # Present when returned for a specific worker.
     progress_status:       Optional[TrainingProgressEnum] = None
     completed_lesson_ids:  list[Any] = []
+    linked_assessment_passed: Optional[bool] = None
 
     @field_validator("completed_lesson_ids", mode="before")
     @classmethod

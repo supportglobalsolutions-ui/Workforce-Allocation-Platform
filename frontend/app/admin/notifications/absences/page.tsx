@@ -151,7 +151,6 @@ export default function AbsenceReportsPage() {
     <div className="space-y-5">
       <PageHeader
         title="Absence reports"
-        description="Workers telling us ahead of time that they cannot work."
         actions={
           <button
             type="button"

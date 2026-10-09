@@ -8,6 +8,7 @@ import {
 } from 'lucide-react';
 import NotificationBell from './NotificationBell';
 import ThemeToggle from '@/components/theme/ThemeToggle';
+import { DisplayCurrencySwitcher } from '@/components/currency/DisplayCurrency';
 import LogoMark from '@/components/theme/LogoMark';
 import PageSearchModal, { usePageSearchShortcut } from '@/components/navigation/PageSearchModal';
 import { useAuth } from '@/lib/auth/AuthProvider';
@@ -251,6 +252,7 @@ export default function TopNav({
             {mobileMenuOpen ? <X size={18} /> : <Menu size={18} />}
           </button>
         )}
+        {variant === 'portal' && role !== 'worker' && <DisplayCurrencySwitcher />}
         {variant === 'portal' && (
           <NotificationBell
             notificationsHref={notificationsHref}

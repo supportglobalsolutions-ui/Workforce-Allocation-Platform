@@ -2,15 +2,17 @@
 
 import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
-import { Calendar, Check, Loader2, X } from 'lucide-react';
+import { Calendar, CalendarClock, Check, Loader2, X } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import FilterBar from '@/components/platform/FilterBar';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import AbsenceMarker from '@/components/absence/AbsenceMarker';
 import AbsenceReportsButton from '@/components/absence/AbsenceReportsButton';
+import ShiftRequestReviewModal from '@/components/shifts/ShiftRequestReviewModal';
 import { api } from '@/lib/api';
 import { absenceSummary } from '@/lib/absence-reports';
+import { listShiftRequests, type ShiftChangeRequest, type ShiftPendingRequest } from '@/lib/shift-requests';
 
 interface Worker {
   id: string;
@@ -26,6 +28,10 @@ interface Shift {
   status: string;
   approved_at: string | null;
   rdp_resource_id: string | null;
+  /** "shift" (normal) or "rdp_claim" (a desktop booked for these hours). */
+  kind?: string;
+  rdp_nickname?: string | null;
+  pending_request?: ShiftPendingRequest | null;
 }
 
 function formatDate(iso: string): string {
@@ -159,6 +165,14 @@ export default function AdminShiftsPage() {
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('');
   const [workerFilter, setWorkerFilter] = useState('');
+  const [kindFilter, setKindFilter] = useState<'' | 'shift' | 'rdp_claim'>('');
+  // Links such as RDP → "RDP Schedule Management" open this page pre-filtered (?kind=rdp_claim).
+  useEffect(() => {
+    const k = new URLSearchParams(window.location.search).get('kind');
+    if (k === 'shift' || k === 'rdp_claim') setKindFilter(k);
+  }, []);
+
+  const [exactDate, setExactDate] = useState('');
   const [search, setSearch] = useState('');
   const [range, setRange] = useState<RangeKey>('all');
   const [customFrom, setCustomFrom] = useState('');
@@ -167,18 +181,26 @@ export default function AdminShiftsPage() {
   const [actioning, setActioning] = useState<string | null>(null);
   const [flaggedShiftIds, setFlaggedShiftIds] = useState<Set<string>>(new Set());
   const [absencesPending, setAbsencesPending] = useState(0);
+  const [requestsByShift, setRequestsByShift] = useState<Map<string, ShiftChangeRequest>>(new Map());
+  const [reviewing, setReviewing] = useState<ShiftChangeRequest | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const reload = () => {
     return Promise.all([
       api.get<Shift[]>('/shifts'),
       api.get<Worker[]>('/workers'),
-      // Additive marker — never let it break the shifts table.
+      // Additive markers — never let them break the shifts table.
       absenceSummary().catch(() => ({ pending: 0, flagged_shift_ids: [] })),
-    ]).then(([s, w, absences]) => {
+      listShiftRequests('pending').catch(() => [] as ShiftChangeRequest[]),
+    ]).then(([s, w, absences, requests]) => {
       setShifts(s);
       setWorkers(w);
       setFlaggedShiftIds(new Set(absences.flagged_shift_ids));
       setAbsencesPending(absences.pending);
+      setRequestsByShift(new Map(
+        requests.filter((r) => s.some((sh) => sh.id === r.shift_id && sh.status !== 'cancelled'))
+          .map((r) => [r.shift_id, r]),
+      ));
     });
   };
 
@@ -221,16 +243,32 @@ export default function AdminShiftsPage() {
     return shifts.filter((s) => {
       if (sv && s.status !== sv) return false;
       if (workerFilter && s.worker_id !== workerFilter) return false;
+      if (kindFilter && (s.kind ?? 'shift') !== kindFilter) return false;
+      if (exactDate) {
+        const start = new Date(s.scheduled_start);
+        const date = `${start.getFullYear()}-${String(start.getMonth() + 1).padStart(2, '0')}-${String(start.getDate()).padStart(2, '0')}`;
+        if (date !== exactDate) return false;
+      }
       if (!overlapsRange(s.scheduled_start, s.scheduled_end, bounds)) return false;
       if (!q) return true;
       const w = workerMap[s.worker_id];
       const name = w ? w.display_name.toLowerCase() : s.worker_id;
       return name.includes(q) || s.status.includes(q);
     });
-  }, [shifts, bounds, statusFilter, workerFilter, search, workerMap]);
+  }, [shifts, bounds, statusFilter, workerFilter, kindFilter, exactDate, search, workerMap]);
 
   const selectedWorker = submitters.find((w) => w.id === workerFilter) ?? null;
   const rangeLabel = RANGE_OPTIONS.find((o) => o.key === range)?.label ?? 'All time';
+  const exactDateLabel = exactDate ? formatDate(`${exactDate}T12:00:00`) : '';
+  const recentDays = (() => {
+    const today = startOfToday();
+    const monday = shiftDays(today, today.getDay() === 0 ? -6 : 1 - today.getDay());
+    return Array.from({ length: 14 }, (_, index) => {
+      const day = shiftDays(monday, index < 7 ? index : index - 14);
+      const value = `${day.getFullYear()}-${String(day.getMonth() + 1).padStart(2, '0')}-${String(day.getDate()).padStart(2, '0')}`;
+      return { value, label: `${index < 7 ? 'This week' : 'Last week'} · ${formatDate(`${value}T12:00:00`)}` };
+    });
+  })();
 
   const handleApprove = async (id: string) => {
     setActioning(id);
@@ -271,6 +309,7 @@ export default function AdminShiftsPage() {
       hours: durationHours(s.scheduled_start, s.scheduled_end),
       status: s.status,
       absence: flaggedShiftIds.has(s.id),
+      request: requestsByShift.get(s.id) ?? null,
       _raw: s,
     };
   });
@@ -279,15 +318,33 @@ export default function AdminShiftsPage() {
     <div>
       <PageHeader
         title="Shifts"
-        actions={<AbsenceReportsButton count={absencesPending} />}
+        actions={
+          <>
+            <Link
+              href="/admin/notifications/shift-changes"
+              className="btn-secondary text-sm py-2 px-4 inline-flex items-center gap-2"
+              title="Workers asking to change or delete approved shifts"
+            >
+              <CalendarClock size={14} />
+              Shift changes
+              {requestsByShift.size > 0 && (
+                <span className="min-w-[18px] h-[18px] px-1 inline-flex items-center justify-center rounded-full bg-danger text-[10px] font-bold text-white">
+                  {requestsByShift.size > 9 ? '9+' : requestsByShift.size}
+                </span>
+              )}
+            </Link>
+            <AbsenceReportsButton count={absencesPending} />
+          </>
+        }
       />
-      <FilterBar
+      {notice && <p className="mb-4 text-sm text-emerald-accent">{notice}</p>}
+      <FilterBar singleRow
         searchPlaceholder="Search by worker name…"
         onSearch={setSearch}
         onFilterChange={(label, value) => { if (label === 'Status') setStatusFilter(value); }}
         filters={[{ label: 'Status', options: STATUS_OPTIONS }]}
       >
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-nowrap items-center gap-2 shrink-0">
           <label htmlFor="shifts-worker" className="sr-only">Worker</label>
           <select
             id="shifts-worker"
@@ -303,17 +360,41 @@ export default function AdminShiftsPage() {
             ))}
           </select>
 
+          <label htmlFor="shifts-kind" className="sr-only">Shift type</label>
+          <select
+            id="shifts-kind"
+            value={kindFilter}
+            onChange={(e) => setKindFilter(e.target.value as '' | 'shift' | 'rdp_claim')}
+            className="px-4 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
+          >
+            <option value="">All shift types</option>
+            <option value="shift">Normal shifts</option>
+            <option value="rdp_claim">RDP claim shifts</option>
+          </select>
+
+          <label htmlFor="shifts-exact-day" className="sr-only">Exact day</label>
+          <select
+            id="shifts-exact-day"
+            value={exactDate}
+            onChange={(e) => { setExactDate(e.target.value); setRange('all'); }}
+            className="px-4 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
+          >
+            <option value="">Any exact date</option>
+            {recentDays.map((day) => <option key={day.value} value={day.value}>{day.label}</option>)}
+          </select>
+
           <label htmlFor="shifts-range" className="sr-only">Date range</label>
           <select
             id="shifts-range"
             value={range}
-            onChange={(e) => setRange(e.target.value as RangeKey)}
+            onChange={(e) => { setRange(e.target.value as RangeKey); setExactDate(''); }}
             className="px-4 py-2.5 bg-brand-surface-container/60 border border-emerald-accent/30 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent transition-colors"
           >
             {RANGE_OPTIONS.map((o) => (
               <option key={o.key} value={o.key}>{o.label}</option>
             ))}
           </select>
+
 
           {range === 'custom' && (
             <>
@@ -361,16 +442,17 @@ export default function AdminShiftsPage() {
           )}
         </div>
       </FilterBar>
-      {(bounds || workerFilter) && (
+      {(bounds || workerFilter || exactDate) && (
         <p className="-mt-4 mb-4 flex flex-wrap items-center gap-2 text-xs text-theme-muted">
           <span>
             Showing {filtered.length} shift{filtered.length === 1 ? '' : 's'}
             {selectedWorker ? ` for ${selectedWorker.name}` : ''}
+            {exactDateLabel ? ` on ${exactDateLabel}` : ''}
             {bounds ? ` scheduled in ${rangeLabel.toLowerCase()}` : ''}.
           </span>
           <button
             type="button"
-            onClick={() => { setWorkerFilter(''); setRange('all'); setCustomFrom(''); setCustomTo(''); }}
+            onClick={() => { setWorkerFilter(''); setKindFilter(''); setExactDate(''); setRange('all'); setCustomFrom(''); setCustomTo(''); }}
             className="text-emerald-accent hover:underline"
           >
             Clear filters
@@ -413,6 +495,20 @@ export default function AdminShiftsPage() {
         <DataTable
           columns={[
             { key: 'worker', header: 'Worker' },
+            {
+              key: 'type',
+              header: 'Type',
+              render: (r) => {
+                const raw = (r as typeof rows[number])._raw;
+                return raw.kind === 'rdp_claim' ? (
+                  <span className="inline-flex items-center rounded-md border border-emerald-accent/30 bg-emerald-accent/10 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-emerald-accent whitespace-nowrap">
+                    RDP · {raw.rdp_nickname ?? 'desktop'}
+                  </span>
+                ) : (
+                  <span className="text-xs text-theme-muted">Shift</span>
+                );
+              },
+            },
             { key: 'date', header: 'Date' },
             { key: 'start', header: 'Start' },
             { key: 'end', header: 'End' },
@@ -424,18 +520,36 @@ export default function AdminShiftsPage() {
             },
             {
               key: 'absence',
-              header: 'Absence',
-              render: (r) =>
-                r.absence ? (
-                  <Link
-                    href="/admin/notifications/absences"
-                    title="Absence reported — open the review queue"
-                  >
-                    <AbsenceMarker />
-                  </Link>
-                ) : (
-                  <span className="text-theme-muted/50">—</span>
-                ),
+              header: 'Flags',
+              render: (r) => {
+                const row = r as typeof rows[number];
+                if (!row.absence && !row.request) return <span className="text-theme-muted/50">—</span>;
+                return (
+                  <span className="inline-flex items-center gap-1.5">
+                    {row.absence && (
+                      <Link
+                        href="/admin/notifications/absences"
+                        title="Absence reported — open the review queue"
+                      >
+                        <AbsenceMarker />
+                      </Link>
+                    )}
+                    {row.request && (
+                      <button
+                        type="button"
+                        onClick={() => setReviewing(row.request)}
+                        title={row.request.kind === 'delete'
+                          ? 'Worker asked to delete this approved shift — review'
+                          : 'Worker asked to change the hours of this approved shift — review'}
+                        aria-label="Review shift change request"
+                        className="inline-flex h-6 min-w-6 items-center justify-center rounded-full border border-danger/50 bg-danger/15 px-1.5 text-xs font-black text-danger transition-colors hover:bg-danger hover:text-white"
+                      >
+                        !
+                      </button>
+                    )}
+                  </span>
+                );
+              },
             },
             {
               key: 'approve',
@@ -486,14 +600,29 @@ export default function AdminShiftsPage() {
           ]}
           data={rows as unknown as Record<string, unknown>[]}
           emptyMessage={
-            bounds || workerFilter
+            bounds || workerFilter || exactDate
               ? `No shifts${selectedWorker ? ` for ${selectedWorker.name}` : ''}`
+                + `${exactDateLabel ? ` on ${exactDateLabel}` : ''}`
                 + `${bounds ? ` scheduled in ${rangeLabel.toLowerCase()}` : ''}.`
                 + ' Try a wider date range — shifts submitted for future days sit outside the backward-looking ranges.'
               : 'No shifts found.'
           }
         />
       )}
+
+      <ShiftRequestReviewModal
+        request={reviewing}
+        onClose={() => setReviewing(null)}
+        onDecided={(updated) => {
+          setReviewing(null);
+          setNotice(
+            updated.status === 'approved'
+              ? `Approved — ${updated.kind === 'delete' ? 'the shift was cancelled' : 'the new times are live'} and ${updated.worker_name ?? 'the worker'} was notified.`
+              : `Rejected — ${updated.worker_name ?? 'the worker'} was notified.`,
+          );
+          void reload().catch((e) => setError(e instanceof Error ? e.message : 'Failed to reload'));
+        }}
+      />
     </div>
   );
 }
