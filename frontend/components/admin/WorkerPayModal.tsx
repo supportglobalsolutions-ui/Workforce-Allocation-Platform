@@ -35,6 +35,15 @@ export interface PayRow {
     base_currency?: string | null;
     base_equivalent?: string | number | null;
     admin_locked?: boolean;
+    /** Rate x hours + bonus, as the system worked it out. */
+    calculated_gross?: string | number;
+    /** Admin's final gross; when set it replaces the calculated gross. */
+    gross_override?: string | number | null;
+    gross_difference?: string | number;
+    final_confirmed_at?: string | null;
+    final_confirmed_by_name?: string | null;
+    /** Admin's note; when empty the ledger shows the work month. */
+    notes?: string | null;
     exception_flags?: string[];
   } | null;
 }
@@ -127,6 +136,7 @@ export default function WorkerPayModal({
     fx_rate: s?.fx_rate != null ? String(s.fx_rate) : '',
   }));
   const [currency, setCurrency] = useState(s?.local_currency ?? defaultCurrency);
+  const [notes, setNotes] = useState(s?.notes ?? '');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const tierAllocated = hasPayTier(row.worker_pay_tier);
@@ -230,6 +240,7 @@ export default function WorkerPayModal({
       bonus: num(form.bonus),
       transfer_cost: num(form.transfer_cost),
       external_cost: num(form.external_cost),
+      notes,
     };
     setSaving(true);
     try {
@@ -367,7 +378,7 @@ export default function WorkerPayModal({
               <Computed label="Total deductions" value={money(totals.deductions)} />
 
               <Computed
-                label="Final net pay due"
+                label="Final net (gross − deductions)"
                 value={money(totals.net)}
                 accent={totals.net < 0 ? 'danger' : 'emerald'}
               />
@@ -382,6 +393,13 @@ export default function WorkerPayModal({
               )}
             </div>
           </div>
+
+          <Field label="Notes" hint={`Leave blank to show “${periodLabel}”.`}>
+            <textarea rows={2} maxLength={500} disabled={locked}
+              value={notes} onChange={(e) => setNotes(e.target.value)}
+              placeholder={periodLabel}
+              className="input-field !py-2 text-sm disabled:opacity-60 w-full resize-y" />
+          </Field>
 
           {row.evidence_incomplete && (
             <p className="text-[11px] text-amber-400">Some sessions are missing images or on-image times.</p>

@@ -16,7 +16,7 @@ from .enums import (  # noqa: F401
 from .admin_users  import AdminUser                                                           # noqa: F401
 from .partner      import PartnerEntity, PartnerArrangement, PartnerClientOverride            # noqa: F401
 from .worker       import Worker                                                              # noqa: F401
-from .client       import Client, ClientPeriodEarning, ClientRevenueAgreement                 # noqa: F401
+from .client       import ClientWorkerLink, Client, ClientPeriodEarning, ClientRevenueAgreement, ClientSplitRecipient, Payee, PayeeClientLink  # noqa: F401
 from .rdp_machine  import RDPResource, RDPResourceWorker, RDPClaimReservation                 # noqa: F401
 from .contact_message import ContactMessage                                                    # noqa: F401
 from .chat import ChatThread, ChatMessage                                                      # noqa: F401
@@ -27,7 +27,8 @@ from .allocation   import Allocation                                            
 from .payroll      import PayrollPeriod, PayrollLineItem, PayrollWorkerSummary                   # noqa: F401
 from .cost_ledger  import CostLedgerEntry, CostLedgerAllocation, PeriodMemberApproval         # noqa: F401
 from .hours_log    import HoursLogEntry                                                       # noqa: F401
-from .client_payout import ClientPayout                                                       # noqa: F401
+from .client_payout import ClientPayout, PayeePayout, PayeePayoutLine                         # noqa: F401
+from .income       import IncomeEntry                                                         # noqa: F401
 from .session      import Session                                                             # noqa: F401
 from .rate_table   import RateTableEntry                                                      # noqa: F401
 from .payment_tier import PaymentTier                                                         # noqa: F401

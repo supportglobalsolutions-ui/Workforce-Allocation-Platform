@@ -370,7 +370,12 @@ def delete_auth_user(uid: str) -> None:
 
 
 def send_password_recovery_email(email: str, redirect_to: str) -> None:
-    """Request a recovery email through GoTrue's public endpoint."""
+    """Ask GoTrue to send its own recovery email.
+
+    Prefer ``services.account_invite.deliver_password_recovery`` in product
+    flows: that path mints a link and sends it through Resend so delivery is
+    logged. Kept for admin / emergency use of the Supabase mailer.
+    """
     _public_auth_request("/recover", {"email": email, "redirect_to": redirect_to})
 
 

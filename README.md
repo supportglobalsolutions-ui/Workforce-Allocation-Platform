@@ -114,7 +114,7 @@ docker compose up -d
 # Terminal 2 — Backend
 cd backend
 venv\Scripts\activate
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload --port 8001
 
 # Terminal 3 — Frontend
 cd frontend
@@ -122,7 +122,7 @@ npm run dev
 ```
 
 Frontend: `http://localhost:3000`
-Backend API docs: `http://localhost:8000/docs`
+Backend API docs: `http://localhost:8001/docs`
 Guacamole admin: `http://localhost:8080/guacamole`
 
 ---

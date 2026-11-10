@@ -62,6 +62,9 @@ class SessionResponse(SessionBase):
     image_end_at:           Optional[datetime] = None
     work_blocks:            list[dict[str, Any]] = []
     evidence_complete:      Optional[bool]     = None
+    title:                  Optional[str]      = None
+    added_by_admin:         bool               = False
+    rate_override:          Optional[Decimal]  = None
     created_at:             Optional[datetime] = None
     updated_at:             Optional[datetime] = None
 

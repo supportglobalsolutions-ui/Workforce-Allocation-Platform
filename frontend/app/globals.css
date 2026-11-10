@@ -628,3 +628,97 @@ body.test-mode .glass-panel::after {
   pointer-events: none;
   z-index: 1;
 }
+/* Keep the editable client ledger neutral, including in test mode. */
+.client-ledger-plain .input-field,
+body.test-mode .client-ledger-plain input:not([type='checkbox']):not([type='radio']),
+body.test-mode .client-ledger-plain select {
+  border: 1px solid var(--border-color, #cbd5e1) !important;
+  border-radius: 6px !important;
+  background: var(--surface-container) !important;
+  color: var(--text-heading) !important;
+  min-height: 32px;
+  padding: 5px 8px !important;
+  font-size: 13px;
+}
+.client-ledger-plain td { padding: 10px 12px; }
+.client-ledger-plain th { padding: 10px 12px; }
+.client-ledger-plain [role='switch'] { flex-shrink: 0; }
+.client-ledger-plain input:focus-visible,
+.client-ledger-plain select:focus-visible { outline: 2px solid #3fc7a0; outline-offset: 1px; }
+.ledger-kpi-scroll { scrollbar-width: thin; scrollbar-color: #d4af37 transparent; }
+.ledger-kpi-scroll::-webkit-scrollbar { height: 3px; }
+.ledger-kpi-scroll::-webkit-scrollbar-track { background: transparent; }
+.ledger-kpi-scroll::-webkit-scrollbar-thumb { background: #d4af37; border-radius: 999px; }
+@supports selector(::-webkit-scrollbar) {
+  .ledger-kpi-scroll { scrollbar-width: auto; scrollbar-color: auto; }
+}
+
+/* All platform tables share the compact client-ledger spreadsheet design. */
+.finance-table-design table {
+  border-collapse: collapse !important;
+  border-spacing: 0;
+  background: var(--surface-container) !important;
+  color: var(--on-surface);
+  font-family: Arial, sans-serif;
+  font-size: 12px !important;
+  line-height: 1.25;
+}
+.finance-table-design table th,
+.finance-table-design table td {
+  border: 1px solid color-mix(in srgb, var(--on-surface-variant) 30%, var(--surface-container)) !important;
+  padding: 2px 4px !important;
+  height: 24px;
+  font-size: 12px !important;
+  letter-spacing: normal !important;
+  vertical-align: middle;
+}
+.finance-table-design table thead,
+.finance-table-design table thead tr,
+.finance-table-design table thead th {
+  background: var(--secondary-green) !important;
+  color: #fff !important;
+  text-transform: none !important;
+  font-weight: 700;
+}
+.finance-table-design table tbody tr,
+.finance-table-design table tbody td {
+  background: var(--surface-container) !important;
+  color: var(--on-surface);
+}
+.finance-table-design table tbody tr:hover td {
+  background: var(--surface-high) !important;
+}
+.finance-table-design table tfoot,
+.finance-table-design table tfoot tr,
+.finance-table-design table tfoot td {
+  background: var(--surface-highest) !important;
+  color: var(--on-surface) !important;
+  font-weight: 700;
+}
+.finance-table-design table :is(.text-theme-heading, .text-brand-on-surface, .text-white) {
+  color: var(--on-surface) !important;
+}
+.finance-table-design table :is(.text-theme-muted, .text-brand-on-surface-variant) {
+  color: var(--on-surface-variant) !important;
+}
+.finance-table-design table thead :is(span, p, button, a, .text-white, .text-theme-heading, .text-theme-muted, .text-brand-on-surface, .text-brand-on-surface-variant) {
+  color: inherit !important;
+}
+.finance-table-design table :is(input:not([type='checkbox']):not([type='radio']), select, textarea) {
+  min-height: 24px !important;
+  padding: 2px 4px !important;
+  border: 1px solid color-mix(in srgb, var(--emerald-accent) 40%, var(--surface-container)) !important;
+  border-radius: 2px !important;
+  background: var(--surface-container) !important;
+  color: var(--on-surface) !important;
+  font-size: 12px !important;
+}
+.finance-table-design table :is(input, select, textarea, button, a):focus-visible {
+  outline: 2px solid var(--gold-accent);
+  outline-offset: 1px;
+}
+
+.finance-table-design .client-split-sheet {
+  border-color: color-mix(in srgb, var(--on-surface-variant) 30%, var(--surface-container));
+  background: var(--surface-container);
+}

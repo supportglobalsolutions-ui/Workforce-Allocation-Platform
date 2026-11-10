@@ -26,7 +26,7 @@ function remainingSeconds(iso: string): number {
   return Math.max(0, Math.ceil(ms / 1000));
 }
 
-/** Confirm, then enter the 3-minute email code, then the period is gone. */
+/** Confirm, then enter the 5-minute email code, then the period is gone. */
 export default function DeletePeriodModal({
   period, onClose, onDeleted,
 }: {

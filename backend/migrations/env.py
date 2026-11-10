@@ -4,7 +4,9 @@ from pathlib import Path
 
 from alembic import context
 from dotenv import load_dotenv
-from sqlalchemy import engine_from_config, pool
+from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
+
+from sqlalchemy import create_engine, engine_from_config, pool
 from sqlmodel import SQLModel
 
 from core.db_url import normalize_db_url, to_session_pooler
@@ -63,11 +65,31 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
-        poolclass=pool.NullPool,
-    )
+    from core.database import _native_postgres_driver_available, _pg8000_ssl_context
+
+    if _native_postgres_driver_available():
+        connectable = engine_from_config(
+            config.get_section(config.config_ini_section, {}),
+            prefix="sqlalchemy.",
+            poolclass=pool.NullPool,
+        )
+    else:
+        # Same fallback as the app (core/database.py): Windows Application
+        # Control can block psycopg2's compiled driver; pg8000 is pure Python.
+        parsed = urlparse(db_url)
+        query = parse_qsl(parsed.query, keep_blank_values=True)
+        options = {key.lower(): value for key, value in query}
+        params = [(k, v) for k, v in query if k.lower() not in {"sslmode", "sslrootcert", "connect_timeout"}]
+        url = urlunparse(parsed._replace(scheme="postgresql+pg8000", query=urlencode(params)))
+        print("alembic: psycopg2 is blocked on this machine; using the pure-Python pg8000 driver.")
+        connectable = create_engine(
+            url,
+            poolclass=pool.NullPool,
+            connect_args={
+                "timeout": 30,
+                "ssl_context": _pg8000_ssl_context(options.get("sslmode", ""), options.get("sslrootcert")),
+            },
+        )
     with connectable.connect() as connection:
         context.configure(
             connection=connection,

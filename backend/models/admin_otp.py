@@ -12,7 +12,7 @@ class AdminOtpChallenge(SQLModel, table=True):
     Short-lived confirmation code for a destructive admin action.
 
     The plaintext code is never stored — only an HMAC. Challenges expire in
-    three minutes and are single-use.
+    five minutes and are single-use.
     """
 
     __tablename__ = "admin_otp_challenges"

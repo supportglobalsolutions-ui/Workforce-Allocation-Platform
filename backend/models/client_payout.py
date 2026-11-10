@@ -57,3 +57,75 @@ class ClientPayout(SQLModel, table=True):
         default=None,
         sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
     )
+
+
+class PayeePayout(SQLModel, table=True):
+    """What one payee is owed for one working month, across every client split they are on.
+
+    One combined statement and one payment per payee per month. The exchange
+    rate is frozen when the month is approved; nothing changes once paid.
+    """
+
+    __tablename__ = "payee_payouts"
+    __table_args__ = (
+        UniqueConstraint("payee_id", "payroll_period_id", name="uq_payee_payouts_payee_period"),
+        CheckConstraint("status IN ('draft', 'sent', 'paid')", name="ck_payee_payouts_status"),
+    )
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    payee_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payees.id", ondelete="CASCADE"), nullable=False, index=True),
+    )
+    payroll_period_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True), ForeignKey("payroll_periods.id", ondelete="CASCADE"), nullable=False, index=True,
+        ),
+    )
+    amount_usd: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))
+    currency: str = Field(sa_column=Column(String(3), nullable=False))
+    fx_rate: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(18, 6), nullable=True))
+    amount_local: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(16, 2), nullable=True))
+    status: str = Field(default="draft", sa_column=Column(String(16), nullable=False, server_default="draft"))
+    statement_path: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    sent_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    paid_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    reference: Optional[str] = Field(default=None, sa_column=Column(String(255), nullable=True))
+    paid_by: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True),
+    )
+    created_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+    updated_at: Optional[datetime] = Field(
+        default=None,
+        sa_column=Column(DateTime(timezone=True), server_default=text("now()"), nullable=False),
+    )
+
+
+class PayeePayoutLine(SQLModel, table=True):
+    """One client's part of a payee payout (the payee's recipient amount on that client's split)."""
+
+    __tablename__ = "payee_payout_lines"
+    __table_args__ = (
+        UniqueConstraint("payout_id", "client_id", name="uq_payee_payout_lines_payout_client"),
+    )
+
+    id: uuid.UUID = Field(
+        default_factory=uuid.uuid4,
+        sa_column=Column(PGUUID(as_uuid=True), primary_key=True, server_default=text("gen_random_uuid()")),
+    )
+    payout_id: uuid.UUID = Field(
+        sa_column=Column(
+            PGUUID(as_uuid=True), ForeignKey("payee_payouts.id", ondelete="CASCADE"), nullable=False, index=True,
+        ),
+    )
+    client_id: uuid.UUID = Field(
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id", ondelete="CASCADE"), nullable=False, index=True),
+    )
+    pct: Decimal = Field(default=Decimal("0"), sa_column=Column(Numeric(5, 2), nullable=False, server_default="0"))
+    amount_usd: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))

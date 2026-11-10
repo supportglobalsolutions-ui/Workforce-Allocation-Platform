@@ -1,8 +1,9 @@
 import uuid
 from datetime import datetime
+from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Text, text
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, Numeric, String, Text, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -60,8 +61,9 @@ class Session(SQLModel, table=True):
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("partner_arrangements.id"), nullable=True),
     )
-    # Client account the work was done on (inherited from the RDP for gs_rdp
-    # sessions; set directly on partner multilog / third-party sessions).
+    # Client account the work was done on. Set by an admin (claim does not
+    # inherit from the RDP — many accounts share few machines). Required for
+    # client income; Hours Log still drives worker pay by desktop.
     client_id: Optional[uuid.UUID] = Field(
         default=None,
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("clients.id"), nullable=True),
@@ -85,6 +87,14 @@ class Session(SQLModel, table=True):
         sa_column=Column(PGUUID(as_uuid=True), ForeignKey("payroll_periods.id"), nullable=True),
     )
     admin_notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    # Sessions an admin added by hand (work done off a desktop, or missed tracking).
+    title: Optional[str] = Field(default=None, sa_column=Column(String(160), nullable=True))
+    added_by_admin: bool = Field(
+        default=False,
+        sa_column=Column(Boolean(), nullable=False, server_default=text("false")),
+    )
+    # Hourly rate in the worker's payout currency; replaces the tier rate for this session.
+    rate_override: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(12, 2), nullable=True))
     # Admin-only review flag — not shown to workers. Used when screenshots
     # do not match the claimed session times / work.
     suspicious: bool = Field(

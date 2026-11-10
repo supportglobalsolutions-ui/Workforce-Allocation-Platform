@@ -242,6 +242,64 @@ def _seed_reference_data(schema: str, auth_uid: str) -> None:
         box.commit()
 
 
+def sync_sandbox_schema(schema: str) -> list[str]:
+    """Bring a test copy's structure up to the current code: add missing types, tables and columns.
+
+    Test mode runs the same code as the live site, so the test copy must have
+    every table and column the live tables have. Run at startup (i.e. after
+    every code change / migration). Data is never removed.
+    """
+    import models  # noqa: F401 — registers every table on SQLModel.metadata
+    from sqlalchemy.schema import CreateColumn
+
+    changes: list[str] = []
+    with sandbox_engine(schema).begin() as conn:
+        for table in SQLModel.metadata.sorted_tables:
+            for column in table.columns:
+                enum_type = column.type
+                if getattr(enum_type, "name", None) and hasattr(enum_type, "create") and hasattr(enum_type, "enums"):
+                    enum_type.create(conn, checkfirst=True)
+        existing = set(conn.execute(
+            text("select table_name, column_name from information_schema.columns where table_schema = :s"),
+            {"s": schema},
+        ).all())
+        tables = {t for t, _ in existing}
+        new_tables = [t for t in SQLModel.metadata.sorted_tables if t.name not in tables]
+        if new_tables:
+            SQLModel.metadata.create_all(conn, tables=new_tables)
+            changes += [f"table {t.name}" for t in new_tables]
+        for table in SQLModel.metadata.sorted_tables:
+            if table.name not in tables:
+                continue
+            for column in table.columns:
+                if (table.name, column.name) in existing:
+                    continue
+                ddl = CreateColumn(column).compile(dialect=conn.dialect)
+                conn.execute(text(f'ALTER TABLE "{schema}"."{table.name}" ADD COLUMN {ddl}'))
+                changes.append(f"{table.name}.{column.name}")
+    return changes
+
+
+def sync_all_sandboxes() -> None:
+    """Startup: keep every built test copy in step with the live table structure."""
+    try:
+        with engine.connect() as conn:
+            schemas = conn.execute(text(
+                "select table_schema from information_schema.tables "
+                "where table_schema like 'sandbox\_%' and table_name = 'sandbox_meta'"
+            )).scalars().all()
+    except Exception:
+        logger.exception("Could not list test-mode copies to sync")
+        return
+    for schema in schemas:
+        try:
+            changes = sync_sandbox_schema(schema)
+            if changes:
+                logger.info("Test copy %s brought up to date: %s", schema, ", ".join(changes))
+        except Exception:
+            logger.exception("Could not sync test copy %s with the live structure", schema)
+
+
 def _build(schema: str, auth_uid: str) -> None:
     import models  # noqa: F401 — registers every table on SQLModel.metadata
 

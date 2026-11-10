@@ -12,6 +12,7 @@ from sqlmodel import Session, select
 from core.database import get_db
 from core.permissions import STAFF_ROLES, require_admin, require_user
 from core.redis import get_redis
+from models.client import Client
 from models.session import Session as WorkSession
 from schemas.session import (
     SessionCreate,
@@ -272,15 +273,21 @@ def create_session(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_user),
 ):
-    if current_user.get("role") not in STAFF_ROLES:
+    staff = _is_staff(current_user)
+    data = body.model_dump()
+    if not staff:
         worker = get_worker_for_user(db, current_user)
         if body.worker_id != worker.id:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail="Workers may only create sessions for themselves",
             )
+        # Only staff may attach a session to a client for billing.
+        data["client_id"] = None
+    elif data.get("client_id") is not None and db.get(Client, data["client_id"]) is None:
+        raise HTTPException(status_code=400, detail="Client not found")
 
-    session = WorkSession(**body.model_dump())
+    session = WorkSession(**data)
     if session.end_time and not session.duration_minutes:
         session.duration_minutes = max(
             0, int((session.end_time - session.start_time).total_seconds() // 60)
@@ -288,7 +295,7 @@ def create_session(
     db.add(session)
     db.commit()
     db.refresh(session)
-    return _session_response(session, staff=_is_staff(current_user))
+    return _session_response(session, staff=staff)
 
 
 def _session_for_caller(db: Session, session_id: UUID, current_user: dict) -> WorkSession:
@@ -440,8 +447,11 @@ def update_session(
     if not session:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
-    if current_user.get("role") not in STAFF_ROLES:
-        restricted = {"payroll_approval_state", "payroll_period_id", "admin_notes", "suspicious"}
+    staff = _is_staff(current_user)
+    if not staff:
+        restricted = {
+            "payroll_approval_state", "payroll_period_id", "admin_notes", "suspicious", "client_id",
+        }
         if restricted & body.model_dump(exclude_unset=True).keys():
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -449,6 +459,10 @@ def update_session(
             )
 
     updates = body.model_dump(exclude_unset=True)
+    if "client_id" in updates and updates["client_id"] is not None:
+        if db.get(Client, updates["client_id"]) is None:
+            raise HTTPException(status_code=400, detail="Client not found")
+    previous_client_id = session.client_id
     for field in ("start_image_url", "end_image_url"):
         if field in updates and updates[field] is not None:
             try:
@@ -479,10 +493,18 @@ def update_session(
         notify_evidence_incomplete(db, session)
     db.add(session)
     db.flush()
+    if staff and "client_id" in updates and updates["client_id"] != previous_client_id:
+        admin = get_admin_user(db, current_user)
+        record_audit(
+            db, actor_id=admin.id, action="session.client_linked", target_type="session",
+            target_id=session.id,
+            previous_value={"client_id": str(previous_client_id) if previous_client_id else None},
+            new_value={"client_id": str(session.client_id) if session.client_id else None},
+        )
     on_session_hours_changed(db, session)
     db.commit()
     db.refresh(session)
-    return _session_response(session, staff=_is_staff(current_user))
+    return _session_response(session, staff=staff)
 
 
 @router.post("/{session_id}/heartbeat", response_model=SessionResponse)

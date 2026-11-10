@@ -1,3 +1,6 @@
+from datetime import date
+from decimal import Decimal
+from typing import Literal, Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -635,3 +638,143 @@ def unban_worker(
     except Exception as exc:
         raise http_error_from_auth(exc) from exc
     return {"banned": False}
+
+
+# ── Sessions added by an admin ─────────────────────────────────────────────────
+
+@router.get("/{worker_id}/session-rate")
+def worker_session_rate(
+    worker_id: UUID,
+    on: Optional[date] = Query(None, description="Day the session is for; defaults to today"),
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """The worker's payout currency and tier rate, for the Add session form."""
+    from services.admin_sessions import _period_for
+    from services.payroll_engine import pay_terms, payout_currency_for_worker
+
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    day = on or date.today()
+    period = _period_for(db, day)
+    if period is not None:
+        terms = pay_terms(db, worker, period)
+        currency, rate = terms.currency, terms.rate_local
+    else:
+        currency, rate = payout_currency_for_worker(db, worker), None
+    return {
+        "currency": currency,
+        "tier_rate": str(rate) if rate is not None else None,
+        "period_id": str(period.id) if period else None,
+        "period_label": period.label if period else None,
+        "period_status": (period.status.value if hasattr(period.status, "value") else str(period.status))
+        if period else None,
+    }
+
+
+class AdminSessionBody(BaseModel):
+    title: str = PydField(min_length=1, max_length=160)
+    day: Optional[date] = None
+    hours: Decimal = PydField(gt=0, le=24)
+    # None: the worker's tier rate. A number: this session's own rate in the worker's payout currency.
+    rate: Optional[Decimal] = PydField(default=None, ge=0)
+    client_id: UUID
+    rdp_resource_id: Optional[UUID] = None
+    note: Optional[str] = PydField(default=None, max_length=2000)
+
+
+@router.post("/{worker_id}/sessions", status_code=status.HTTP_201_CREATED)
+def add_worker_session(
+    worker_id: UUID,
+    body: AdminSessionBody,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Add a closed, approved session for the worker; it counts in the month its date falls in."""
+    from services import admin_sessions
+
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    admin = get_admin_user(db, current_user)
+    try:
+        session = admin_sessions.create(
+            db, worker, title=body.title, day=body.day or date.today(), hours=body.hours,
+            rate=body.rate, client_id=body.client_id, rdp_resource_id=body.rdp_resource_id, note=body.note,
+        )
+    except admin_sessions.AdminSessionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_audit(
+        db, actor_id=admin.id, action="session.admin_added", target_type="session", target_id=session.id,
+        new_value={
+            "worker": worker.display_name, "title": session.title, "date": str(body.day or date.today()),
+            "hours": str(body.hours), "rate": str(body.rate) if body.rate is not None else "tier",
+            "client": str(body.client_id),
+            "desktop": str(body.rdp_resource_id) if body.rdp_resource_id else None,
+        },
+    )
+    db.commit()
+    db.refresh(session)
+    return {
+        "id": str(session.id),
+        "title": session.title,
+        "start_time": session.start_time.isoformat(),
+        "end_time": session.end_time.isoformat() if session.end_time else None,
+        "duration_minutes": session.duration_minutes,
+        "rate_override": str(session.rate_override) if session.rate_override is not None else None,
+        "payroll_period_id": str(session.payroll_period_id) if session.payroll_period_id else None,
+    }
+
+
+class AdminBulkSessionBody(BaseModel):
+    title: str = PydField(min_length=1, max_length=160)
+    day: Optional[date] = None
+    count: int = PydField(ge=1, le=200)
+    hours: Decimal = PydField(gt=0)
+    # "each": every session gets `hours`. "total": `hours` is shared across the sessions.
+    hours_are: Literal["each", "total"] = "total"
+    rate: Optional[Decimal] = PydField(default=None, ge=0)
+    client_id: UUID
+    rdp_resource_id: Optional[UUID] = None
+    note: Optional[str] = PydField(default=None, max_length=2000)
+
+
+@router.post("/{worker_id}/sessions/bulk", status_code=status.HTTP_201_CREATED)
+def add_worker_sessions_bulk(
+    worker_id: UUID,
+    body: AdminBulkSessionBody,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Add several closed, approved sessions at once (e.g. work done outside the system)."""
+    from services import admin_sessions
+
+    worker = db.get(Worker, worker_id)
+    if not worker:
+        raise HTTPException(status_code=404, detail="Worker not found")
+    admin = get_admin_user(db, current_user)
+    day = body.day or date.today()
+    try:
+        sessions = admin_sessions.create_bulk(
+            db, worker, count=body.count, hours=body.hours, hours_are=body.hours_are,
+            title=body.title, day=day, rate=body.rate, client_id=body.client_id,
+            rdp_resource_id=body.rdp_resource_id, note=body.note,
+        )
+    except admin_sessions.AdminSessionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    total_minutes = sum(s.duration_minutes or 0 for s in sessions)
+    record_audit(
+        db, actor_id=admin.id, action="session.admin_bulk_added", target_type="worker", target_id=worker.id,
+        new_value={
+            "worker": worker.display_name, "title": body.title.strip(), "date": str(day),
+            "sessions": body.count, "hours": str(body.hours), "hours_are": body.hours_are,
+            "total_minutes": total_minutes, "rate": str(body.rate) if body.rate is not None else "tier",
+            "client": str(body.client_id),
+            "desktop": str(body.rdp_resource_id) if body.rdp_resource_id else None,
+        },
+    )
+    db.commit()
+    return {"count": len(sessions), "total_minutes": total_minutes, "ids": [str(s.id) for s in sessions]}

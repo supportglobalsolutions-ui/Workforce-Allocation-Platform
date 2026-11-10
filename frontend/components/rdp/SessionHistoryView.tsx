@@ -7,6 +7,7 @@ import DataTable from '@/components/platform/DataTable';
 import FilterBar from '@/components/platform/FilterBar';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AdminAddedBadge from '@/components/rdp/AdminAddedBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
 import { enteredPayMinutes, rdpConnectedMinutes } from '@/lib/hours';
@@ -26,6 +27,8 @@ interface WorkSession {
   image_start_at?: string | null;
   image_end_at?: string | null;
   evidence_complete?: boolean | null;
+  title?: string | null;
+  added_by_admin?: boolean;
 }
 
 /** Mirrors backend session_image_paths: gallery first, legacy pair as fallback. */
@@ -242,6 +245,8 @@ export default function SessionHistoryView() {
     rdp_uptime: formatDuration(rdpConnectedMinutes(s)),
     rdp_minutes: rdpConnectedMinutes(s),
     type: TYPE_LABELS[s.session_type] ?? s.session_type,
+    title: s.title ?? null,
+    added_by_admin: Boolean(s.added_by_admin),
     status: s.close_status ?? 'pending',
     start_image_url: s.start_image_url,
     image_urls: s.image_urls,
@@ -343,7 +348,16 @@ export default function SessionHistoryView() {
             { key: 'machine', header: 'Machine / Platform' },
             { key: 'work_hours', header: 'Work hours' },
             { key: 'rdp_uptime', header: 'RDP uptime' },
-            { key: 'type', header: 'Type' },
+            {
+              key: 'type',
+              header: 'Type',
+              render: (r) => (
+                <span className="inline-flex items-center gap-1.5">
+                  <span>{r.title ? String(r.title) : String(r.type)}</span>
+                  {Boolean(r.added_by_admin) && <AdminAddedBadge />}
+                </span>
+              ),
+            },
             {
               key: 'status',
               header: 'Status',

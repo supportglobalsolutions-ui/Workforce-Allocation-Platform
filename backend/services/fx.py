@@ -1,8 +1,10 @@
 """
-FX rate resolution: manual admin-entered rates always win over API-fetched ones.
+New FX conversions use the configured API exclusively, with a five-minute cache.
 Base currencies are USD and GBP; every other currency is quoted against them.
 """
 import logging
+from threading import Lock
+from time import monotonic
 from datetime import date
 from decimal import Decimal
 from typing import Optional
@@ -16,6 +18,24 @@ from models.currency import Country, Currency, FxRate
 from services.currency_names import currency_name
 
 logger = logging.getLogger(__name__)
+_live_lock = Lock()
+_live_usd_rates: dict[str, Decimal] = {}
+_live_loaded_at = 0.0
+LIVE_RATE_TTL_SECONDS = 300
+
+
+def live_usd_rates() -> dict[str, Decimal]:
+    """API-only quote snapshot, shared for five minutes; never use expired fallback."""
+    global _live_usd_rates, _live_loaded_at
+    with _live_lock:
+        if _live_usd_rates and monotonic() - _live_loaded_at < LIVE_RATE_TTL_SECONDS:
+            return _live_usd_rates
+        quotes = fetch_latest_rates("USD")
+        if not quotes:
+            raise ValueError("FX API returned no usable rates")
+        _live_usd_rates = {**quotes, "USD": Decimal("1")}
+        _live_loaded_at = monotonic()
+        return _live_usd_rates
 
 BASE_CURRENCIES = ("USD", "GBP")
 
@@ -168,22 +188,7 @@ def currency_symbol(db: Session, code: str | None) -> Optional[str]:
 
 
 def ensure_rate(db: Session, base_currency: str, quote_currency: str) -> Optional[Decimal]:
-    """Resolve an FX rate, refreshing the needed quote from the FX API once.
-
-    Manual rates remain authoritative because ``resolve_rate`` checks them
-    before API rates. This makes a worker's first payroll calculation usable in
-    their local currency without requiring a separate admin refresh first.
-    """
-    rate, _ = resolve_rate(db, base_currency, quote_currency)
-    if rate is not None:
-        return rate
-    if base_currency.upper() == quote_currency.upper():
-        return Decimal("1")
-    try:
-        store_api_rates_for_codes(db, {quote_currency.upper()}, commit=False)
-    except Exception as exc:
-        logger.warning("FX refresh for %s failed: %s", quote_currency, exc)
-        return None
+    """Resolve from the current API snapshot; unavailable rates return None."""
     return resolve_rate(db, base_currency, quote_currency)[0]
 
 
@@ -234,7 +239,7 @@ def _stored_rate(
     return None, None
 
 
-def resolve_rate(
+def _resolve_stored_rate(
     db: Session,
     base_currency: str,
     quote_currency: str,
@@ -290,6 +295,26 @@ def resolve_rate(
         if usd_to_quote is not None and usd_to_gbp and usd_to_gbp > 0:
             return usd_to_quote / usd_to_gbp, "derived"
 
+    return None, None
+
+
+def resolve_rate(
+    db: Session,
+    base_currency: str,
+    quote_currency: str,
+    snapshot: Optional[RateSnapshot] = None,
+) -> tuple[Optional[Decimal], Optional[str]]:
+    """New conversions use one API quote snapshot, never manual/database rates."""
+    base, quote = base_currency.upper(), quote_currency.upper()
+    if base == quote:
+        return Decimal("1"), "identity"
+    try:
+        rates = live_usd_rates()
+        source, target = rates.get(base), rates.get(quote)
+        if source is not None and target is not None and source > 0 and target > 0:
+            return target / source, "api"
+    except Exception as exc:
+        logger.warning("Live FX unavailable for %s/%s: %s", base, quote, exc)
     return None, None
 
 

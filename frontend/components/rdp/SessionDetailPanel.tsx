@@ -30,6 +30,13 @@ interface SessionDetail {
   duration_minutes?: number | null;
   /** Admin-only review flag — never shown to workers. */
   suspicious?: boolean;
+  client_id?: string | null;
+  client_name?: string | null;
+}
+
+interface ClientOption {
+  id: string;
+  name: string;
 }
 
 interface Props {
@@ -38,12 +45,16 @@ interface Props {
   onImagesChanged: (sessionId: string, paths: string[]) => void;
   onEvidenceSaved?: (sessionId: string, patch: Partial<SessionDetail>) => void;
   onSuspiciousChanged?: (sessionId: string, suspicious: boolean) => void;
+  onClientLinked?: (sessionId: string, clientId: string | null, clientName: string | null) => void;
   workerLabel?: string;
   allowEvidenceEdit?: boolean;
   /** Workers upload; admins inspect only. */
   allowUpload?: boolean;
   /** Admin-only: show and toggle the suspicious review flag. */
   allowSuspiciousFlag?: boolean;
+  /** Admin-only: link this session to a client for income. */
+  allowClientLink?: boolean;
+  clients?: ClientOption[];
 }
 
 function toLocalInput(iso: string | null | undefined): string {
@@ -101,22 +112,28 @@ export default function SessionDetailPanel({
   onImagesChanged,
   onEvidenceSaved,
   onSuspiciousChanged,
+  onClientLinked,
   workerLabel,
   allowEvidenceEdit = true,
   allowUpload = true,
   allowSuspiciousFlag = false,
+  allowClientLink = false,
+  clients = [],
 }: Props) {
   const [blocks, setBlocks] = useState<BlockDraft[]>(() => initialBlocks(session));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [suspicious, setSuspicious] = useState(Boolean(session?.suspicious));
   const [flagBusy, setFlagBusy] = useState(false);
+  const [clientDraft, setClientDraft] = useState(session?.client_id ?? '');
+  const [clientBusy, setClientBusy] = useState(false);
 
   useEffect(() => {
     setBlocks(initialBlocks(session));
     setSuspicious(Boolean(session?.suspicious));
+    setClientDraft(session?.client_id ?? '');
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.work_blocks, session?.suspicious]);
+  }, [session?.id, session?.image_start_at, session?.image_end_at, session?.work_blocks, session?.suspicious, session?.client_id]);
 
   if (!session) return null;
 
@@ -190,6 +207,23 @@ export default function SessionDetailPanel({
     }
   };
 
+  const saveClientLink = async () => {
+    if (!allowClientLink || clientBusy) return;
+    const nextId = clientDraft || null;
+    if (nextId === (session.client_id ?? null)) return;
+    setClientBusy(true);
+    setError(null);
+    try {
+      await api.patch(`/sessions/${session.id}`, { client_id: nextId });
+      const name = nextId ? (clients.find((c) => c.id === nextId)?.name ?? null) : null;
+      onClientLinked?.(session.id, nextId, name);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Failed to link client');
+    } finally {
+      setClientBusy(false);
+    }
+  };
+
   return (
     <div
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-xl"
@@ -242,6 +276,41 @@ export default function SessionDetailPanel({
             <StatusBadge status={session.status} />
           </div>
         </div>
+
+        {allowClientLink && (
+          <div className="px-4 sm:px-6 py-3 border-b border-gray-100 space-y-2">
+            <div>
+              <p className="text-sm font-semibold text-gray-800">Client account</p>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Link this session to the client the work was for. Shared RDPs do not set this automatically.
+              </p>
+            </div>
+            <div className="flex flex-col sm:flex-row gap-2">
+              <select
+                value={clientDraft}
+                onChange={(e) => setClientDraft(e.target.value)}
+                className="flex-1 rounded-lg border border-gray-200 px-2 py-2 text-sm text-gray-800"
+                aria-label="Client for this session"
+              >
+                <option value="">No client linked</option>
+                {clients.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={clientBusy || (clientDraft || null) === (session.client_id ?? null)}
+                onClick={() => void saveClientLink()}
+                className="shrink-0 rounded-xl bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold px-3 py-2"
+              >
+                {clientBusy ? 'Saving…' : 'Save link'}
+              </button>
+            </div>
+            {!session.client_id && (
+              <p className="text-xs text-amber-700">Not linked — hours will not count as client income until linked.</p>
+            )}
+          </div>
+        )}
 
         {allowSuspiciousFlag && (
           <div className="px-4 sm:px-6 py-3 border-b border-gray-100 flex items-center justify-between gap-3">

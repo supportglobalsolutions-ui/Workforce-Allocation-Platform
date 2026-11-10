@@ -17,11 +17,11 @@ async function refreshCatalog(): Promise<void> {
     const rates: Record<string, number> = {};
     for (const c of rows) {
       const r = Number(c.usd_rate);
-      if (Number.isFinite(r) && r > 0) rates[c.code.toUpperCase()] = r;
+      if (['api', 'identity'].includes(c.usd_rate_source ?? '') && Number.isFinite(r) && r > 0) rates[c.code.toUpperCase()] = r;
     }
     setUsdRates(rates);
   } catch {
-    /* rates unavailable — amounts stay in their recorded currency */
+    setUsdRates({});
   }
 }
 
@@ -49,6 +49,20 @@ export function DisplayCurrencySync() {
     setDisplayCurrency(null);
     void refreshCatalog();
   }, [isStaff, session, loadedFor]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    void refreshCatalog();
+    const timer = window.setInterval(() => void refreshCatalog(), 60_000);
+    const refresh = () => { if (document.visibilityState === 'visible') void refreshCatalog(); };
+    window.addEventListener('focus', refresh);
+    document.addEventListener('visibilitychange', refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener('focus', refresh);
+      document.removeEventListener('visibilitychange', refresh);
+    };
+  }, [enabled, pathname]);
 
   return null;
 }

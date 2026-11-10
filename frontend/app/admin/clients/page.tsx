@@ -11,7 +11,6 @@ import StatusBadge from '@/components/platform/StatusBadge';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import PeriodFilter from '@/components/platform/PeriodFilter';
-import ConfirmModal from '@/components/platform/ConfirmModal';
 import { api } from '@/lib/api';
 import type { ClientLedgerSheet, ClientMonth } from '@/lib/client-billing';
 import { displayCurrencyFor, formatMoney, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
@@ -23,6 +22,7 @@ type OwnerType = 'gs' | 'worker' | 'partner_entity';
 type ContractStatus = 'active' | 'paused' | 'ended';
 
 interface Client {
+  account_holder?: string | null;
   id: string;
   name: string;
   platform: string;
@@ -40,6 +40,7 @@ interface Client {
   updated_at: string;
   owner_name: string | null;
   rdp_count: number;
+  linked_workers?: string[];
   gs_pct?: string | number | null;
   owner_pct?: string | number | null;
   payment_tier_id?: string | null;
@@ -138,6 +139,7 @@ function OwnerTypeChip({ type }: { type: OwnerType }) {
 // ── Client form (shared by create + edit) ──────────────────────────────────────
 
 interface ClientFormState {
+  account_holder: string;
   name: string;
   platform: string;
   billing_rate_usd: string;
@@ -159,6 +161,7 @@ interface ClientFormState {
 }
 
 const EMPTY_FORM: ClientFormState = {
+  account_holder: '',
   name: '',
   platform: '',
   billing_rate_usd: '',
@@ -172,7 +175,7 @@ const EMPTY_FORM: ClientFormState = {
   notes: '',
   document_urls: [],
   payment_tier_id: '',
-  hours_from_desktops: false,
+  hours_from_desktops: true,
   payout_currency: '',
   payout_email: '',
   payout_method: '',
@@ -181,6 +184,7 @@ const EMPTY_FORM: ClientFormState = {
 
 function formFromClient(c: Client): ClientFormState {
   return {
+    account_holder: c.account_holder ?? '',
     name: c.name,
     platform: c.platform,
     billing_rate_usd: c.billing_rate_usd != null && c.billing_rate_usd !== '' ? String(c.billing_rate_usd) : '',
@@ -247,6 +251,7 @@ function ClientForm({
     const payload = {
       name: form.name.trim(),
       platform: form.platform.trim(),
+      account_holder: form.account_holder.trim() || null,
       billing_rate_usd: form.billing_rate_usd.trim() === '' ? null : Number(form.billing_rate_usd),
       account_email: form.account_email.trim() || null,
       account_id: form.account_id.trim() || null,
@@ -290,6 +295,12 @@ function ClientForm({
           <datalist id="client-platform-suggestions">
             {PLATFORM_SUGGESTIONS.map((p) => <option key={p} value={p} />)}
           </datalist>
+        </div>
+        <div>
+          <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Controller / Account holder</label>
+          <input maxLength={255} value={form.account_holder} onChange={(e) => set('account_holder', e.target.value)}
+            placeholder={form.name.trim() || 'Defaults to client name'} className="input-field" />
+          <p className="mt-1 text-xs text-theme-muted">Leave blank to use the client name, or enter another person or organisation.</p>
         </div>
         <div>
           <label className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Billing rate USD/hr</label>
@@ -372,9 +383,9 @@ function ClientForm({
           </select>
         </div>
         <div className="flex items-end">
-          <label className="flex items-center gap-2 text-sm cursor-pointer pb-2" title="On: billed hours come from the Hours Log on this client's desktops. Off: type them on the Client ledger.">
+          <label className="flex items-center gap-2 text-sm cursor-pointer pb-2" title="On: billed hours come from sessions linked to this client. Off: type them on the Client ledger.">
             <input type="checkbox" checked={form.hours_from_desktops} onChange={(e) => set('hours_from_desktops', e.target.checked)} />
-            Bill hours from linked desktops
+            Auto hours from linked sessions (income = hours × rate)
           </label>
         </div>
         <div>
@@ -811,7 +822,7 @@ function FinancesTab({ client }: { client: Client }) {
         const loaded = results.flatMap((result) => result.status === 'fulfilled' ? [result.value] : []);
         if (loaded.length === 0) throw new Error('Failed to load the client ledger.');
         setMonths(loaded.flatMap((sheet) => sheet.rows
-          .filter((row) => row.client_id === client.id && (Number(row.basis) || Number(row.client_costs) || Number(row.billed_hours ?? 0)))
+          .filter((row) => row.client_id === client.id && (Number(row.billing) || Number(row.client_costs) || Number(row.billed_hours ?? 0)))
           .map((row) => ({ period_id: sheet.period_id, period_label: sheet.period_label, row }))));
         const failed = results.length - loaded.length;
         if (failed > 0) setError(`${failed} working month${failed === 1 ? '' : 's'} did not load.`);
@@ -826,8 +837,8 @@ function FinancesTab({ client }: { client: Client }) {
   return (
     <div className="space-y-4">
       <p className="text-xs text-theme-muted">
-        Figures from the Client ledger: billed hours × rate gives the expected income; what was received
-        replaces it once entered. The client gets their % of that less any costs charged to them, and GS keeps the rest.{' '}
+        Figures from the Client ledger: billed hours × rate gives the expected income; income received
+        replaces it once entered. Costs come off first, and what is left is split between the recipients.{' '}
         <Link href={`/admin/clients/ledger${periodId ? `?period=${periodId}` : ''}`} className="font-semibold text-emerald-accent hover:underline">
           Open the Client ledger →
         </Link>
@@ -850,8 +861,8 @@ function FinancesTab({ client }: { client: Client }) {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
             <KpiCard compact label="RDPs" value={client.rdp_count ?? 0} icon={Monitor} />
             <KpiCard compact label="Hours" value={fmtMoney(sum('billed_hours'))} icon={Link2} accent="blue" />
-            <KpiCard compact label="Income" value={formatMoney(sum('basis'), currency)} icon={Briefcase} accent="gold" />
-            <KpiCard compact label="Client share" value={formatMoney(sum('client_share'), currency)} icon={Percent} accent="emerald" highlight />
+            <KpiCard compact label="Revenue" value={formatMoney(sum('billing'), currency)} icon={Briefcase} accent="gold" />
+            <KpiCard compact label="Net to split" value={formatMoney(sum('net_distributable'), currency)} icon={Percent} accent="emerald" highlight />
           </div>
           {months.length === 0 ? (
             <p className="text-sm text-theme-muted text-center py-8">
@@ -865,17 +876,19 @@ function FinancesTab({ client }: { client: Client }) {
                     <div>
                       <p className="text-sm font-bold text-white">{period_label}</p>
                       <p className="text-[11px] text-theme-muted">
-                        {r.billed_hours != null ? `${fmtMoney(r.billed_hours)} h ${r.hours_source === 'desktops' ? 'from desktops' : 'typed'}` : 'No hours'}
+                        {r.billed_hours != null ? `${fmtMoney(r.billed_hours)} h ${r.hours_source === 'desktops' ? 'from sessions' : 'typed'}` : 'No hours'}
                         {r.rate != null ? ` · ${formatMoneyAmount(r.rate, currency)}/h${r.tier_name && r.rate_source === 'tier' ? ` (${r.tier_name})` : ''}` : ''}
-                        {' · '}Client {Number(r.client_pct)}% / GS {Number(r.gs_pct)}%
+                      </p>
+                      <p className="text-[11px] text-theme-muted">
+                        {r.recipients.filter((x) => x.name).map((x) => `${x.name} ${Number(x.pct)}%`).join(' · ') || 'No recipients'}
                       </p>
                     </div>
                     <div className="text-right tabular-nums">
-                      <p className="text-sm font-bold text-emerald-accent">{formatMoney(r.client_share, currency)}</p>
+                      <p className="text-sm font-bold text-emerald-accent">{formatMoney(r.net_distributable, currency)}</p>
                       <p className="text-[11px] text-theme-muted">
-                        {r.basis_source === 'actual' ? 'received' : 'expected'} {formatMoneyAmount(r.basis, currency)}
-                        {Number(r.client_costs) > 0 ? ` · costs ${formatMoneyAmount(r.client_costs, currency)}` : ''}
-                        {' · '}GS {formatMoneyAmount(r.gs_share, currency)}
+                        revenue {formatMoneyAmount(r.billing, currency)}
+                        {Number(r.split_total_costs) > 0 ? ` · costs ${formatMoneyAmount(r.split_total_costs, currency)}` : ''}
+                        {' · '}GS {formatMoneyAmount(r.gs_amount, currency)}
                       </p>
                     </div>
                   </div>
@@ -899,9 +912,56 @@ function FinancesTab({ client }: { client: Client }) {
   );
 }
 
+interface LinkedClientWorker { id: string; display_name: string; direct: boolean; via_desktop: boolean }
+
+function LinkedWorkersTab({ clientId, onUpdated }: { clientId: string; onUpdated: () => void }) {
+  const [linked, setLinked] = useState<LinkedClientWorker[]>([]);
+  const [workers, setWorkers] = useState<WorkerOption[]>([]);
+  const [selected, setSelected] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  useEffect(() => {
+    let current = true;
+    Promise.all([api.get<LinkedClientWorker[]>(`/clients/${clientId}/workers`), api.get<WorkerOption[]>('/workers')])
+      .then(([links, options]) => { if (current) { setLinked(links); setWorkers(options); } })
+      .catch(e => { if (current) setError(e instanceof Error ? e.message : 'Could not load workers'); })
+      .finally(() => { if (current) setLoading(false); });
+    return () => { current = false; };
+  }, [clientId]);
+  const change = async (workerId: string, remove = false) => {
+    setBusy(true); setError(null);
+    try {
+      const url = `/clients/${clientId}/workers/${workerId}`;
+      if (remove) await api.delete(url); else await api.put(url, {});
+      setLinked(await api.get<LinkedClientWorker[]>(`/clients/${clientId}/workers`));
+      setSelected(''); onUpdated();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Could not update worker link'); }
+    finally { setBusy(false); }
+  };
+  return <div className="space-y-4">
+    <p className="text-xs text-theme-muted">
+      Who works this account (one client can have many workers). This is a roster only — pay and income still follow hours on the client&apos;s desktops.
+    </p>
+    <div className="flex flex-wrap gap-2">
+      <select aria-label="Worker to link" value={selected} disabled={loading || busy} onChange={e => setSelected(e.target.value)} className="input-field flex-1 min-w-[180px]">
+        <option value="">Select worker…</option>
+        {workers.filter(w => !linked.some(l => l.id === w.id && l.direct)).map(w => <option key={w.id} value={w.id}>{w.display_name}</option>)}
+      </select>
+      <button type="button" disabled={!selected || busy} onClick={() => void change(selected)} className="btn-primary px-3 py-2 text-sm disabled:opacity-50">Link worker</button>
+    </div>
+    {loading ? <SpinningDots size="sm" /> : linked.length ? <div className="overflow-x-auto"><table className="w-full text-sm">
+      <thead><tr><th className="text-left">Worker</th><th className="text-left">Linked through</th><th>Actions</th></tr></thead>
+      <tbody>{linked.map(w => <tr key={w.id}><td>{w.display_name}</td><td>{[w.direct && 'Client', w.via_desktop && 'Desktop'].filter(Boolean).join(' and ')}</td>
+        <td>{w.direct ? <button type="button" disabled={busy} onClick={() => void change(w.id, true)} className="text-danger text-xs">Unlink worker</button> : <span className="text-theme-muted text-xs">Manage in Linked RDPs</span>}</td></tr>)}</tbody>
+    </table></div> : <p className="text-sm text-theme-muted">No workers on the roster yet. Link who works this account.</p>}
+    {error && <p role="alert" className="text-sm text-danger">{error}</p>}
+  </div>;
+}
+
 // ── Detail modal ───────────────────────────────────────────────────────────────
 
-type DetailTab = 'details' | 'revenue' | 'finances' | 'rdps';
+type DetailTab = 'details' | 'revenue' | 'finances' | 'rdps' | 'workers';
 
 function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onClose: () => void; onUpdated: () => void }) {
   const [tab, setTab] = useState<DetailTab>('details');
@@ -910,6 +970,7 @@ function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onC
     { key: 'details', label: 'Details' },
     { key: 'revenue', label: 'Revenue Sharing' },
     { key: 'finances', label: 'Finances' },
+    { key: 'workers', label: 'Workers on account' },
     { key: 'rdps', label: 'Linked RDPs' },
   ];
 
@@ -927,10 +988,10 @@ function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onC
           </button>
         </div>
 
-        <div className="flex border-b border-white/[0.06] px-5 shrink-0">
+        <div className="flex overflow-x-auto border-b border-white/[0.06] px-5 shrink-0">
           {TABS.map(({ key, label }) => (
             <button key={key} type="button" onClick={() => setTab(key)}
-              className={`px-4 py-3 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 -mb-px ${
+              className={`shrink-0 whitespace-nowrap px-4 py-3 text-xs font-semibold uppercase tracking-wider transition-colors border-b-2 -mb-px ${
                 tab === key ? 'text-emerald-400 border-emerald-400' : 'text-theme-muted border-transparent hover:text-white'
               }`}>
               {label}
@@ -944,6 +1005,7 @@ function ClientDetailModal({ client, onClose, onUpdated }: { client: Client; onC
           )}
           {tab === 'revenue' && <AgreementsTab clientId={client.id} />}
           {tab === 'finances' && <FinancesTab client={client} />}
+          {tab === 'workers' && <LinkedWorkersTab clientId={client.id} onUpdated={onUpdated} />}
           {tab === 'rdps' && <LinkedRdpsTab clientId={client.id} />}
         </div>
       </div>
@@ -1120,12 +1182,6 @@ export default function ClientManagementPage() {
   const [showImport, setShowImport] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
-  const [applyOpen, setApplyOpen] = useState(false);
-  const [gsPct, setGsPct] = useState('40');
-  const [ownerPct, setOwnerPct] = useState('60');
-  const [applying, setApplying] = useState(false);
-  const [applyError, setApplyError] = useState<string | null>(null);
-  const [sheetCols, setSheetCols] = useState(false);
 
   async function load() {
     setError(null);
@@ -1170,7 +1226,6 @@ export default function ClientManagementPage() {
   const selectedClient = selectedId ? clients.find((c) => c.id === selectedId) ?? null : null;
 
   const allVisibleSelected = filtered.length > 0 && filtered.every((c) => selectedIds.has(c.id));
-  const shareSumOk = Number(gsPct) + Number(ownerPct) === 100;
 
   function toggleRow(id: string) {
     setSelectedIds((prev) => {
@@ -1190,26 +1245,6 @@ export default function ClientManagementPage() {
     });
   }
 
-  async function applyShares() {
-    if (selectedIds.size === 0 || !shareSumOk) return;
-    setApplying(true);
-    setApplyError(null);
-    try {
-      await api.post('/clients/agreements/bulk', {
-        client_ids: Array.from(selectedIds),
-        gs_pct: Number(gsPct),
-        owner_pct: Number(ownerPct),
-      });
-      setApplyOpen(false);
-      setSelectedIds(new Set());
-      await load();
-    } catch (e: unknown) {
-      setApplyError(e instanceof Error ? e.message : 'Failed to apply shares.');
-    } finally {
-      setApplying(false);
-    }
-  }
-
   const rows = filtered.map((c) => ({ id: c.id, _client: c }));
 
   return (
@@ -1220,10 +1255,14 @@ export default function ClientManagementPage() {
           <div className="flex items-center gap-2">
             <Link
               href="/admin/clients/ledger"
-              title="Every client's month on one sheet: hours, rate, expected and received income, the split and costs."
+              title="Every client's month on one sheet: hours, revenue, costs, and the client split between recipients."
               className="btn-secondary flex items-center gap-2 text-sm py-2 px-4"
             >
               <CircleDollarSign size={15} /> Client ledger
+            </Link>
+            <Link href="/admin/clients/recipients" title="Who client money is paid to: names, currencies and payout details."
+              className="btn-secondary flex items-center gap-2 text-sm py-2 px-4">
+              <Users size={15} /> Recipients
             </Link>
             <button type="button" onClick={downloadClientTemplate} className="btn-secondary flex items-center gap-2 text-sm py-2 px-4">
               <Download size={15} /> Download template
@@ -1272,25 +1311,12 @@ export default function ClientManagementPage() {
         </select>
         <span className="text-xs text-theme-muted ml-1">{filtered.length} client{filtered.length !== 1 ? 's' : ''}</span>
         <div className="flex-1" />
-        <label className="flex items-center gap-1.5 text-xs text-theme-muted cursor-pointer mr-1" title="Also show tier, desktop-hours switch, client % and payout currency">
-          <input type="checkbox" checked={sheetCols} onChange={(e) => setSheetCols(e.target.checked)} className="accent-emerald-400" />
-          Sheet columns
-        </label>
         <button
           type="button"
           onClick={toggleAllVisible}
           className="btn-secondary text-xs py-2 px-3"
         >
           {allVisibleSelected ? 'Clear' : 'Select visible'}
-        </button>
-        <button
-          type="button"
-          onClick={() => { setApplyError(null); setApplyOpen(true); }}
-          disabled={selectedIds.size === 0}
-          className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5 disabled:opacity-40"
-          title="Set the same GS / owner split on the selected clients"
-        >
-          <Users size={13} /> Apply shares{selectedIds.size > 0 ? ` (${selectedIds.size})` : ''}
         </button>
       </div>
 
@@ -1349,12 +1375,7 @@ export default function ClientManagementPage() {
               key: 'owner', header: 'Owner',
               render: (r) => {
                 const c = r._client as Client;
-                return (
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm">{c.owner_name ?? (c.owner_type === 'gs' ? 'Global Solutions' : '—')}</span>
-                    <OwnerTypeChip type={c.owner_type} />
-                  </div>
-                );
+                return <span className="text-sm">{c.account_holder || c.name}</span>;
               },
             },
             {
@@ -1366,45 +1387,16 @@ export default function ClientManagementPage() {
             },
             { key: 'rdps', header: 'RDPs', render: (r) => (r._client as Client).rdp_count ?? 0 },
             {
-              key: 'split', header: 'GS / Owner',
+              key: 'linked-workers', header: 'Linked workers',
               render: (r) => {
-                const c = r._client as Client;
-                if (c.gs_pct == null || c.owner_pct == null) return <span className="text-theme-muted">—</span>;
-                return <span className="tabular-nums text-xs">{Number(c.gs_pct)}% / {Number(c.owner_pct)}%</span>;
+                const workers = (r._client as Client).linked_workers ?? [];
+                return workers.length ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {workers.map((name) => <span key={name} className="rounded-full border border-theme px-2 py-0.5 text-xs text-theme-heading">{name}</span>)}
+                  </div>
+                ) : <span className="text-theme-muted">Not linked</span>;
               },
             },
-            ...(sheetCols ? [
-              {
-                key: 'tier', header: 'Tier',
-                render: (r: Record<string, unknown>) => (r._client as Client).tier_name
-                  ?? <span className="text-theme-muted">—</span>,
-              },
-              {
-                key: 'desktop_hours', header: 'Desktop hrs',
-                render: (r: Record<string, unknown>) => ((r._client as Client).hours_from_desktops
-                  ? <span className="text-emerald-accent text-xs font-semibold">On</span>
-                  : <span className="text-theme-muted text-xs">Off</span>),
-              },
-              {
-                key: 'client_pct', header: 'Client %',
-                render: (r: Record<string, unknown>) => {
-                  const c = r._client as Client;
-                  return c.owner_pct == null ? <span className="text-theme-muted">—</span> : <span className="tabular-nums text-xs">{Number(c.owner_pct)}%</span>;
-                },
-              },
-              {
-                key: 'payout', header: 'Payout',
-                render: (r: Record<string, unknown>) => {
-                  const c = r._client as Client;
-                  return (
-                    <div>
-                      <p className="text-xs">{c.payout_currency || 'USD'}{c.payout_method ? ` · ${c.payout_method}` : ''}</p>
-                      {c.payout_email && <p className="text-[11px] text-theme-muted">{c.payout_email}</p>}
-                    </div>
-                  );
-                },
-              },
-            ] : []),
             {
               key: 'actions', header: '',
               render: (r) => (
@@ -1457,36 +1449,6 @@ export default function ClientManagementPage() {
           onUpdated={() => load()}
         />
       )}
-      <ConfirmModal
-        open={applyOpen}
-        title="Apply shares to many?"
-        body={
-          <div className="space-y-3">
-            <p>
-              Set the same split on <span className="text-theme-heading font-semibold">{selectedIds.size}</span> selected
-              client{selectedIds.size === 1 ? '' : 's'}. This creates a new agreement from today.
-            </p>
-            <div className="grid grid-cols-2 gap-3">
-              <label className="block">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">GS %</span>
-                <input type="number" min={0} max={100} value={gsPct} onChange={(e) => setGsPct(e.target.value)} className="input-field" />
-              </label>
-              <label className="block">
-                <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted mb-1 block">Owner %</span>
-                <input type="number" min={0} max={100} value={ownerPct} onChange={(e) => setOwnerPct(e.target.value)} className="input-field" />
-              </label>
-            </div>
-            {!shareSumOk && <p className="text-[11px] text-danger">GS % and Owner % must sum to 100.</p>}
-            {applyError && <p className="text-[11px] text-danger">{applyError}</p>}
-          </div>
-        }
-        confirmLabel="Apply"
-        tone="gold"
-        icon={Percent}
-        busy={applying}
-        onCancel={() => { if (!applying) setApplyOpen(false); }}
-        onConfirm={() => { if (shareSumOk) void applyShares(); }}
-      />
     </div>
   );
 }

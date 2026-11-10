@@ -15,6 +15,8 @@ from core.supabase_auth import generate_action_link
 from services.email_resend import (
     render_account_invite_html,
     render_account_invite_text,
+    render_password_recovery_html,
+    render_password_recovery_text,
     send_email,
 )
 
@@ -92,3 +94,44 @@ def deliver_account_invite(
                 logger.error("Account invite email failed: %s", log.error)
     except Exception:
         logger.exception("Account invite email failed for %s", to_email)
+
+
+def deliver_password_recovery(*, to_email: str, display_name: str = "") -> None:
+    """
+    Send a forgot-password link through Resend (same path as account invites).
+
+    Supabase's built-in /recover mailer is not used: it is easy to misconfigure
+    and failures were previously swallowed with no email_log row. Mint a
+    recovery action link, then deliver our branded template via Resend.
+    """
+    from sqlmodel import Session
+
+    from core.database import engine
+
+    try:
+        setup_url = generate_action_link(
+            to_email,
+            link_type="recovery",
+            redirect_to=invite_redirect_url(),
+        )
+    except Exception:
+        logger.exception("Could not generate password-recovery link for %s", to_email)
+        return
+
+    html = render_password_recovery_html(name=display_name, setup_url=setup_url)
+    text = render_password_recovery_text(name=display_name, setup_url=setup_url)
+
+    try:
+        with Session(engine) as session:
+            log = send_email(
+                session,
+                to_email=to_email,
+                subject="GlobalSolutions · Reset your password",
+                html=html,
+                text=text,
+                template="password_recovery",
+            )
+            if log.status != "sent":
+                logger.error("Password recovery email failed: %s", log.error)
+    except Exception:
+        logger.exception("Password recovery email failed for %s", to_email)

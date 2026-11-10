@@ -7,12 +7,12 @@ from decimal import Decimal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response, status
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from core.database import get_db
-from core.permissions import require_admin, require_user
+from core.permissions import require_admin, require_super_admin, require_user
 from models.admin_users import AdminUser
 from models.enums import PayrollPeriodStatusEnum, WorkerStatusEnum
 from models.payroll import PayrollLineItem, PayrollPeriod, PayrollWorkerSummary
@@ -31,7 +31,7 @@ from schemas.payroll import (
     PayrollWorkerSummaryUpdate,
     WorkerPayrollOverviewResponse,
 )
-from services import client_payouts, hours_log, payroll_engine
+from services import client_payouts, hours_log, month_checks, payroll_engine
 from services.admin_otp import PURPOSE_DELETE_PERIOD, issue_otp, verify_otp
 from services.audit_service import record_audit
 from services.email_resend import render_otp_html, render_otp_text
@@ -181,7 +181,7 @@ def request_period_delete_otp(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Email a 3-minute code to the ops alert inbox. Nothing is deleted yet."""
+    """Email a 5-minute code to the ops alert inbox. Nothing is deleted yet."""
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
@@ -343,11 +343,75 @@ def calculate_period(
     return result
 
 
+@router.get("/periods/{period_id}/checks")
+def get_month_checks(
+    period_id: UUID,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Open mismatches that block approval, and any Super Admin bypass on the month."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    return _checks(db, period)
+
+
+def _checks(db: Session, period: PayrollPeriod) -> dict:
+    open_issues = month_checks.issues(db, period)
+    blocking = month_checks.blocking_issues(open_issues)
+    bypassed_by = db.get(AdminUser, period.bypassed_by) if period.bypassed_by else None
+    return {
+        "issues": open_issues,
+        "blocked": bool(blocking) and not month_checks.is_bypassed(period, blocking),
+        "bypass": {
+            "reason": period.bypass_reason,
+            "by": bypassed_by.display_name if bypassed_by else None,
+            "at": period.bypassed_at.isoformat() if period.bypassed_at else None,
+            "issues": period.bypassed_issues or [],
+        } if period.bypassed_at else None,
+    }
+
+
+class BypassBody(BaseModel):
+    reason: str = Field(min_length=5, max_length=2000)
+
+
+@router.post("/periods/{period_id}/bypass")
+def bypass_month_checks(
+    period_id: UUID,
+    body: BypassBody,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_super_admin),
+):
+    """Super Admin: allow approval despite the open checks, with a reason."""
+    period = db.get(PayrollPeriod, period_id)
+    if not period:
+        raise HTTPException(status_code=404, detail="Payroll period not found")
+    if period.status in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid):
+        raise HTTPException(status_code=400, detail="This month is already approved.")
+    admin = get_admin_user(db, current_user)
+    open_issues = month_checks.issues(db, period)
+    blocking = month_checks.blocking_issues(open_issues)
+    if not blocking:
+        raise HTTPException(status_code=400, detail="There are no open checks to bypass.")
+    try:
+        month_checks.bypass(db, period, reason=body.reason, actor_id=admin.id, open_issues=blocking)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    record_audit(
+        db, actor_id=admin.id, action="payroll.checks_bypassed", target_type="payroll_period", target_id=period.id,
+        new_value={"period": period.label, "reason": body.reason, "issues": [i["message"] for i in blocking]},
+    )
+    db.commit()
+    db.refresh(period)
+    return _checks(db, period)
+
+
 @router.post("/periods/{period_id}/approve", response_model=PayrollPeriodResponse)
 def approve_period(
     period_id: UUID,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_admin),
+    current_user: dict = Depends(require_super_admin),
 ):
     admin = get_admin_user(db, current_user)
     try:
@@ -372,7 +436,7 @@ def approve_period(
 def reopen_period(
     period_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     period = db.get(PayrollPeriod, period_id)
     if not period:
@@ -381,6 +445,7 @@ def reopen_period(
         raise HTTPException(status_code=400, detail="A paid period cannot be reopened.")
     period.status = PayrollPeriodStatusEnum.open
     period.approved_by = None
+    month_checks.clear_bypass(period)
     db.add(period)
     db.commit()
     db.refresh(period)
@@ -404,7 +469,7 @@ def push_period_to_wallets(
 def mark_period_paid(
     period_id: UUID,
     db: Session = Depends(get_db),
-    _: dict = Depends(require_admin),
+    _: dict = Depends(require_super_admin),
 ):
     period = db.get(PayrollPeriod, period_id)
     if not period:
@@ -423,6 +488,13 @@ def mark_period_paid(
 
 def _summary_response(db: Session, summary: PayrollWorkerSummary, period: PayrollPeriod | None = None) -> PayrollWorkerSummaryResponse:
     resp = PayrollWorkerSummaryResponse.model_validate(summary)
+    resp.gross_difference = (
+        Decimal(summary.gross_earned) - Decimal(summary.calculated_gross)
+        if summary.gross_override is not None else Decimal("0")
+    )
+    if summary.final_confirmed_by:
+        confirmer = db.get(AdminUser, summary.final_confirmed_by)
+        resp.final_confirmed_by_name = confirmer.display_name if confirmer else None
     worker = db.get(Worker, summary.worker_id)
     if worker:
         resp.worker_display_name = worker.display_name
@@ -489,6 +561,7 @@ def _summary_responses(
         w.id: w for w in db.exec(select(Worker).where(Worker.id.in_(worker_ids))).all()
     }
     admin_ids = [w.admin_user_id for w in workers.values() if w.admin_user_id]
+    admin_ids += [s.final_confirmed_by for s in summaries if s.final_confirmed_by]
     admins = (
         {a.id: a for a in db.exec(select(AdminUser).where(AdminUser.id.in_(admin_ids))).all()}
         if admin_ids
@@ -509,6 +582,13 @@ def _summary_responses(
     responses = []
     for summary in summaries:
         resp = PayrollWorkerSummaryResponse.model_validate(summary)
+        resp.gross_difference = (
+            Decimal(summary.gross_earned) - Decimal(summary.calculated_gross)
+            if summary.gross_override is not None else Decimal("0")
+        )
+        if summary.final_confirmed_by:
+            confirmer = admins.get(summary.final_confirmed_by)
+            resp.final_confirmed_by_name = confirmer.display_name if confirmer else None
         worker = workers.get(summary.worker_id)
         if worker:
             resp.worker_display_name = worker.display_name
@@ -612,6 +692,11 @@ def period_ledger_sheet(
     period = db.get(PayrollPeriod, period_id)
     if not period:
         raise HTTPException(status_code=404, detail="Payroll period not found")
+    # Commit before loading rows: a commit expires everything already loaded,
+    # and each expired worker would then cost its own round trip below.
+    if hours_log.refreshes(period):
+        hours_log.refresh(db, period)
+        db.commit()
 
     summaries = {
         s.worker_id: s
@@ -627,18 +712,18 @@ def period_ledger_sheet(
     ).all()
     start = datetime.combine(period.start_date, time.min, tzinfo=timezone.utc)
     end = datetime.combine(period.end_date, time.max, tzinfo=timezone.utc)
-    if hours_log.refreshes(period):
-        hours_log.refresh(db, period)
-        db.commit()
     logged = hours_log.totals(db, period.id)
+    evidence = evidence_hours_for_workers(
+        db, [w.id for w in workers], start, end, period_id=period.id,
+    )
+    summary_rows = {
+        r.worker_id: r for r in _summary_responses(db, list(summaries.values()), period)
+    }
 
     rows: list[LedgerSheetRow] = []
     for w in workers:
-        hours, incomplete, session_count = evidence_hours_for_worker(
-            db, w.id, start, end, period_id=period.id,
-        )
+        hours, incomplete, session_count = evidence[w.id]
         hours = logged.get(w.id, hours)
-        summary = summaries.get(w.id)
         rows.append(
             LedgerSheetRow(
                 worker_id=w.id,
@@ -651,7 +736,7 @@ def period_ledger_sheet(
                 suggested_hours=hours,
                 evidence_incomplete=incomplete,
                 session_count=session_count,
-                summary=_summary_response(db, summary, period) if summary else None,
+                summary=summary_rows.get(w.id),
             )
         )
     return rows
@@ -715,11 +800,13 @@ def bulk_upsert_summaries(
             existing[item.worker_id] = summary
 
         terms = tier_terms.get(item.worker_id)
-        excluded = {"worker_id", "local_currency", "hours_logged", "use_tier"}
+        excluded = {"worker_id", "local_currency", "hours_logged", "use_tier", "notes"}
         if terms is not None:
             excluded |= {"rate_per_hour", "fx_rate", "admin_locked"}
         data = item.model_dump(exclude_unset=True, exclude=excluded)
         dumped = item.model_dump(exclude_unset=True)
+        if "notes" in dumped:
+            summary.notes = item.notes
         for key, value in data.items():
             if value is not None:
                 setattr(summary, key, value)
@@ -781,8 +868,19 @@ def update_summary(
     period = db.get(PayrollPeriod, summary.payroll_period_id)
     if period and period.status == PayrollPeriodStatusEnum.paid:
         raise HTTPException(status_code=400, detail="This period is already paid.")
-    for field, value in body.model_dump(exclude_unset=True, exclude={"local_currency"}).items():
+    changes = body.model_dump(exclude_unset=True, exclude={"local_currency"})
+    for field, value in changes.items():
         setattr(summary, field, value)
+    # A note is not a pay change: it neither needs re-confirming nor locks the rate.
+    if set(body.model_dump(exclude_unset=True)) == {"notes"}:
+        db.add(summary)
+        db.commit()
+        db.refresh(summary)
+        return _summary_response(db, summary, period)
+    if changes:
+        # Any edit after confirming needs a fresh confirmation.
+        summary.final_confirmed_at = None
+        summary.final_confirmed_by = None
     if period:
         _apply_currency_switch(summary, period, body.local_currency, body.fx_rate, db)
         if body.hours_logged is None:
@@ -797,6 +895,45 @@ def update_summary(
         if body.admin_locked is None:
             summary.admin_locked = True
     summary = payroll_engine.recompute_summary(db, summary)
+    return _summary_response(db, summary, period)
+
+
+class FinalConfirm(BaseModel):
+    confirmed: bool = True
+
+
+@router.post("/summaries/{summary_id}/confirm-final", response_model=PayrollWorkerSummaryResponse)
+def confirm_final_value(
+    summary_id: UUID,
+    body: FinalConfirm,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Admin confirms this worker's final gross / net has been checked (or un-confirms)."""
+    summary = db.get(PayrollWorkerSummary, summary_id)
+    if not summary:
+        raise HTTPException(status_code=404, detail="Payroll summary not found")
+    period = db.get(PayrollPeriod, summary.payroll_period_id)
+    if period and period.status == PayrollPeriodStatusEnum.paid:
+        raise HTTPException(status_code=400, detail="This period is already paid.")
+    admin = get_admin_user(db, current_user)
+    summary.final_confirmed_at = datetime.now(timezone.utc) if body.confirmed else None
+    summary.final_confirmed_by = admin.id if body.confirmed else None
+    db.add(summary)
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="payroll.final_confirmed" if body.confirmed else "payroll.final_unconfirmed",
+        target_type="payroll_worker_summary",
+        target_id=summary.id,
+        new_value={
+            "final_gross": str(summary.gross_earned),
+            "calculated_gross": str(summary.calculated_gross),
+            "final_net": str(summary.final_net),
+        },
+    )
+    db.commit()
+    db.refresh(summary)
     return _summary_response(db, summary, period)
 
 

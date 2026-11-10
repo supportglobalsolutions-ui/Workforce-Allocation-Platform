@@ -8,21 +8,24 @@ A plain-language guide to the finance side of the platform: how hours become pay
 
 **How things connect**
 
-- **Desktops (RDPs)** host client accounts on platforms such as Outlier. A client can have any number of desktops; each desktop is linked to the client it works for, and a desktop can be left unlinked.
-- **Clients** own those accounts. A client is one row of the old worksheet (for example "Marcel 1").
-- **Workers** connect to desktops and work on the accounts. They are paid per hour by their tier.
-- **GlobalSolutions (GS)** collects the platform payouts, pays the workers, and shares the income with each client by an agreed percentage.
+- **Desktops (RDPs)** are shared machines that host client accounts on platforms such as Outlier. Many accounts can share a few rented RDPs. A desktop may be tagged with a client for organisation, but claiming it does not pick the client for billing.
+- **Workers** may be linked to one or many clients on the Clients page (**Workers on account** roster). That roster is for organisation only. Client income follows **session → client**: an admin links each session to the client the work was for (RDPs are shared; claiming a machine does not pick a client).
+- **Clients** own those accounts. A client's **account rate** (USD/hour) is what the account earns. **Expected income** = hours on sessions linked to that client × that rate. An admin can pencil the **received** amount if the real payout differs.
+- **Workers are paid their own rate** in their local currency (tier / country), not the client's account rate. Admins see worker rate and pay in **local and USD**; workers see **local only**.
+- **Payees** (recipients) are who client money is paid to after costs. Global Solutions is a payee too; its share is kept, not paid out.
+- **GlobalSolutions (GS)** collects account income, pays workers and costs, and shares what is left of each client's money between that client's recipients.
 
 **Every month follows the same path**
 
-1. **Hours.** Workers log their sessions. The **Hours Log** adds them up per worker and desktop. Admins can correct any figure.
-2. **Client earnings.** On the **Client ledger**, each client's billed hours, rate, expected income and the income actually received are recorded. The client's share is worked out from them.
-3. **Worker pay.** The month is calculated: each worker's Hours Log total × their rate, plus bonus, minus costs.
-4. **Approve.** An admin signs off. Exchange rates are frozen for workers and for client payouts.
-5. **Pay workers.** Net pay goes to each worker's in-app wallet, then out in the real world.
-6. **Pay clients.** Each client gets a statement in its own currency and is marked paid with a payment reference.
+1. **Hours.** Workers log sessions on a desktop. An admin **links each session to a client** (Sessions page or Add session). The **Hours Log** totals hours per worker and desktop for worker pay. Client income uses only sessions with a client link.
+2. **Income.** Expected client income comes from linked-session hours × account rate. The **Income** tab also holds GS account and other income, and any pencil-edited received amounts.
+3. **Month checks.** Mismatches (a session with no client, a desktop with no client, a session with no desktop, a split that doesn't add up, a payee with no payout details) block approval. A soft warning is shown when a worker has a session on a client but is not on that client's roster — it does not block approval.
+4. **Worker pay.** The month is calculated: each worker's Hours Log total × their rate, plus bonus, minus costs.
+5. **Approve.** A **Super Admin** signs off. Exchange rates are frozen for workers and for payee payouts.
+6. **Pay workers.** Net pay goes to each worker's in-app wallet, then out in the real world.
+7. **Pay payees.** Each payee gets one combined statement in their own currency covering all their clients, and is marked paid with a payment reference.
 
-The **Month** tab under Payroll shows these six steps with counts and links, plus where the month's money went.
+The **Month** tab under Payroll shows these seven steps with counts and links, plus where the month's money went.
 
 ---
 
@@ -32,12 +35,13 @@ The **Month** tab under Payroll shows these six steps with counts and links, plu
 
 - The company reports in **US Dollars (USD)** and **British Pounds (GBP)**. These are the two "main" currencies and can never be removed.
 - Each working month has a **reporting currency** (USD or GBP). A new month copies the previous month's choice, and starts as USD if there is none.
-- **Client billing is always in USD.** Client rates, income, shares and costs are recorded in USD; only the final client payout is converted to the client's own currency.
+- **Client billing is always in USD.** Client rates, revenue, costs and recipients' amounts are recorded in USD; only the final payee payout is converted to the payee's own currency.
+- **Income can be entered in any currency.** It is converted to USD at the rate on the day it is entered (or a rate the admin types), and that figure stays frozen.
 
 ### Local payout currencies
 
 - Workers are paid in their **own local currency**, such as Kenyan Shillings, Ugandan Shillings or Nigerian Naira.
-- Clients are paid in their **payout currency**, set on the client.
+- Payees are paid in their **payout currency**, set on the payee.
 - Admins keep a **currency list** on the Currencies page. Only currencies on that list can be chosen for pay, and every one of them has an exchange rate.
 
 ### Where exchange rates come from
@@ -46,7 +50,7 @@ The **Month** tab under Payroll shows these six steps with counts and links, plu
   - an admin clicks **Refresh from API**
   - a new currency is added
   - a pay rate is set up in a new currency
-  - payroll or a client payout needs a rate it doesn't have yet
+  - payroll, a payee payout or an income entry needs a rate it doesn't have yet
 - **Manual rates.** A super admin can type a rate in by hand.
 - **Manual always wins.** An automatic refresh never overwrites a rate an admin has typed in.
 - **No automatic daily refresh.** Rates stay as they are until someone refreshes them or one of the triggers above happens.
@@ -150,19 +154,21 @@ Changing or assigning a worker tier immediately updates payslips in months that 
 | :--- | :--- |
 | **Open** | Work is still coming in. Payslips can be edited freely. |
 | **Calculated** | Pay has been worked out. It can still be recalculated or edited. |
-| **Approved** | An admin has signed off. Exchange rates are frozen and the month's dates are locked. |
+| **Approved** | A Super Admin has signed off. Exchange rates are frozen and the month's dates are locked. |
 | **Paid** | Money has gone out. Nothing on the month can be edited any more. |
 
 **Moving between statuses**
 
-- **Calculate:** allowed while the month is open or calculated.
-- **Approve:** allowed only after calculating.
-- **Reopen:** sends the month back to open, unless it is already paid.
-- **Mark paid:** allowed only after approval.
+- **Calculate:** allowed while the month is open or calculated. Any admin.
+- **Approve:** allowed only after calculating, and only when no month check is open (or a Super Admin has bypassed them, section 7). **Super Admin only.**
+- **Reopen:** sends the month back to open, unless it is already paid. It also clears any bypass. **Super Admin only.**
+- **Mark paid** (ends the month): allowed only after approval. **Super Admin only.**
+
+Other admins see the month's status and checks but not these buttons.
 
 ### Deleting a month
 
-Deleting a month needs a one-time code that is emailed to the company's alert address and expires after 3 minutes.
+Deleting a month needs a one-time code that is emailed to the company's alert address and expires after 5 minutes.
 
 - **Removed:** the month's payslips and quality scores.
 - **Kept:** work sessions and wallet payments. They are only unlinked from the month.
@@ -186,6 +192,17 @@ Deleting a month needs a one-time code that is emailed to the company's alert ad
 - The session hasn't been flagged or excluded.
 - The session hasn't already been paid in another month.
 
+### Sessions added by an admin
+
+An admin can add a session for a worker by hand (Workers → open the worker → Sessions & Images → **Add session**), for work that wasn't logged: training, catch-up work, a broken desktop. Switch the form to **Bulk** to add several at once (e.g. work done outside the system): type the number of sessions, a description and the hours, and say whether the hours are the total for all of them or per session (per session is multiplied by the number of sessions).
+
+- It records a **title**, a **date**, the **hours**, the **rate**, a required **client**, an optional **account / desktop**, and an optional **note**.
+- **Rate:** the worker's tier rate (or a tier picked when they have none), or a rate typed for this session only, in the worker's payout currency. The form shows the rate and the pay it works out to in local and USD for admins.
+- **Client:** required. Hours count toward that client's expected income (hours × account rate). Claiming an RDP does not set the client — shared machines need an admin link.
+- **Account / desktop:** optional. When set, hours also go on that desktop's Hours Log row for worker pay.
+- The session is closed and approved straight away, with its times already filled, so it never asks for screenshots. It counts in the month its date falls in, which must still be open or calculated.
+- Everywhere sessions are listed it shows an **Added by admin** badge and the client (and desktop when set), and the add is recorded in the audit log.
+
 ### The Hours Log (Payroll → Hours)
 
 The Hours Log is the **one place a month's hours live**. It has one row per worker per desktop:
@@ -201,7 +218,7 @@ The page can be grouped by worker, by desktop or by client.
 ### Hours drive both sides of the money
 
 - **Worker pay:** a payslip's hours are the worker's Hours Log total (all their rows).
-- **Client billing:** with the client's **desktop hours** switch on, the client is billed for the Hours Log rows on its desktops (section 10).
+- **Client billing:** with the client's **session hours** switch on, the client is billed for hours on sessions linked to that client (section 10).
 
 Editing hours anywhere writes to the Hours Log, so the two always agree:
 
@@ -219,6 +236,8 @@ Editing hours anywhere writes to the Hours Log, so the two always agree:
 > **Hours Log total × hourly rate**, in the worker's payout currency.
 
 Hours typed above the session figure are paid at the same rate as session hours.
+
+**Admin-added sessions with their own rate** are paid at that rate instead: the payslip adds hours × (session rate − worker's rate) for each one. A worker on 500 KES/hour with an admin-added 3-hour session at 700 KES/hour is paid 3 × 200 = 600 KES more than hours × 500. This also holds on hand-locked payslips.
 
 ### Step 2: Partner and third-party sessions
 
@@ -308,15 +327,34 @@ Workers with no hours are removed from the month, unless they have a bonus or a 
 
 ---
 
-## 7. Approval: freezing the exchange rate
+## 7. Month checks and approval
 
-When a month is **approved**:
+### Month checks
+
+Before a month can be approved, the system looks for mismatches. Each one is listed on the Month overview and the Payroll pages with a **Resolve** link to the page that fixes it.
+
+| Check | What it means | Resolve opens |
+| :--- | :--- | :--- |
+| Session with no client | A finished session has hours but no client linked, so no client is billed for it | Sessions |
+| Desktop with no client | A desktop logged hours this month but isn't linked to a client | Desktops |
+| Worker not linked to desktop | A worker has sessions on a desktop they aren't assigned to | Desktops |
+| Session with no desktop | A worker's session (not one added by an admin) has no desktop | The worker |
+| Client split | A client's recipients don't add up to 100%, or the amounts don't add up to the net | Client split |
+| Payee not on the list | A recipient is a name only, not a payee | Client split |
+| Payee details missing | A payee being paid has no payout currency or details | Payees |
+| Worker not on roster *(warning)* | A worker has a session linked to a client but is not on that client's worker roster | Clients |
+
+**Open checks that block approval** stop Approve. Soft **warnings** (worker not on roster) are listed but do not block. A **Super Admin** can **bypass** blocking checks with a written reason (at least 5 characters). The bypass, who made it, when, and the checks it covered are recorded and shown on the month. A bypass only covers the blocking checks that were open at the time: a new blocking check that opens later blocks approval again. Reopening the month clears the bypass.
+
+### Approval: freezing the exchange rate
+
+When a Super Admin **approves** the month:
 
 - The exchange rate for each payslip is **frozen at that day's rate**. Later rate changes don't alter what was approved.
 - Hand-locked payslips keep the rate the admin set.
 - The reporting-currency figures are recalculated with the frozen rates.
 - Payslip PDFs are rebuilt.
-- **Client payouts are prepared:** each client's share is turned into a payout in the client's currency, at that day's rate (section 10).
+- **Payee payouts are prepared:** each payee's amounts across all their clients become one payout in the payee's currency, at that day's rate (section 10).
 
 ---
 
@@ -348,7 +386,7 @@ Payslip emails are sent from the Receipts page and are built to handle the whole
 
 ### Email history
 
-The Email History page keeps a permanent record of every email sent, including client statements. It separates two questions:
+The Email History page keeps a permanent record of every email sent, including payee statements. It separates two questions:
 
 - **Accepted:** did the email leave the platform?
 - **Delivery:** what happened next? (delivered, opened, clicked, delayed, bounced, or marked as spam)
@@ -369,7 +407,7 @@ An email can be accepted and still bounce. A "delivered" email can still sit in 
 Admins use **Send pay to wallets** on the Wallets page:
 
 1. Choose the month, and optionally which workers.
-2. If the month is only calculated, it is **approved first**, which freezes the rates and rebuilds the payslips.
+2. If the month is only calculated, a **Super Admin** can approve it here first, which freezes the rates and rebuilds the payslips. The month checks still apply. Other admins must wait for the month to be approved.
 3. Each worker with positive net pay receives a **payroll credit** for exactly their net pay.
 4. The worker gets a "Payment received" notification.
 
@@ -409,98 +447,164 @@ An empty wallet simply switches currency.
 The platform does not move real money itself. When a worker is actually paid (for example by mobile money, using the name and provider on their profile):
 
 1. The admin records it as a payout on the wallet.
-2. The month is marked **Paid**.
+2. A Super Admin marks the month **Paid**.
 
 ---
 
-## 10. Client income, the split and client payouts
+## 10. Income, the client split and payee payouts
+
+In short: each client's **expected income** is **hours × account rate (USD/hr)** and updates as work is logged. **Revenue** is what was **received** (pencil / Income tab) when entered, otherwise that expected figure. Revenue pays for **all its costs** first. What is left, the **net distributable**, is shared between the client's **recipients** by percentage. Global Solutions keeps its own share; every other payee is paid once a month, in their own currency, with one statement covering all their clients.
 
 ### What each client holds
 
 Set on the client (Clients page, or the client import):
 
-- **Billing rate (USD/hr)**, or a **client tier** that overrides it.
+- **Billing rate (USD/hr)** — the account's earn rate — or a **client tier** that overrides it.
 - **Active?** and **Notes**.
-- **Client %:** the client's agreed share of the income. GS keeps the rest. A change applies from the month it is made in; earlier months keep the % they had. Without one, the client's % is 0.
-- **Desktop hours switch** (off by default):
-  - **On:** the client is billed for the Hours Log rows on its desktops, automatically.
-  - **Off:** the admin types the client's billed hours on the client ledger. A wrong or missing desktop link can't then produce wrong money.
+- **Workers on account:** one or many workers on the roster (does not set pay rates or billed hours).
+- **Desktop hours switch** (**on** by default for new clients):
+  - **On:** billed hours come from the Hours Log on its desktops, so expected income tracks sessions automatically.
+  - **Off:** the admin types the client's billed hours. A wrong or missing desktop link can't then produce wrong money.
   - Worker pay never depends on the switch.
-- **Payout currency, payout email, payout method and payout details:** where and how the client's share is paid.
 
-The **Sheet columns** toggle on the Clients page adds the tier, desktop-hours switch, client % and payout currency to the list without changing its default look.
+Who is paid from a client's net is the client's **recipients** (on the ledger) from the **Recipients / Payees** list.
 
-**Client import.** The client import template has columns for all of these: Client %, Client Tier, Desktop Hours, Payout Currency, Payout Email, Payout Method and Payout Details.
+The **Sheet columns** toggle on the Clients page adds the tier, desktop-hours switch and payout currency to the list without changing its default look.
 
-- Client % can be written as `30`, `30%` or `0.3`.
+**Client import.** The client import template has columns for Client %, Client Tier, Desktop Hours, Payout Currency, Payout Email, Payout Method and Payout Details.
+
+- Client % can be written as `30`, `30%` or `0.3`. It is only a starting point: a client that has never had recipients starts with its owner on that %, and Global Solutions on the rest.
 - Desktop Hours takes yes/no.
 - Client Tier must match the name of a tier that applies to clients.
 - An unknown tier or currency is reported for that row, and the rest of the file still imports.
-- An imported client % applies from the current month.
+
+### Income (Payroll → Income)
+
+Every amount received in the month is entered here. Together the entries are the month's **total income pool**.
+
+| Category | Use it for | Linked to a client? |
+| :--- | :--- | :--- |
+| **Client account payout** | What a work platform paid for a client's account | Yes: it becomes that client's revenue |
+| **GS account** | Money paid into Global Solutions' own account | No |
+| **Other income** | Anything else. A description is required. | No |
+
+- Each entry has an **amount** and **currency** (any currency), an optional **received on** date, and a description.
+- It is converted to USD **when it is entered**, at that day's rate. A rate can be typed instead (units per 1 USD). The USD figure stays frozen; it only changes if the amount, currency or rate is edited.
+- A client can have several entries in a month; its revenue is their total in USD.
+- The page shows the income pool and a total per category, and can be filtered by category.
+- Entries can be added, changed and deleted until the month is paid.
 
 ### The client ledger (Clients → Client ledger)
 
-One row per client for the month, all in USD. Each row can be edited, or a change can be applied to the selected or visible clients at once (client %, costs, rate, desktop switch).
+One table, one row per client for the month, all in USD. The **Client split** switch in the header changes which columns follow the fixed ones. The choice is remembered on that computer, and a link can force it (`?split=1` or `?split=0`).
+
+**Always shown**
 
 | Column | How it's worked out |
 | :--- | :--- |
-| Billed hours | Hours Log rows on the client's desktops (switch on), or the typed figure (switch off) |
-| Rate | The client tier's hourly rate in USD, else the client's billing rate |
-| **Expected** | billed hours × rate |
-| **Received** | What the platform actually paid out, entered by the admin, with the date |
-| Difference | received − expected |
-| **Split on** | received if entered, otherwise expected |
-| Costs | the client's part of shared costs (section 11) + any one-off cost charged to this client |
-| **Client share** | split amount × client % − costs |
-| **GS share** | split amount − client share |
-| Worker cost *(information only)* | the hours on the client's desktops × each worker's rate, in USD |
-| GS margin *(information only)* | GS share − worker cost − costs (GS pays those costs out) |
+| Client | The client's name |
+| Hours | Billed hours: sessions linked to the client (switch on), or the typed figure (switch off) |
+| **Revenue USD** | **Received** when entered; otherwise **expected** (hours × account rate). |
 
-The split is taken **from gross**: the client's % is applied to the whole income, not to what is left after worker pay. Worker pay comes out of GS's share. Worker cost and margin are shown so GS can see how each client performs; they never change the client's share.
+**Income detail (client row details)**
+
+| Figure | How it's worked out |
+| :--- | :--- |
+| Rate | The client tier's hourly rate in USD, else the client's billing rate |
+| **Expected (auto)** | billed hours × rate — updates as sessions / Hours Log change |
+| **Received (pencil)** | Optional actual payout; saved as a client account payout on the Income tab |
+| Variance | received − expected |
+| Payout status | The status of the payee payouts this client is on |
+
+**Split columns (Client split on)**
+
+| Column | How it's worked out |
+| :--- | :--- |
+| Worker pay | Hours on sessions linked to the client × each worker's pay rate, in USD and in the local currency chosen in the header (at its "per USD" rate) |
+| Transfer | Each worker's payslip transfer cost, shared across clients by that worker's linked-session hours on each client. USD and local. |
+| Other costs | The client's part of shared costs (section 11) + any one-off cost typed here |
+| Total costs | worker pay + transfer + other costs |
+| **Net distributable** | revenue − total costs |
+| **Recipients** | Who the net distributable is shared between (below) |
+| Check | **OK**, or **Check split** |
+
+**Typing received.** The Received pencil edits the client's one **client account payout** entry on the Income tab, in USD: typing creates or changes it, clearing it removes it. Until then, revenue uses expected. A client with several entries this month is edited on the Income tab instead.
+
+**Apply to many.** Tick clients (or use all visible ones) to set one-off costs, rate or the desktop-hours switch for all of them at once. Locked clients are skipped.
+
+### Recipients
+
+A client can have **any number of recipients**. Each recipient is a payee picked from the Payees list (or added from the same dropdown with **+ New payee…**) with a **%**.
+
+- **Amount = net distributable × %**, to the cent.
+- **Typed amounts.** An amount can be typed over, for example to round a figure. The worked-out amount stays visible, and **auto** goes back to it.
+- **Check.** The row shows **OK** only when the % add up to exactly 100 **and** the amounts add up to exactly the net distributable. Otherwise it shows **Check split**, and the month can't be approved (section 7). Three recipients on 33.3% add up to 99.9%: give one of them 33.4%.
+- **Global Solutions** is a recipient like any other. Its amount is **kept**, not paid out. Without it on the list, the other recipients get everything.
+- **Saved per client per month.** A month without its own recipients uses the client's most recent earlier month ("recipients from …"). A client that has never had any starts from its imported owner % (owner, any third party, Global Solutions on the rest), or Global Solutions on 100%. Changing them in a month saves them for that month only.
+- A new line suggests the % still missing to reach 100.
+
+### Payees (Clients → Payees)
+
+The people or companies client money is paid to. A payee can be a recipient on any number of clients.
+
+- **Name**, **payout currency**, **payout method**, **payout email**, **payout details** and **notes**.
+- **Global Solutions** is the one payee marked **GS**. Its share is kept. Only one payee can be GS: marking another one moves the mark.
+- A payee owed money needs a payout currency and either an email or payout details. Without them the page warns "missing payout details", and the month check blocks approval.
+- **Delete** removes an unused payee. A payee already on a split or a payout is **archived** instead: it keeps its history and leaves the pick lists. The **Archived** tick box lists them again.
+- Global Solutions can't be removed; mark another payee as GS first.
+- The list shows each payee's clients.
 
 **Warnings on the ledger**
 
 - Desktop hours is on but no desktop is linked, or the linked desktops have no hours.
 - Hours but no billing rate.
 - Received differs from expected by more than 5%.
-- Costs are more than the client's share, so the client owes GS this month.
-- No payout currency or payout details.
-
-The Month overview adds two more: hours logged with no desktop, and desktops with hours but no client.
+- No recipients, % that don't add up to 100, or amounts that don't add up to the net distributable.
+- A recipient that isn't on the Payees list, or a payee with no payout details.
+- Costs are more than revenue, so the net distributable is negative.
 
 ### Worked example: Marcel 1
 
-Marcel 1 is billed at **$18.70/hour**, its client % is **30%**, and it is charged **$20** of costs this month. Its desktops logged **100 hours**.
+Marcel 1 is billed at **$18.70/hour**. Its desktops logged **100 hours**, worked at **$8.00/hour**. The workers' transfer costs come to **$10**, and it is charged **$20** of other costs. Its recipients are its owner on **30%**, a referrer on **10%** and Global Solutions on **60%**.
 
 | Line | Amount |
 | :--- | :--- |
 | Expected | 100 h × $18.70 = **$1,870.00** |
-| Received | **$1,800.00** (difference −$70.00, under 5%, so no warning) |
-| Split on | $1,800.00 (received was entered) |
-| Client share before costs | $1,800 × 30% = $540.00 |
-| **Client share** | $540 − $20 = **$520.00**, paid to Marcel 1 |
-| **GS share** | $1,800 − $520 = **$1,280.00**: GS's 70% ($1,260) plus the $20 of costs it recovers |
-| Worker pay | say 100 h × $8.00 = $800.00 |
-| **GS margin** | $1,280 − $800 worker pay − $20 costs paid = **$460.00** |
+| Received (Income tab) | **$1,800.00** (variance −$70.00, under 5%, so no warning) |
+| Revenue | received, so **$1,800.00** |
+| Worker pay | 100 h × $8.00 = $800.00 |
+| Transfer | $10.00 |
+| Other costs | $20.00 |
+| Total costs | **$830.00** |
+| **Net distributable** | $1,800 − $830 = **$970.00** |
+| Owner 30% | **$291.00**, paid out |
+| Referrer 10% | **$97.00**, paid out |
+| Global Solutions 60% | **$582.00**, kept |
 
-If Marcel 1's payout currency is EUR and the rate frozen on approval is 1 USD = 0.92 EUR, its statement shows **€478.40**.
+If the owner's payout currency is EUR and the rate frozen on approval is 1 USD = 0.92 EUR, their statement shows **€267.72**.
 
-### Client payouts (Payroll → Client payouts)
+If the admin types the owner's amount as $300.00, the amounts add up to $979.00, not $970.00: the row shows **Check split** until Global Solutions' amount is lowered to $573.00 (or the owner's goes back to auto).
+
+### Payee payouts (Payroll → Payee payouts)
+
+One row per payee owed money this month, with their total across all clients. **N clients** opens the lines behind it: each client, the payee's %, and the amount.
 
 - **Before approval** the page is a preview at the latest stored rate.
-- **Approving the month** prepares one payout per client with a share: the client share in USD, the payout currency, the rate (frozen that day) and the local amount.
-- If ledger figures change after approval, the payout amounts follow them, keeping the frozen rate. **Refresh rates** takes today's rates instead. An admin can also type a rate for one payout.
-- **Statement:** a PDF showing hours, rate, expected, received, the split amount, the client %, the costs and the amount due in USD and in the client's currency. Download it, or **email** it to the client's payout email (one client, the ticked clients, or every unsent one). A statement whose amount changes after sending goes back to **To send**.
-- **Mark paid** with a payment reference and date. From then on, that payout and that client's ledger row for the month are **locked**. **Undo** reverses a mistaken "paid" while the month itself is not yet marked paid.
+- **Approving the month** prepares **one payout per payee**: the total in USD, the payee's currency, the rate (frozen that day) and the local amount.
+- If ledger figures change after approval, the payouts follow them, keeping the frozen rate. **Refresh rates** takes today's rates instead. An admin can also type a rate for one payout.
+- **One combined statement per payee per month:** a PDF with a section for each of their clients (revenue and whether it was received or expected, hours, worker pay, transfer cost, other costs, net distributable, the payee's %, and their share, including the worked-out figure when a typed amount replaced it) and the total in USD and in the payee's currency. Download it, or **email** it to the payee's payout email (one payee, the ticked payees, or every unsent one). A statement whose figures change after sending goes back to **To send**.
+- **Mark paid** with a payment reference and date. From then on, that payout and the ledger rows of **every client on it** are **locked** for the month; the other payees on those clients keep the amounts already worked out. **Undo** reverses a mistaken "paid" while the month itself is not yet marked paid.
+- **Kept by Global Solutions** lists GS's amount per client. Nothing is sent.
+- **Paid in the earlier format.** Months paid before payees existed keep their per-client payouts, shown read-only below. Clients paid that way are left out of the payee payouts.
 
 | Payout status | Meaning |
 | :--- | :--- |
 | Preview | The month is not approved yet. |
-| To send | Prepared, statement not sent (or the amount changed since). |
+| To send | Prepared, statement not sent (or the figures changed since). |
 | Sent | Statement emailed. |
 | Paid | Payment recorded. Locked. |
 
-The **RDP earnings report** (Reports) still shows session hours × rate per desktop for monitoring. It no longer drives the client split.
+The **RDP earnings report** (Reports) still shows session hours × rate per desktop for monitoring. It doesn't drive the split.
 
 ---
 
@@ -512,11 +616,13 @@ Admins can enter a cost once for the month, such as software or internet, and sh
 - **Splitting within each group:** equally, or by custom percentages that add up to 100%.
 - **Rounding:** cents are shared out so the parts always add up exactly to the total.
 - **Workers:** each worker's part is converted to their currency and added to their bonus or costs on the payslip.
-- **Clients:** each client's part is **charged to that client**: it shows in the ledger's Costs column and reduces the client's share.
+- **Clients:** each client's part is **charged to that client**: it shows in the ledger's Other costs column and reduces the client's net distributable, so every recipient bears it by their %.
 - **Removing a cost:** reverses it.
 - **When it can change:** only while the month is open or calculated.
 
-A one-off cost for a single client is typed straight into that client's Costs on the client ledger.
+A one-off cost for a single client is typed straight into that client's Other costs on the client ledger (Client split on).
+
+**Client income this month (Payroll → Month data).** This step shows each client's income in USD and lets it be typed per client. It writes the same client account payout entry as the ledger's Received pencil, so the two always agree.
 
 ---
 
@@ -560,41 +666,53 @@ Admins and leadership have a **currency switch** in the top bar, next to the not
 
 ## 13. Month-end checklist for admins
 
-The **Month** tab under Payroll (the Month overview) tracks steps 1 to 6 below. Each step shows whether it is done, any problems, and a link to the page that fixes it. The page also shows:
+The **Month** tab under Payroll (the Month overview) tracks the seven steps below. Each step shows whether it is done, a count, and a link to the page that fixes it. The page also shows:
 
-- **Totals for the month, in USD:** collected, client shares, costs, worker pay, and GS margin (collected − client shares − costs − worker pay).
-- **A money-flow bar** splitting what was collected into client shares, worker pay, costs and margin.
-- **A table of clients** with each one's hours, expected, received, client %, costs, client share, GS share, worker cost, margin and payout status.
+- **The month checks**, each with a **Resolve** link, and any Super Admin bypass with its reason.
+- **Approve, Reopen and Mark paid** buttons, for Super Admins only. Approve is disabled while checks are open and not bypassed.
+- **Totals for the month, in USD:**
+  - **Income pool:** every Income tab entry, with a total per category.
+  - **Payee payouts:** what is owed to payees other than Global Solutions, and how much of it is still to pay.
+  - **Worker pay:** what payslips pay out, split into pay from desktop work and from admin-added sessions, and how much is still to credit.
+  - **Expenses:** transfer costs + shared costs + one-off client costs.
+  - **GS keeps** = income pool − payee payouts − worker pay − expenses.
+- **A money-flow bar** splitting the income pool into payee payouts, worker pay, expenses and what GS keeps.
+- **A table of clients** with each one's hours, revenue, costs, net distributable, recipients, GS's amount and payout status.
 
 **Before the month ends**
 
 - Make sure the month exists on the Calendar or Finance page, in USD or GBP.
 - Check tiers: worker tiers and who is on each, client tiers and which clients use them.
-- Check each client's rate, client %, desktop-hours switch and payout details (the Clients page **Sheet columns** toggle shows them all).
-- Check the Currencies page: every worker and client payout currency should be listed, with a current rate.
+- Check each client's rate and desktop-hours switch (the Clients page **Sheet columns** toggle shows them all).
+- Check the Payees page: everyone owed money needs a payout currency and payout details.
+- Check the Currencies page: every worker and payee payout currency should be listed, with a current rate.
 - Rate each worker's quality for the month. This feeds the leaderboard only, not pay.
 
 **Closing the month**
 
-1. **Hours.** Open Payroll → Hours. Fix hours logged with no desktop and desktops with no client. Type corrections where needed (they are kept), or import the month's hours sheet.
-2. **Client earnings.** Open the Client ledger. Type billed hours for clients with the desktop switch off, then enter what each client actually received and when. Add any one-off costs. Clear the warnings.
-3. **Worker pay.** Calculate (and recalculate if anything changes). Review the payslip warnings (no rate, no exchange rate, missing earnings and so on).
-4. **Approve.** This freezes worker and client exchange rates and prepares the client payouts.
-5. **Pay workers.** Send pay to wallets, email the payslips from the Receipts page, pay workers in the real world and record the payouts.
-6. **Pay clients.** On Client payouts, check each amount, email the statements, pay each client and **mark it paid** with the reference.
+1. **Hours.** Open Payroll → Hours. Fix hours logged with no desktop and desktops with no client. Type corrections where needed (they are kept), import the month's hours sheet, or add sessions for work that wasn't logged.
+2. **Income.** On the Income tab, enter every amount received: client account payouts against their client, GS account income, other income with a description. Type billed hours on the Client ledger for clients with the desktop switch off.
+3. **Month checks.** Turn on Client split on the Client ledger. Add one-off costs, and check each client's recipients add up (OK on every row). Resolve every open check, or have a Super Admin bypass them with a reason.
+4. **Worker pay.** Calculate (and recalculate if anything changes). Review the payslip warnings (no rate, no exchange rate, missing earnings and so on).
+5. **Approve.** A Super Admin approves. This freezes worker and payee exchange rates and prepares the payee payouts.
+6. **Pay workers.** Send pay to wallets, email the payslips from the Receipts page, pay workers in the real world and record the payouts.
+7. **Pay payees.** On Payee payouts, check each amount, email each payee's statement, pay them and **mark it paid** with the reference.
 
-Finally, **mark the month paid**. Nothing on it can change after that.
+Finally, a Super Admin **marks the month paid**. Nothing on it can change after that.
 
 ---
 
 ## 14. Safeguards and audit trail
 
-- **No double pay.** A session can only be paid in one month, a worker can only be credited once per month, and a client payout can only be marked paid once.
+- **No double pay.** A session can only be paid in one month, a worker can only be credited once per month, and a payee payout can only be marked paid once.
 - **One source of hours.** Payslip hours and client billed hours both come from the Hours Log, so they can't disagree. Typed hours are never overwritten by sessions.
-- **Frozen history.** Approval freezes exchange rates for workers and clients. A paid client payout locks that client's month. Paid months can't be edited, and approved months can't have their dates changed.
-- **Exact rounding.** Hours are rounded down to the whole minute, and partner and shared-cost splits always add up to the cent.
+- **One source of income.** A client's revenue is its Income tab entries. The ledger and Month data edit the same entry.
+- **Frozen history.** Approval freezes exchange rates for workers and payees, and income is frozen in USD when entered. A paid payee payout locks the month of every client on it. Paid months can't be edited, and approved months can't have their dates changed or sessions added.
+- **Checks before sign-off.** A month with open checks can't be approved unless a Super Admin bypasses them with a reason, which is kept on the month.
+- **Super Admin sign-off.** Only a Super Admin can approve, reopen or mark a month paid, bypass checks, or approve a month from the Wallets page.
+- **Exact rounding.** Hours are rounded down to the whole minute, and partner and shared-cost splits always add up to the cent. A client's recipients must add up to the net distributable exactly.
 - **Protected deletion.** Deleting a working month needs an emailed one-time code.
-- **Audit log.** Key money actions are recorded with who did them and when: hours edits and imports, client ledger edits, client statements sent, client payments and their undo, payout rate changes, and sending pay to wallets.
+- **Audit log.** Key money actions are recorded with who did them and when: hours edits and imports, sessions added by an admin, income entries, client ledger and recipient edits, payee changes, statements sent, payee payments and their undo, payout rate changes, check bypasses, and sending pay to wallets.
 
 ---
 
@@ -613,18 +731,26 @@ Finally, **mark the month paid**. Nothing on it can change after that.
 | Term | Meaning |
 | :--- | :--- |
 | **Reporting currency** | The month's main currency (USD or GBP), used for company totals. |
-| **Payout currency** | The currency a worker or client is paid in. |
+| **Payout currency** | The currency a worker or payee is paid in. |
 | **Tier** | A named rate with an amount, currency and unit. Worker tiers set pay; client tiers set a client's billing rate. |
-| **Hours Log** | The month's hours per worker per desktop. The one source for payslip hours and client billed hours. |
-| **Desktop hours switch** | Per client. On: billed hours come from the Hours Log on the client's desktops. Off: the admin types them. |
+| **Hours Log** | The month's hours per worker per desktop. The source for payslip hours. |
+| **Session hours switch** | Per client (field still named `hours_from_desktops`). On (default for new clients): billed hours come from sessions linked to the client. Off: the admin types them. |
+| **Workers on account** | Roster of workers linked to a client. Organisation only; income still needs each session linked to the client. |
 | **Expected** | A client's billed hours × its rate. |
-| **Received** | What the work platform actually paid for the client's account that month. |
-| **Split on** | The amount the client % is applied to: received if entered, otherwise expected. |
-| **Client %** | The client's agreed share of the income. Stored as the client's revenue agreement. |
-| **Client share** | Split amount × client % − costs charged to the client. What the client is paid. |
-| **GS share** | Split amount − client share. Worker pay and GS's costs come out of it. |
-| **GS margin** | GS share − worker pay − the costs GS pays out. |
-| **Client statement** | The monthly PDF sent to a client showing how its share was worked out, in USD and its own currency. |
+| **Income pool** | Every Income tab entry for the month, in USD: client account payouts, GS account income and other income. |
+| **Received** | A client's income entries for the month, in USD: what the work platform actually paid for the account. |
+| **Revenue** | A client's received amount, else its expected amount. |
+| **Worker pay (on a client)** | Hours on sessions linked to the client × each worker's pay rate, in USD. |
+| **Net distributable** | Revenue − worker pay − transfer cost − other costs. The amount shared between the recipients. |
+| **Recipient** | A payee on a client's split for the month, with a %. Gets net distributable × % (or a typed amount). |
+| **Payee** | A person or company client money is paid to, with payout currency and details. Global Solutions is the payee marked GS. |
+| **GS keeps** | Income pool − payee payouts − worker pay − expenses, for the whole month. |
+| **Payee payout** | One payment per payee per month: their amounts across all clients, in their currency. |
+| **Payee statement** | The monthly PDF sent to a payee with one section per client and the total, in USD and their currency. |
+| **Month checks** | Mismatches that block approval: sessions with no client, desktops with no client, unlinked or desktop-less sessions, splits that don't add up, payees missing or without details. |
+| **Bypass** | A Super Admin's approval despite open checks, with a reason kept on the month. |
+| **Added by admin** | A session an admin entered by hand with a required client (desktop optional). Approved straight away, optionally with its own rate. |
+| **Expected (auto)** | Client billed hours × account USD rate. Updates as sessions and the Hours Log change. |
 | **Gross pay** | Base pay plus bonus. |
 | **Net pay** | Gross pay minus costs. This is what lands in the wallet. |
 | **Reporting equivalent** | Net pay converted to the reporting currency for company reports. |
@@ -645,21 +771,26 @@ Working month + workers + tiers + currencies + clients + desktops
              |
 Closed work sessions with entered screenshot times
              |
-Hours Log (worker x desktop), with typed corrections
+Hours Log (worker x desktop), with typed corrections and admin-added sessions
              |                                   |
-Calculate payroll -> payslips          Client ledger: billed hours x rate = expected,
-             |                         received, split on gross, client share / GS share
-Bonuses / transfer costs / external costs / shared costs
+Calculate payroll -> payslips          Income tab -> client revenue (received, else expected)
+             |                         Client ledger: revenue - all costs = net distributable,
+Bonuses / transfer costs / external    shared between recipients (payees) by %
+costs / shared costs                             |
              |                                   |
-Approve: freeze FX for payslips and client payouts
-             |                                   |
-Credit wallets -> worker payslip,      Client payouts: statement PDF, email,
-balance, history, notification         mark paid with reference (locks the client's month)
+Month checks: resolve, or Super Admin bypass with a reason
              |
-External payment recorded as wallet payout -> mark month paid
+Super Admin approves: freeze FX for payslips and payee payouts
+             |                                   |
+Credit wallets -> worker payslip,      Payee payouts: one combined statement per payee,
+balance, history, notification         email, mark paid with reference (locks its clients)
+             |
+External payment recorded as wallet payout -> Super Admin marks month paid
 ```
 
-The platform records money and allocations. A wallet credit is not a bank or mobile-money transfer, and marking a client paid does not move money. Monthly member approval (access), session payroll inclusion and payroll-month approval are three different decisions.
+The platform records money and allocations. A wallet credit is not a bank or mobile-money transfer, and marking a payee paid does not move money. Monthly member approval (access), session payroll inclusion and payroll-month approval are three different decisions.
+
+Sign in as a **Super Admin** for the approval, reopen, bypass and mark-paid cases, and as a plain admin for the cases that check those actions are hidden or refused.
 
 ### 17.2 Pages to exercise
 
@@ -667,13 +798,14 @@ The platform records money and allocations. A wallet credit is not a bank or mob
 |---|---|---|
 | Settings | `/admin/settings` | Private Test Mode, preparation, permitted test email addresses, leave/clear workspace |
 | Test Month | `/admin/payroll/test-month` | Create five test workers, select days, generate records, open worker view, reset/delete |
-| Workers | `/admin/workers` | Worker type, country, status, tier assignment and individual pay terms |
-| Clients | `/admin/clients` | Rate, client tier, client %, desktop switch, payout fields, Sheet columns toggle, linked desktops, import |
-| Client ledger | `/admin/clients/ledger` | Billed hours, received income, costs, client %, apply to many, warnings |
+| Workers | `/admin/workers` | Worker type, country, status, tier assignment, individual pay terms, monthly approval (require approval, approve all, approve/unapprove selected), Add session |
+| Clients | `/admin/clients` | Rate, client tier, desktop switch, Sheet columns toggle, linked desktops, import |
+| Client ledger | `/admin/clients/ledger` | Billed hours, revenue pencil, Client split switch, other costs, recipients, typed amounts, check, apply to many, warnings |
+| Payees | `/admin/clients/recipients` | Add/edit payees, GS mark, missing-details warning, delete vs archive |
+| Income | `/admin/payroll/income` | Entries per category, currency and typed rate, frozen USD, client link, description for other income |
 | Payroll | `/admin/payroll` | Month filter, worker detail, manual edits, Payroll ledger, Apply to many, calculation and warnings |
 | Tiers | `/admin/payroll/tiers` | Rate, currency, unit, applies-to, worker and client assignment |
 | Shared costs | `/admin/payroll/shared-costs` | Preview allocations, save, inspect and reverse entries |
-| Monthly approvals | `/admin/payroll/approvals` | Require membership approval; approve/revoke selected members |
 | Calendar | `/admin/calendar` | Month dates, START/TODAY/END markers, current-month selection |
 | Calculate | `/admin/payroll/calculate` | Calculate/recalculate selected working month |
 | Export | `/admin/payroll/export` | Payslips and payroll exports; inspect every monetary line |
@@ -681,8 +813,7 @@ The platform records money and allocations. A wallet credit is not a bank or mob
 | Currencies | `/admin/currencies` | Currency catalog, FX, manual rates and country mapping |
 | Reports | `/admin/reports` | Payroll and client revenue reconciliation |
 | Hours | `/admin/payroll/hours` | Session vs typed hours, reset, add/remove rows, group by worker/desktop/client, CSV import |
-| Month | `/admin/payroll/month` | Six-step checklist, KPIs, money-flow bar, per-client table |
-| Client payouts | `/admin/payroll/client-payouts` | Preview vs frozen rate, statement PDF, email, mark paid, undo |
+| Payee payouts | `/admin/clients/recipients` | Preview vs frozen rate, per-client lines, combined statement PDF, email, mark paid, undo, GS kept, earlier format |
 | Financial Intelligence | `/leadership/financial` | Leadership totals and selected-period scope |
 | Worker wallet | `/worker/wallet` | Own payslips, balance, transactions and payment notices |
 
@@ -692,13 +823,13 @@ Use the app's finance tabs rather than typing routes where possible. If a tab or
 
 1. Sign in as an admin or super admin. In Settings, prepare and enable **Test Mode**. Wait until preparation finishes and verify the TEST indicator across pages.
 2. In browser Network tools, verify normal finance requests carry `X-Test-Mode: 1` and responses identify Test Mode. The header alone is insufficient; the server checks the authenticated role.
-3. A new private workspace contains reference currencies, FX, countries, platform settings and the tester's admin record. It does not copy the workforce, clients, tiers or work sessions. Empty pages are expected initially. New tables and columns (Hours Log, client payouts, client billing fields) are added to an existing workspace automatically when it is next used.
-4. Create a USD working month covering October 2026 if the workspace has none. Create test clients, and link test desktop records to them for the desktop-hours cases. Do not connect to real desktops.
+3. A new private workspace contains reference currencies, FX, countries, platform settings and the tester's admin record. It does not copy the workforce, clients, tiers or work sessions. Empty pages are expected initially. New tables and columns (Hours Log, payees, income entries, payee payouts, client billing fields, session titles and rates, month bypass) are added to an existing workspace automatically when it is next used.
+4. Create a USD working month covering October 2026 if the workspace has none. Create test clients, and link test desktop records to them for the desktop-hours cases. Do not connect to real desktops. On the Payees page, add the test payees, and a **Global Solutions** payee marked GS if the workspace has none.
 5. Create the sample tiers described below. Open Test Month and create its five test workers. Assign explicit tiers to them; do not assume generated workers have rates.
 6. Test Month copies the current real-type month's range within the active database, or uses the current calendar month if no current month exists. It is marked `is_test` and never becomes the regular current month.
 7. Generate data for 7 and 8 October. Generation replaces that day's records; it does not add another copy. One worker is absent each seeded day, while the others receive work sessions of about four to six hours. Compute expected pay from the actual generated minutes, not a fixed six-hour assumption.
 8. Use **Open as** on a test worker to exercise the worker frontend. Test workers are database fixtures, not independent login accounts. Clear the worker-view selection before returning to administration.
-9. Configure test email recipients in Settings. Private Test Mode only emails the tester and the configured inboxes; this also applies to client statements, so give test clients a permitted payout email. Verify the recipient and the TEST subject before sending.
+9. Configure test email recipients in Settings. Private Test Mode only emails the tester and the configured inboxes; this also applies to payee statements, so give test payees a permitted payout email. Verify the recipient and the TEST subject before sending.
 
 **Test Mode and Test Month are different.** Test Mode isolates the database by admin account. Test Month isolates test workers and their payroll within whichever database is active. Use both together for this walkthrough. Resetting Test Month does not clear the entire private workspace; clearing Test Mode drops that private workspace.
 
@@ -714,14 +845,20 @@ Use these manually controlled values in a clean scenario, separate from random s
 | Worker B | Company worker, 800 KES/day, 8 payable hours |
 | Worker C | Partner worker, USD 100 recorded earnings, 70% worker / 20% company / 10% partner |
 | Worker A adjustments | Bonus 1,000 KES; transfer cost 100 KES; external cost 200 KES |
-| Client X | Desktop X1 linked; billing rate USD 20/hour; desktop switch **on**; client % 40; received USD 190; payout currency EUR |
-| Client Y | No desktop; switch **off**; typed billed hours 5; client tier USD 30/hour; client % 50; USD 5 one-off cost; nothing received yet |
+| Client X | Desktop X1 linked; billing rate USD 20/hour; desktop switch **on**; USD 190 client account payout on the Income tab; recipients: Owner X 40%, Global Solutions 60% |
+| Client Y | No desktop; switch **off**; typed billed hours 5; client tier USD 30/hour; USD 5 one-off cost; nothing received yet; recipients: Owner Y 50%, Global Solutions 50% |
+| Payees | Owner X: payout currency EUR, payout email a permitted test inbox. Owner Y: USD, payout details filled in. Global Solutions marked GS. |
+| Other income | GBP 40 "Referral bonus" (other income), typed rate 0.80 GBP per USD |
 
 **Workers.** A: base 5,000 KES; gross 6,000; deductions 300; net **5,700 KES**; reporting equivalent **USD 57**. B's hourly equivalent is 800 / 8 = 100 KES/hour, so base **800 KES**. C's worker share is USD 70, company USD 20, partner USD 10; convert the worker share into C's actual payout currency.
 
-**Client X.** Billed hours 10 (from the Hours Log on X1); expected 10 × 20 = **USD 200**; received USD 190, so the difference is −10 (exactly 5%, no warning); split on 190; client share 190 × 40% = **USD 76**; GS share **USD 114**. Worker cost (information only) = 10 h × 500 KES ÷ 100 = USD 50; margin USD 64. After approval: 76 × 0.90 = **€68.40**.
+**Client X.** Billed hours 10 (from the Hours Log on X1); expected 10 × 20 = **USD 200**; received USD 190, so the variance is −10 (exactly 5%, no warning) and revenue is **USD 190**. Worker pay = 10 h × 500 KES ÷ 100 = **USD 50**; transfer = A's 100 KES ÷ 100 = **USD 1** (all of A's hours are on X1). Net distributable = 190 − 50 − 1 = **USD 139**. Owner X 40% = **USD 55.60**; Global Solutions 60% = **USD 83.40**. After approval: 55.60 × 0.90 = **€50.04**.
 
-**Client Y.** Billed hours 5 (typed); the tier rate wins over any typed billing rate: expected 5 × 30 = **USD 150**; nothing received, so the split is on expected; client share 150 × 50% − 5 = **USD 70**; GS share **USD 80**.
+**Client Y.** Billed hours 5 (typed); the tier rate wins over any typed billing rate: expected 5 × 30 = **USD 150**; nothing received, so revenue is the expected **USD 150**. No desktop, so no worker pay or transfer; other costs USD 5. Net distributable = 150 − 5 = **USD 145**: Owner Y **USD 72.50**, Global Solutions **USD 72.50**.
+
+**Other income.** GBP 40 at 0.80 = **USD 50.00**, frozen.
+
+**Month overview** (with only these figures). Income pool = 190 + 50 = USD 240 (Y's expected income isn't income yet). Payee payouts = 55.60 + 72.50 = USD 128.10. Worker pay and expenses follow the payslips and costs actually present; GS keeps = income pool − payee payouts − worker pay − expenses.
 
 ### 17.5 Worker financial logic
 
@@ -733,20 +870,22 @@ Use these manually controlled values in a clean scenario, separate from random s
 - The rate's currency is the payout currency. Country mapping supplies a fallback when no rate currency exists. A 500 KES/hour tier must remain 500 KES/hour, regardless of reporting currency.
 - Day/week/month rates convert using 8/40/160 hours. Task rates are treated as the entered hourly equivalent; confirm this business rule before using task pricing commercially.
 - Company pay plus converted partner share gives base pay; bonus increases gross; transfer and external costs reduce net. Values are rounded to two decimal places.
-- Payroll follows open → calculated → approved → paid. Approval freezes FX. Reopening a non-paid month allows recalculation. A paid month cannot be reopened.
-- Wallet push requires approval; the Wallets flow can approve a calculated month first. One payroll credit per worker/month is permitted; zero and negative nets are skipped.
+- Payroll follows open → calculated → approved → paid. Approve, reopen and mark paid are Super Admin only. Approval freezes FX and is refused while month checks are open and not bypassed. Reopening a non-paid month allows recalculation and clears any bypass. A paid month cannot be reopened.
+- Wallet push requires approval; a Super Admin can approve a calculated month from the Wallets flow first. One payroll credit per worker/month is permitted; zero and negative nets are skipped.
+- An admin-added session is closed and approved on creation, counts in the month of its date, and is refused for approved or paid months. With its own rate, the payslip adds hours × (session rate − worker's rate).
 - An existing wallet balance may be converted when the payout currency changes, with conversion-out/in transactions. A missing FX rate can block that worker's credit.
 
 ### 17.6 Client financial logic
 
-- Billed hours: Hours Log rows on the client's desktops when the switch is on; the typed figure when it is off. Turning the switch on ignores the typed figure; it is kept for when the switch goes off again.
+- Billed hours: sessions linked to the client when the switch is on; the typed figure when it is off. Turning the switch on ignores the typed figure; it is kept for when the switch goes off again.
 - Rate: an active client tier (applies to clients or both) converted to USD per hour; otherwise the client's billing rate.
-- Split on received when entered (an entered zero counts as received), otherwise on expected.
-- `Client share = split amount × client % − (shared costs + one-off costs)`; `GS share = split amount − client share`. No client % on file means 0%.
-- Negative client shares are not clamped: a warning says the client owes GS.
-- Worker cost and margin are information only; they never change the client's share.
-- Client figures can be edited until that client's payout is marked paid or the month is paid.
-- Client payouts: prepared on approval at that day's rate; amounts follow later ledger edits at the frozen rate; a changed amount sends a Sent statement back to To send; Paid is final until undone, and undo is impossible once the month is paid.
+- Received is the sum of the client's income entries in USD (an entered zero counts as received). Revenue is received, otherwise expected.
+- Income entries are frozen in USD at entry, at that day's rate or a typed one. Other income needs a description. The ledger's Received pencil only works when the client has at most one entry.
+- `Net distributable = revenue − worker pay − transfer cost − (shared costs + one-off costs)`; `recipient amount = net distributable × %`, unless an amount was typed.
+- Check is OK only when the % total exactly 100 and the amounts total exactly the net distributable. A negative net distributable is not clamped: a warning shows.
+- Recipients are saved per client per month; a month without its own carries the latest earlier month's. Global Solutions' amount is kept, every other payee's is paid out.
+- Client figures can be edited until a payee payout covering that client is marked paid, or the month is paid.
+- Payee payouts: one per payee owed money, prepared on approval at that day's rate; amounts follow later ledger edits at the frozen rate; a changed amount sends a Sent statement back to To send; Paid is final until undone, and undo is impossible once the month is paid.
 
 ### 17.7 Frontend acceptance cases
 
@@ -784,28 +923,54 @@ Mark each case PASS, FAIL or BLOCKED. Keep screenshot, month/worker/client IDs, 
 | P06 | Reopen non-paid month; try reopening paid month | Non-paid reopens; paid is rejected |
 | C01 | Set up Client X (switch on) and Client Y (switch off) | X billed 10 h from X1; Y billed the typed 5 h |
 | C02 | Turn X's switch off with no typed hours | X has no billed hours and no expected; turning it on restores 10 h |
-| C03 | Enter USD 190 received for X | Expected 200, difference −10, split on 190, client share 76, GS share 114 |
-| C04 | Give Y a client tier of USD 30/h and a typed billing rate of USD 25/h | Tier rate 30 used; expected 150 |
-| C05 | Add USD 5 one-off cost to Y; save | Client share 70, GS share 80; costs larger than share shows the owes-GS warning |
-| C06 | Change X's client % to 50 in October | October uses 50; September keeps its old % |
-| C07 | Received 20% below expected | Over-5% warning shown on ledger and month overview |
-| C08 | Apply client % and desktop switch to selected clients | Only selected clients change; locked (paid) clients skipped |
+| C03 | Type USD 190 in X's Revenue pencil | One client account payout of USD 190 for X appears on the Income tab; expected 200, variance −10, revenue 190 |
+| C04 | Give Y a client tier of USD 30/h and a typed billing rate of USD 25/h | Tier rate 30 used; expected 150; revenue 150 (expected) |
+| C05 | Turn on Client split; add USD 5 other cost to Y | Y: total costs 5, net distributable 145, Owner Y 72.50, GS 72.50, Check OK |
+| C06 | Check X with Client split on | Worker pay 50, transfer 1, net 139, Owner X 55.60, GS 83.40, Check OK |
+| C07 | Received 20% below expected | Over-5% warning shown on the ledger |
+| C08 | Apply other costs and desktop switch to selected clients | Only selected clients change; locked (paid) clients skipped |
+| C09 | Reload the ledger; open it from a `?split=0` link | The Client split choice is remembered; the link overrides it |
+| IN1 | Add GBP 40 other income with no description; then with "Referral bonus" and rate 0.80 | First refused; second saved at USD 50.00 |
+| IN2 | Add a second client account payout for X; try the Revenue pencil | X's revenue is the total; the pencil is refused and points to the Income tab |
+| IN3 | Change today's GBP rate | The saved GBP entry keeps USD 50.00 |
+| IN4 | Check the Income tab totals | Income pool = sum of entries in USD; one total per category; the category filter narrows the list |
+| R1 | Give X recipients 40 / 50 | Check split; warning "% add up to 90%"; month check listed |
+| R2 | Add a third recipient | The new line suggests 10% |
+| R3 | Type Owner X's amount as 60.00; then click auto | Check split while the amounts total 143.40; auto returns 55.60 and OK |
+| R4 | Pick "+ New payee…" on a recipient | Payee created and selected; it appears on the Payees page |
+| R5 | Set November with no recipients of its own | November shows "recipients from October" with the same % |
+| PY1 | Remove Owner Y's payout details | "Missing payout details" on Payees; payee-details month check blocks approval |
+| PY2 | Delete an unused payee; delete Owner X | Unused one is deleted; Owner X is archived and still on old payouts |
+| PY3 | Try deleting Global Solutions; mark Owner Y as GS | Delete refused; GS mark moves to Owner Y (move it back afterwards) |
+| AS1 | Add a 3 h session for A on 9 October for client X, desktop X1, at the tier rate | Approved, "Added by admin" badge; A's X1 Hours Log row rises by 3 h; X's billed hours rise by 3 h |
+| AS2 | Add a 2 h session for A for client X, no desktop, at 700 KES/h | On A's "No desktop" Hours Log row; X billed 2 h; payslip adds 2 × 200 = 400 KES on top of hours × 500 |
+| AS4 | Claim an RDP, then leave the session unlinked | Session shows "—"; month check "Session with no client"; no client billed until an admin links it |
+| AS3 | Try adding a session to an approved month | Refused: reopen first |
+| MC1 | Leave a desktop with hours but no client; open the Month tab | "Desktop with no client" check listed with Resolve to Desktops; Approve disabled |
+| MC2 | As a Super Admin, bypass with a 3-character reason; then with a proper reason | First refused; second recorded with name, time and reason; Approve enabled |
+| MC3 | After the bypass, open a new check (e.g. break X's split) | Approval blocked again until resolved or bypassed again |
+| MC4 | Reopen the approved month | The bypass is cleared |
+| SA1 | As a plain admin, open Payroll, the Month tab and Wallets | No Approve, Reopen or Mark paid; no Bypass; Wallets can't approve a calculated month |
+| SA2 | As a plain admin, call approve/reopen/paid/bypass directly | Refused (403) |
 | L01 | Preview USD 10 shared cost, workers 50%, clients 50%, two recipients in each group | USD 2.50 per recipient; preview makes no saved changes |
-| L02 | Save it | Worker shares appear once on payslips; client shares appear in the ledger Costs and reduce client share |
+| L02 | Save it | Worker shares appear once on payslips; client shares appear in the ledger's Other costs and reduce the net distributable |
 | L03 | Allocate USD 10 equally among three recipients | Rounded shares total exactly USD 10, not USD 9.99 or 10.02 |
 | L04 | Use custom percentages with invalid totals or no recipients | Validation rejects invalid allocation |
 | L05 | Delete a shared cost; attempt edit after approval | Open/calculated deletion reverses allocation; locked-period mutation rejected |
 | A01 | Require membership approval; revoke one test worker | Worker sees unapproved status; protected RDP/shift access denied |
 | A02 | Approve that member again | Access restored; this does not approve or pay the payroll month |
-| CP1 | Open Client payouts before approval | Preview rows at the stored rate; no send or pay actions |
-| CP2 | Approve the month | X payout prepared: USD 76, EUR, rate 0.90, €68.40; rate shown as frozen |
-| CP3 | Change the stored EUR rate, reload; then Refresh rates | Reload keeps 0.90; Refresh takes the new rate |
-| CP4 | Download X's statement | Hours, rate, expected, received, split amount, %, costs and amounts match the ledger |
-| CP5 | Email X's statement to a permitted test inbox; then to a non-permitted address | Permitted: Sent, TEST subject, PDF attached, email history row; non-permitted: clear refusal, still To send |
-| CP6 | Edit X's received after sending | Payout amount follows at the frozen rate; status back to To send |
-| CP7 | Mark X paid with a reference; try editing X on the ledger | Paid with reference and date; ledger edit refused; Month overview counts X paid |
-| CP8 | Undo X's payment; mark the month paid; try undo again | First undo works; after the month is paid undo is refused |
-| M01 | Open the Month tab through the steps | Each step turns done at the right time; collected = client shares + costs + worker pay + margin |
+| CP1 | Open Payee payouts before approval | Preview rows at the stored rate; no send or pay actions |
+| CP2 | As a Super Admin, approve the month | Owner X payout prepared: USD 55.60, EUR, rate 0.90, €50.04; Owner Y USD 72.50; GS amounts under "Kept by Global Solutions" |
+| CP3 | Make Owner X a recipient on Y too (Owner Y 25%, Owner X 25%, GS 50%) | Owner X has one payout with 2 clients: 55.60 + 36.25 = USD 91.85; the toggle shows both lines |
+| CP4 | Change the stored EUR rate, reload; then Refresh rates | Reload keeps 0.90; Refresh takes the new rate |
+| CP5 | Download Owner X's statement | One PDF with a section per client; revenue, costs, net, % and share match the ledger; total in USD and EUR |
+| CP6 | Email it to a permitted test inbox; then to a non-permitted address | Permitted: Sent, TEST subject, PDF attached, email history row; non-permitted: clear refusal, still To send |
+| CP7 | Edit X's received after sending | Payout amount follows at the frozen rate; status back to To send |
+| CP8 | Mark Owner X paid with a reference; try editing X and Y on the ledger | Paid with reference and date; both clients locked; Owner Y keeps the amount already worked out |
+| CP9 | Undo the payment; mark the month paid; try undo again | First undo works; after the month is paid undo is refused |
+| CP10 | Open a month paid before payees existed | Its per-client payouts show read-only under "Paid in the earlier format" |
+| M01 | Open the Month tab through the steps | Each of the seven steps turns done at the right time; GS keeps = income pool − payee payouts − worker pay − expenses |
+| M02 | Compare the Month tab worker pay with admin-added sessions | Worker pay splits into desktops and admin sessions; the parts add up |
 | W01 | Send A's approved pay to wallet | Single credit 5,700 KES; balance increases; payment notice created |
 | W02 | Repeat push and double-click/submit concurrently | No duplicate credit; inspect transactions, not just a success toast |
 | W03 | Send pay to selected workers | Unselected balances unchanged; credited/skipped counts correct |
@@ -833,11 +998,12 @@ The work period dates, session start/end, evidence start/end, approval time, wal
 1. The wallet-credit logic checks for an existing transaction before inserting. Duplicate-click and concurrent-request tests are both required; a sequential repeat alone does not prove concurrency safety.
 2. Monthly member approval is an access gate; it is not the payroll approval status or the session inclusion state.
 3. Generated test sessions set evidence timestamps but do not exercise the real screenshot-upload flow. Test evidence capture separately if that is part of acceptance.
-4. Worker cost on the client ledger uses each worker's payslip rate for the hours on that client's desktops. It is not the worker's full net pay (bonuses and costs are not spread across clients), so it will not reconcile exactly to wallet credits.
-5. Client % changes are stored from the month they are made in. Editing an old month's % creates an agreement starting that month, which also applies to later months until another change.
+4. Worker pay on the client ledger uses each worker's payslip rate for the hours on sessions linked to that client. It is not the worker's full net pay (bonuses and costs are not spread across clients), so it will not reconcile exactly to wallet credits. The Month tab's worker pay is the payslip total. Unlinked sessions count toward the Hours Log / payslip but not toward any client.
+5. Recipients are stored per month. Changing them in an old month only changes that month; later months that carry recipients forward pick up the change until they get their own.
+6. An income entry's USD figure is frozen when entered. Changing today's rate does not move it; edit the entry (or type its rate) to change it.
 
 ### 17.10 Completion evidence
 
 For each financial case retain: test workspace indicator, deployed version, selected period dates/status, worker and client setup, input values, calculation, resulting payslip, ledger row, payout and statement, wallet transactions and worker-view screenshot. Verify frontend totals against backend records or responses. Do not mark the system tested based solely on screenshots of populated tables.
 
-Recommended run order: setup → dates → tiers/FX → evidence hours → Hours Log → payroll edits → clients and ledger → shared costs → member approvals → payroll approval → client payouts → wallet credit/payout → worker view → exports/email → month overview → cleanup.
+Recommended run order: setup → dates → tiers/FX → evidence hours → Hours Log → payroll edits → payees → income → clients and ledger (split and recipients) → shared costs → admin-added sessions → month checks and bypass → member approvals → payroll approval (Super Admin) → payee payouts → wallet credit/payout → worker view → exports/email → cleanup.

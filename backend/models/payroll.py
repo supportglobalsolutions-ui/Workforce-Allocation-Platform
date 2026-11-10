@@ -3,7 +3,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, Optional
 
-from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Numeric, String, UniqueConstraint, text
+from sqlalchemy import Boolean, CheckConstraint, Column, Date, DateTime, ForeignKey, Index, Numeric, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID as PGUUID
 from sqlmodel import Field, Relationship, SQLModel
 
@@ -55,6 +55,18 @@ class PayrollPeriod(SQLModel, table=True):
     )
     paid_at: Optional[datetime] = Field(
         default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    # Super Admin approval despite open month checks: why, by whom, and the issues at the time.
+    bypass_reason: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
+    bypassed_by: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id", ondelete="SET NULL"), nullable=True),
+    )
+    bypassed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    bypassed_issues: Optional[list[Any]] = Field(
+        default=None, sa_column=Column(JSONB, nullable=True)
     )
     created_at: Optional[datetime] = Field(
         default=None,
@@ -171,10 +183,27 @@ class PayrollWorkerSummary(SQLModel, table=True):
     base_currency: Optional[str] = Field(default=None, sa_column=Column(String(3), nullable=True))
     base_equivalent: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
     # When True, calculate_period keeps admin hours/rate/costs/fx instead of overwriting.
+    # Gross the system worked out: tier rate x hours + bonus.
+    calculated_gross: Decimal = Field(
+        default=Decimal("0"),
+        sa_column=Column(Numeric(14, 2), nullable=False, server_default="0"),
+    )
+    # Admin's final gross for this worker (raise or reduce). When set it replaces
+    # the calculated gross; deductions come off it to give the net.
+    gross_override: Optional[Decimal] = Field(default=None, sa_column=Column(Numeric(14, 2), nullable=True))
+    final_confirmed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    final_confirmed_by: Optional[uuid.UUID] = Field(
+        default=None,
+        sa_column=Column(PGUUID(as_uuid=True), ForeignKey("admin_users.id"), nullable=True),
+    )
     admin_locked: bool = Field(
         default=False,
         sa_column=Column(Boolean, nullable=False, server_default="false"),
     )
+    # Admin's free-text note; null shows the work month instead.
+    notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     exception_flags: list[Any] = Field(
         default_factory=list,
         sa_column=Column(JSONB, nullable=False, server_default=text("'[]'")),

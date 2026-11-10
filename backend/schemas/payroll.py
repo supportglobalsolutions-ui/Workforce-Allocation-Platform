@@ -4,7 +4,7 @@ from typing import Any, Optional
 from uuid import UUID
 
 from pydantic import ConfigDict, field_validator
-from sqlmodel import SQLModel
+from sqlmodel import Field, SQLModel
 
 from models.enums import PayrollPeriodStatusEnum, SessionTypeEnum
 
@@ -48,6 +48,8 @@ class PayrollPeriodResponse(PayrollPeriodBase):
     wallet_pushed_at:    Optional[datetime] = None
     paid_at:             Optional[datetime] = None
     member_approval_required: bool = False
+    bypass_reason:       Optional[str] = None
+    bypassed_at:         Optional[datetime] = None
     created_at:          datetime
 
 
@@ -114,6 +116,13 @@ class PayrollWorkerSummaryResponse(SQLModel):
     base_currency:     Optional[str] = None
     base_equivalent:   Optional[Decimal] = None
     admin_locked:      bool = False
+    calculated_gross:  Decimal = Decimal("0")
+    gross_override:    Optional[Decimal] = None
+    # Final gross minus calculated gross (0 when no override).
+    gross_difference:  Decimal = Decimal("0")
+    final_confirmed_at: Optional[datetime] = None
+    final_confirmed_by_name: Optional[str] = None
+    notes:             Optional[str] = None
     exception_flags:   list[Any] = []
     created_at:        datetime
     updated_at:        datetime
@@ -144,6 +153,24 @@ class PayrollWorkerSummaryUpdate(SQLModel):
     local_currency: Optional[str] = None
     fx_rate:        Optional[Decimal] = None
     admin_locked:   Optional[bool] = None
+    # Admin's final gross for the worker; send null to go back to the calculated gross.
+    gross_override: Optional[Decimal] = None
+    # Admin note; blank clears it so the ledger shows the work month again.
+    notes:          Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("notes")
+    @classmethod
+    def _trim_notes(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
+
+    @field_validator("gross_override")
+    @classmethod
+    def _override_not_negative(cls, v):  # noqa: N805
+        if v is not None and v < 0:
+            raise ValueError("Final gross can't be negative.")
+        return v
 
     @field_validator(
         "hours_logged",
@@ -189,6 +216,15 @@ class PayrollSummaryBulkItem(SQLModel):
     # Pay this row at the worker's own tier (rate + currency) and keep it
     # following that tier; rate_per_hour / local_currency are then ignored.
     use_tier:       Optional[bool] = None
+    # Admin note; blank clears it so the ledger shows the work month again.
+    notes:          Optional[str] = Field(default=None, max_length=500)
+
+    @field_validator("notes")
+    @classmethod
+    def _trim_notes(cls, value: Optional[str]) -> Optional[str]:
+        if value is None:
+            return None
+        return value.strip() or None
 
     @field_validator(
         "hours_logged",

@@ -73,3 +73,41 @@ def test_empty_pool_with_zero_share_is_fine():
         worker_ids=[uuid4()], client_ids=[],
     )
     assert [s.kind for s in shares] == ["worker"]
+
+
+def test_three_way_split_with_global_solutions():
+    workers = [uuid4() for _ in range(2)]
+    clients = [uuid4()]
+    shares = compute_shares(
+        total=Decimal("1000"), worker_pool_pct=Decimal(40), gs_pool_pct=Decimal(25),
+        worker_ids=workers, client_ids=clients,
+    )
+    assert _amounts(shares, "worker") == [Decimal("200.00")] * 2
+    assert _amounts(shares, "client") == [Decimal("350.00")]
+    assert _amounts(shares, "gs") == [Decimal("250.00")]
+    assert sum(s.amount_base for s in shares) == Decimal("1000.00")
+
+
+def test_global_solutions_can_bear_it_all():
+    shares = compute_shares(
+        total=Decimal("80"), worker_pool_pct=Decimal(0), gs_pool_pct=Decimal(100),
+        worker_ids=[], client_ids=[],
+    )
+    assert [(s.kind, s.recipient_id, s.amount_base) for s in shares] == [("gs", None, Decimal("80.00"))]
+
+
+def test_worker_and_gs_shares_cannot_pass_100():
+    with pytest.raises(CostLedgerError, match="more than 100%"):
+        compute_shares(
+            total=Decimal("100"), worker_pool_pct=Decimal(70), gs_pool_pct=Decimal(40),
+            worker_ids=[uuid4()], client_ids=[],
+        )
+
+
+def test_category_picks_the_payslip_field():
+    from services.cost_ledger import target_field_for
+
+    assert target_field_for("Transfer cost") == "transfer_cost"
+    assert target_field_for("  transfer COST ") == "transfer_cost"
+    assert target_field_for("External cost") == "external_cost"
+    assert target_field_for("Internet") == "external_cost"

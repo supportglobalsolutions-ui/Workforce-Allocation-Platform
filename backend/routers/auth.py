@@ -23,7 +23,6 @@ from core.supabase_auth import (
     list_auth_users,
     register_pending_user,
     set_user_role,
-    send_password_recovery_email,
     update_auth_user_password,
     unban_auth_user,
     user_to_dict,
@@ -1085,7 +1084,7 @@ def request_account_action_otp(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    """Email a 3-minute code to the Settings alert inbox. Nothing is changed yet."""
+    """Email a 5-minute code to the Settings alert inbox. Nothing is changed yet."""
     action = (body.action or "").strip()
     purpose = _critical_purpose(action)
     mutate = "delete" if action == "delete" else "ban" if action == "ban" else "role"
@@ -1462,9 +1461,9 @@ def password_recovery(
     """
     Queue a recovery email for a username or an email address.
 
-    The account is resolved first: nothing is sent when no account matches, so
-    we never fire codes at an address that does not exist (a bounce there gets
-    the sending domain suppressed and hurts real deliveries).
+    The account must exist: if it does not, nothing is sent and the user is
+    told clearly. That also avoids firing Resend at unknown addresses (bounces
+    hurt the sending domain).
     """
     raw = (body.identifier or (str(body.email) if body.email else "")).strip()
     if not raw:
@@ -1481,30 +1480,33 @@ def password_recovery(
         key_suffix=raw.lower()[:120],
     )
 
-    generic = {"message": "If this account exists, a recovery link is on its way."}
-
     email = email_for_identifier(db, raw)
     if not email:
-        # No such account — send nothing, but stay vague so the response
-        # cannot be used to enumerate usernames.
-        return generic
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You don't have an account with that username or email.",
+        )
 
     try:
         get_auth_user_by_email(email)
     except Exception:
-        return generic
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="You don't have an account with that username or email.",
+        ) from None
 
-    redirect_to = f"{settings.APP_BASE_URL.rstrip('/')}/reset-password"
+    profile = db.exec(select(AdminUser).where(AdminUser.email == email)).first()
+    display_name = (profile.display_name if profile else "") or ""
 
-    def _send() -> None:
-        try:
-            send_password_recovery_email(email, redirect_to)
-        except Exception:
-            # Keep failures silent — response must not reveal account existence.
-            pass
+    # Deliver through Resend + a minted Supabase recovery link (same path as
+    # account invites). Supabase's own /recover mailer is not used — it often
+    # never arrives when custom SMTP is missing, and failures were silent.
+    from services.account_invite import deliver_password_recovery
 
-    background_tasks.add_task(_send)
-    return generic
+    background_tasks.add_task(
+        deliver_password_recovery, to_email=email, display_name=display_name,
+    )
+    return {"message": "A recovery link is on its way to your email."}
 
 
 @router.post("/password-reset")

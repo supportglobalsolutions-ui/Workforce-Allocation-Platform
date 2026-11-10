@@ -34,8 +34,11 @@ def evidence_complete(session: WorkSession) -> bool:
     """At least one screenshot plus both on-image times.
 
     The two-screenshot rule went away with the single capture button; the
-    times are still what payroll pays on, so they stay required.
+    times are still what payroll pays on, so they stay required. Sessions an
+    admin added by hand have no screenshots and need none.
     """
+    if getattr(session, "added_by_admin", False):
+        return bool(session.image_start_at and session.image_end_at)
     return bool(
         session_image_paths(session)
         and session.image_start_at

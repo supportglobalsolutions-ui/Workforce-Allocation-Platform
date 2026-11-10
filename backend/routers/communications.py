@@ -42,6 +42,7 @@ class SendPayslipsRequest(BaseModel):
     override_email: Optional[str] = None     # send every payslip to this address instead (testing)
     force_resend: bool = False               # re-send to workers already emailed for this period
     notify_in_app: bool = True               # also raise a wallet notification
+    send_email: bool = True                  # False = account only: portal notification, no email
 
 
 class BroadcastRequest(BaseModel):
@@ -138,6 +139,23 @@ def _job_response(db: Session, job: EmailJob) -> dict:
     }
 
 
+def _payslip_notification(admin_id, period: PayrollPeriod, summary: PayrollWorkerSummary) -> Notification:
+    """The worker-portal "Payslip ready" notice (sent alone, or alongside the email)."""
+    return Notification(
+        sender_admin_id=admin_id,
+        title=f"Payslip ready — {period.label}",
+        message=(
+            f"Your payslip for {period.label} is available. "
+            f"Net pay due: {summary.local_currency} {summary.final_net:,.2f}."
+            if summary.final_net is not None
+            else f"Your payslip for {period.label} is available in your wallet."
+        ),
+        category="payment",
+        target_type="specific",
+        target_worker_id=summary.worker_id,
+    )
+
+
 @router.post("/payslips/send", status_code=status.HTTP_202_ACCEPTED)
 def send_payslips(
     body: SendPayslipsRequest,
@@ -157,6 +175,16 @@ def send_payslips(
     summaries = db.exec(stmt).all()
     if not summaries:
         raise HTTPException(status_code=400, detail="No payslip summaries — calculate the period first.")
+
+    if not body.send_email:
+        # "Send to account": the worker sees the payslip in their portal with a notification.
+        admin = get_admin_user(db, current_user)
+        notified = 0
+        for summary in summaries:
+            db.add(_payslip_notification(admin.id, period, summary))
+            notified += 1
+        db.commit()
+        return {"queued": 0, "notified": notified, "status": "done", "total": 0}
 
     override = (body.override_email or "").strip()
     if override:
@@ -217,19 +245,7 @@ def send_payslips(
         queued += 1
 
         if body.notify_in_app:
-            db.add(Notification(
-                sender_admin_id=admin.id,
-                title=f"Payslip ready — {period.label}",
-                message=(
-                    f"Your payslip for {period.label} is available. "
-                    f"Net pay due: {summary.local_currency} {summary.final_net:,.2f}."
-                    if summary.final_net is not None
-                    else f"Your payslip for {period.label} is available in your wallet."
-                ),
-                category="payment",
-                target_type="specific",
-                target_worker_id=worker.id,
-            ))
+            db.add(_payslip_notification(admin.id, period, summary))
 
     if queued == 0:
         db.rollback()

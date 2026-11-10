@@ -379,7 +379,7 @@ erDiagram
 | `email_jobs` / `email_job_items` | Queued bulk sends (payslips, broadcasts) drained by a background dispatcher rather than the request | PostgreSQL only |
 | `email_log` | Permanent email history: accept/reject outcome plus provider delivery events, for every send path | PostgreSQL only |
 | `platform_settings` | Singleton ops settings, including the alert inbox that receives deletion codes | PostgreSQL only |
-| `admin_otp_challenges` | 3-minute hashed confirmation codes for irreversible admin actions | PostgreSQL only |
+| `admin_otp_challenges` | 5-minute hashed confirmation codes for irreversible admin actions | PostgreSQL only |
 | `security_risk_events` | Per-admin risk points from destructive deletes; drives 24h score + alert emails | PostgreSQL only |
 
 ### Authentication (Supabase Auth — not a PostgreSQL table)
@@ -789,7 +789,7 @@ Unified session log for all three session types.
 | `rdp_resource_id` | `UUID` | FK, NULL | Set for GS RDP sessions |
 | `partner_entity_id` | `UUID` | FK, NULL | Set for partner / some third-party sessions |
 | `partner_arrangement_id` | `UUID` | FK, NULL | Arrangement used for payroll split |
-| `client_id` | `UUID` | FK → `clients.id`, NULL | Client account the work was on |
+| `client_id` | `UUID` | FK → `clients.id`, NULL | Client account the work was on (set by admin; not inherited from the RDP) |
 | `start_time` | `TIMESTAMPTZ` | NOT NULL | Session start |
 | `end_time` | `TIMESTAMPTZ` | NULL | Session end |
 | `duration_minutes` | `INTEGER` | NULL | Calculated on close |
@@ -884,7 +884,7 @@ Bounded windows for payroll export and approval.
 | `export_generated_at` | `TIMESTAMPTZ` | NULL | Last export timestamp |
 | `created_at` | `TIMESTAMPTZ` | NOT NULL | Period opened |
 
-Deleting a work period is a two-step admin action, not a plain `DELETE`. `POST /payroll/periods/{id}/delete/request-otp` emails a 6-digit code (3-minute TTL) to the ops alert inbox in `platform_settings`. `POST /payroll/periods/{id}/delete/confirm` consumes that code and then:
+Deleting a work period is a two-step admin action, not a plain `DELETE`. `POST /payroll/periods/{id}/delete/request-otp` emails a 6-digit code (5-minute TTL) to the ops alert inbox in `platform_settings`. `POST /payroll/periods/{id}/delete/confirm` consumes that code and then:
 
 - **Removes** line items, worker summaries, and quality ratings/snapshots tied to the period.
 - **Unlinks** (does not erase) sessions, wallet credits, and email history — those stay as worker records.

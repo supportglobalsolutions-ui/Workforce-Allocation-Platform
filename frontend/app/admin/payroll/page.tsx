@@ -1,30 +1,28 @@
 'use client';
 
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import {
-  AlertCircle, Calculator, CheckCircle, ChevronDown,
-  Eye, FileText, Mail, Plus, RotateCcw, Send, Table2,
-  Users, Wallet, X,
+  AlertCircle, CheckCircle, ChevronDown,
+  Eye, FileText, Mail, Plus, X,
 } from 'lucide-react';
 import PageHeader from '@/components/platform/PageHeader';
 import { PAYROLL_TABS } from '@/components/platform/AdminSectionTabs';
-import ConfirmModal, { FINANCE_CONFIRM_META } from '@/components/platform/ConfirmModal';
 
 import SpinningDots from '@/components/shared/SpinningDots';
-import ApplyToManyPanel from '@/components/admin/ApplyToManyPanel';
 import WorkerPayModal, { type PayRow } from '@/components/admin/WorkerPayModal';
+import EditableCell from '@/components/payroll/EditableCell';
 import PayslipEmailPanel from '@/components/payroll/PayslipEmailPanel';
+import PayrollControlPanel from '@/components/payroll/PayrollControlPanel';
 import TestFinanceResetButton from '@/components/testMode/TestFinanceResetButton';
-import PayTotalsCards from '@/components/payroll/PayTotalsCards';
-import PeriodNameEditor from '@/components/payroll/PeriodNameEditor';
+import { ConfirmFinalCell, FinalGrossCell, GrossDifferenceCell } from '@/components/payroll/FinalGrossCells';
+
 import PeriodFilter from '@/components/platform/PeriodFilter';
 import { api } from '@/lib/api';
 import { downloadFile } from '@/lib/download';
 import { pickCurrentPeriod } from '@/lib/periods';
-import { displayCurrencyFor, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
-
-type ConfirmAction = 'approve' | 'push-wallets' | 'mark-paid';
+import { displayCurrencyFor, formatLocalAndUsd, formatMoneyAmount, useMoneyDisplay } from '@/lib/money';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
@@ -87,18 +85,19 @@ function PAY_SHEET_COLUMNS(showFlags: boolean): SheetColumn[] {
     { label: 'Country' },
     { label: 'Tier' },
     { label: 'Work month' },
-    { label: 'Start date', hint: 'First day of the work period' },
-    { label: 'End date', hint: 'Last day of the work period' },
     { label: 'Hours', align: 'right' },
-    { label: 'Hourly rate (local)', align: 'right', hint: 'Rate per hour in the worker’s own currency' },
-    { label: 'Base pay (local)', align: 'right' },
-    { label: 'Bonus (local)', align: 'right' },
-    { label: 'Gross (local)', align: 'right' },
+    { label: 'Hourly rate', align: 'right', hint: 'Rate per hour in the worker’s currency, with USD equivalent' },
+    { label: 'Base pay', align: 'right' },
+    { label: 'Bonus', align: 'right' },
+    { label: 'Calculated gross', align: 'right', hint: 'Tier rate × hours worked + bonus' },
+    { label: 'Final gross', align: 'right', hint: 'What is paid before deductions. Use the pencil to raise or reduce it.' },
+    { label: 'Difference', align: 'right', hint: 'Final gross − calculated gross' },
     { label: 'Transfer cost', align: 'right' },
     { label: 'External cost', align: 'right' },
     { label: 'Total deductions', align: 'right' },
-    { label: 'Net pay (local)', align: 'right', hint: 'Final amount due to the worker, in their own currency' },
+    { label: 'Final net', align: 'right', hint: 'Final gross − total deductions: local currency and USD equivalent' },
     { label: 'Currency' },
+    { label: 'Confirmed', hint: 'Admin has checked this worker’s final value' },
     ...(showFlags ? [{ label: 'Flags' }] : []),
     { label: 'Approval' },
     { label: 'Wallet credited', hint: 'When pay was credited to wallets — can be after the work month' },
@@ -112,10 +111,10 @@ function PAY_SHEET_COLUMNS(showFlags: boolean): SheetColumn[] {
 function PAY_SHEET_GROUPS(showFlags: boolean): { label: string; span: number }[] {
   return [
     { label: 'Worker details', span: 5 },
-    { label: 'Work dates', span: 3 },
-    { label: 'Earnings', span: 5 },
+    { label: 'Work month', span: 1 },
+    { label: 'Earnings', span: 7 },
     { label: 'Deductions', span: 3 },
-    { label: 'Payment details', span: 2 + (showFlags ? 1 : 0) + 4 + 1 },
+    { label: 'Payment details', span: 3 + (showFlags ? 1 : 0) + 4 + 1 },
   ];
 }
 
@@ -127,17 +126,9 @@ function sheetDate(iso: string | null | undefined): string {
     : d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
-/** Spreadsheet-style note, e.g. "Rwanda - 5,000 RWF/hr · locked". */
-function sheetNotes(r: PayRow): string {
-  const s = r.summary;
-  const parts: string[] = [];
-  if (s && Number(s.rate_per_hour) > 0) {
-    parts.push(`${r.worker_country} - ${Number(s.rate_per_hour).toLocaleString()} ${s.local_currency}/hr`);
-  }
-  if (s?.admin_locked) parts.push('rate locked');
-  if (r.evidence_incomplete) parts.push('evidence incomplete');
-  if ((r.worker_status ?? 'active') !== 'active') parts.push('historical only');
-  return parts.length ? parts.join(' · ') : '—';
+/** The admin's note, or the work month when none was typed. Edited in the eye pop-up. */
+function sheetNotes(r: PayRow, monthLabel: string | undefined): string {
+  return r.summary?.notes || monthLabel || '—';
 }
 
 function FlagChips({ flags }: { flags: string[] }) {
@@ -386,6 +377,7 @@ function NewPeriodModal({ onClose, onCreated }: { onClose: () => void; onCreated
 
 export default function PayrollWorkbenchPage() {
   useMoneyDisplay();
+  const router = useRouter();
   const [periods, setPeriods] = useState<PayrollPeriod[]>([]);
   const [selectedPeriodId, setSelectedPeriodId] = useState<string | null>(null);
   const [periodsLoading, setPeriodsLoading] = useState(true);
@@ -403,10 +395,7 @@ export default function PayrollWorkbenchPage() {
   const [countries, setCountries] = useState<Country[]>([]);
 
   const [payslipsOpen, setPayslipsOpen] = useState(false);
-  const [applyOpen, setApplyOpen] = useState(false);
-  const [actionBusy, setActionBusy] = useState<string | null>(null);
   const [actionMessage, setActionMessage] = useState<{ kind: 'success' | 'error'; text: string } | null>(null);
-  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null);
   const [generatingPdfs, setGeneratingPdfs] = useState(false);
 
   const selectedPeriod = periods.find((p) => p.id === selectedPeriodId) ?? null;
@@ -443,6 +432,17 @@ export default function PayrollWorkbenchPage() {
       setSummariesError(e instanceof Error ? e.message : 'Failed to load payslip rows.');
     } finally { setSummariesLoading(false); }
   }, []);
+
+  // After a final-gross edit or confirmation, refetch this month's rows (keeps the scroll position).
+  const reloadRows = useCallback(() => {
+    if (selectedPeriodId) void loadSummaries(selectedPeriodId);
+  }, [loadSummaries, selectedPeriodId]);
+
+  // Pencil edits on the sheet: save one field of one payslip, then refresh the rows.
+  const patchSummary = useCallback(async (summaryId: string, body: Record<string, unknown>) => {
+    await api.patch(`/payroll/summaries/${summaryId}`, body);
+    reloadRows();
+  }, [reloadRows]);
 
   const loadAllSummaries = useCallback(async (availablePeriods: PayrollPeriod[]) => {
     setSummariesLoading(true); setSummariesError(null);
@@ -485,57 +485,9 @@ export default function PayrollWorkbenchPage() {
     else setLedger([]);
     setActionMessage(null);
     setSelectedIds(new Set());
-    setApplyOpen(false);
     setDetailRow(null);
     setPayslipsOpen(false);
   }, [selectedPeriodId, isAllPeriods, periods, loadAllSummaries, loadSummaries]);
-
-  // ── Workflow actions ──
-
-  function requestAction(action: 'calculate' | 'approve' | 'reopen' | 'push-wallets' | 'mark-paid') {
-    if (!selectedPeriod) return;
-    if (action === 'approve' || action === 'push-wallets' || action === 'mark-paid') {
-      setConfirmAction(action);
-      return;
-    }
-    void executeAction(action);
-  }
-
-  async function executeAction(action: 'calculate' | 'approve' | 'reopen' | 'push-wallets' | 'mark-paid') {
-    if (!selectedPeriod) return;
-    setConfirmAction(null);
-    setActionBusy(action);
-    setActionMessage(null);
-    try {
-      const result = await api.post<Record<string, unknown> | null>(`/payroll/periods/${selectedPeriod.id}/${action}`, undefined);
-      let text = '';
-      switch (action) {
-        case 'calculate': {
-          const pdfs = Number((result as { pdfs?: number } | null)?.pdfs ?? 0);
-          text = pdfs > 0
-            ? `Period calculated. Payslip rows and ${pdfs} PDF${pdfs === 1 ? '' : 's'} ready.`
-            : 'Period calculated. Payslip rows refreshed below.';
-          break;
-        }
-        case 'approve': text = 'Period approved — FX rates frozen at pay day.'; break;
-        case 'reopen': text = 'Period reopened for adjustments.'; break;
-        case 'push-wallets': {
-          const r = result as { credited?: number; skipped?: number; skipped_no_fx?: string[] } | null;
-          const noFx = r?.skipped_no_fx?.length ?? 0;
-          text = `Wallets pushed — ${r?.credited ?? 0} credited, ${r?.skipped ?? 0} skipped (already credited or zero net${noFx ? `; ${noFx} missing an exchange rate` : ''}).`;
-          break;
-        }
-        case 'mark-paid': text = 'Period marked as paid.'; break;
-      }
-      setActionMessage({ kind: 'success', text });
-      await loadPeriods(selectedPeriod.id);
-      await loadSummaries(selectedPeriod.id);
-    } catch (e: unknown) {
-      setActionMessage({ kind: 'error', text: e instanceof Error ? e.message : `Failed to ${action.replace('-', ' ')}.` });
-    } finally {
-      setActionBusy(null);
-    }
-  }
 
   async function handleGeneratePayslips() {
     if (!selectedPeriod) return;
@@ -548,8 +500,10 @@ export default function PayrollWorkbenchPage() {
       );
       setActionMessage({
         kind: 'success',
-        text: `Payslip PDFs ready — ${result.total} file${result.total === 1 ? '' : 's'}.`,
+        text: `Payslip PDFs ready — ${result.total} file${result.total === 1 ? '' : 's'}. Opening Payslips…`,
       });
+      // Review net pay, open each PDF and send them from the Payslips page.
+      router.push(`/admin/payroll/payslips?period=${selectedPeriod.id}`);
     } catch (e: unknown) {
       setActionMessage({ kind: 'error', text: e instanceof Error ? e.message : 'Failed to generate payslip PDFs.' });
     } finally {
@@ -590,7 +544,9 @@ export default function PayrollWorkbenchPage() {
 
   // Spreadsheet columns: select, worker, 3 worker details, 3 work dates, 10 pay columns
   // (+flags), status, wallet credited, paid, notes, actions.
-  const payColCount = 10 + (showFlags ? 1 : 0);
+  // Pay columns: hours, rate, base, bonus, calculated / final gross, difference,
+  // 3 deductions, net, currency, confirmed (+ flags).
+  const payColCount = 13 + (showFlags ? 1 : 0);
   const colCount = 2 + 3 + 3 + payColCount + 4 + 1;
   const noSummaryColSpan = payColCount;
 
@@ -615,11 +571,6 @@ export default function PayrollWorkbenchPage() {
   }
 
   const status = selectedPeriod?.status;
-  const canCalculate = status === 'open' || status === 'calculated';
-  const canApprove = status === 'calculated';
-  const canReopen = status === 'calculated' || status === 'approved';
-  const canPush = status === 'approved';
-  const canMarkPaid = status === 'approved';
   const summariesLocked = status === 'approved' || status === 'paid';
 
   const payslipsAvailable = status !== 'open' || ledger.some((row) => row.summary);
@@ -630,48 +581,13 @@ export default function PayrollWorkbenchPage() {
     return `${new Date(Math.min(...starts)).toLocaleDateString()} – ${new Date(Math.max(...ends)).toLocaleDateString()}`;
   }, [periods]);
 
-  const confirmMeta = confirmAction ? FINANCE_CONFIRM_META[confirmAction] : null;
-  const confirmBody: ReactNode = (() => {
-    if (!confirmAction || !selectedPeriod) return null;
-    const label = selectedPeriod.label;
-    if (confirmAction === 'approve') {
-      return (
-        <>
-          Approve <span className="font-semibold text-theme-heading">“{label}”</span>?
-          This freezes FX rates at pay day. You can still reopen later until the month is marked paid.
-        </>
-      );
-    }
-    if (confirmAction === 'push-wallets') {
-      return (
-        <>
-          Push payouts for <span className="font-semibold text-theme-heading">“{label}”</span> to worker wallets?
-          Credits are idempotent — already-credited workers are skipped.
-        </>
-      );
-    }
-    return (
-      <>
-        Mark <span className="font-semibold text-theme-heading">“{label}”</span> as paid?
-        Reopening is no longer possible after this.
-      </>
-    );
-  })();
-
-  const monthActions = selectedPeriod ? [{ action: 'calculate' as const, label: status === 'calculated' ? 'Recalculate' : 'Calculate', icon: Calculator, enabled: canCalculate, primary: false, title: 'Pull finished session hours into this month. Does not pay anyone.' },
-                    { action: 'approve' as const, label: 'Approve', icon: CheckCircle, enabled: canApprove, primary: status === 'calculated', title: canApprove ? 'Lock this month and freeze FX. Required before Wallets.' : 'Calculate first, then Approve.' },
-                    { action: 'reopen' as const, label: 'Reopen', icon: RotateCcw, enabled: canReopen, primary: false, title: 'Unlock the month so you can edit payslips again. Does not delete rows.' },
-                    { action: 'push-wallets' as const, label: 'Wallets', icon: Wallet, enabled: canPush, primary: status === 'approved' && !selectedPeriod.wallet_pushed_at, title: canPush ? 'Credit each worker wallet with this month’s net pay.' : 'Approve this month first. Entering a rate does not credit wallets.' },
-                    { action: 'mark-paid' as const, label: 'Mark Paid', icon: Send, enabled: canMarkPaid, primary: status === 'approved' && !!selectedPeriod.wallet_pushed_at, title: canMarkPaid ? 'Mark the month paid after wallets are credited.' : 'Approve, then push Wallets, then Mark Paid.' },
-                  ] : [];
-
   // ── Render ──
 
   return (
     <div>
       <PageHeader
         compact
-        title="Finance"
+        title="Control Panel"
 
         besideTitle={
           periodsLoading ? (
@@ -722,17 +638,17 @@ export default function PayrollWorkbenchPage() {
           </div>}
       />
       <nav aria-label="Finance navigation" className="flex items-center gap-1 border-b border-theme pb-2 mb-3 overflow-x-auto whitespace-nowrap">
-        {[...PAYROLL_TABS.filter((tab) => ['Payroll', 'Wallets', 'Reports'].includes(tab.label)),
-          ...PAYROLL_TABS.filter((tab) => !['Payroll', 'Wallets', 'Reports'].includes(tab.label)),
-          { label: 'Enter month data', href: `/admin/payroll/month-data${selectedPeriod ? `?period=${selectedPeriod.id}` : ''}` },
+        {[...PAYROLL_TABS.filter((tab) => ['Payroll', 'Add month data', 'Wallets', 'Reports'].includes(tab.label)),
+          ...PAYROLL_TABS.filter((tab) => !['Payroll', 'Add month data', 'Wallets', 'Reports'].includes(tab.label)),
         ].map((tab) => (
           <Link key={tab.href} href={tab.href} aria-current={tab.label === 'Payroll' ? 'page' : undefined}
             className={`shrink-0 px-2.5 py-2 text-xs font-semibold rounded-lg ${tab.label === 'Payroll' ? 'bg-emerald-accent/10 text-emerald-accent' : 'text-theme-muted hover:text-theme-heading'}`}>
-            {tab.label}
+            {tab.label === 'Payroll' ? 'Control Panel' : tab.label}
           </Link>
         ))}
       </nav>
 
+      {actionMessage && <Banner kind={actionMessage.kind} onDismiss={() => setActionMessage(null)}>{actionMessage.text}</Banner>}
       {periodsLoading ? (
         <div className="flex justify-center py-16"><SpinningDots size="lg" className="text-emerald-accent" /></div>
       ) : periodsError ? (
@@ -763,77 +679,8 @@ export default function PayrollWorkbenchPage() {
                 </div>
               )}
 
-              {selectedPeriod && (
-                <>
-                  {/* ── Action bar ── */}
-                  <div className="mb-3">
-                <div className="flex flex-wrap items-center gap-3">
-
-                  <Link
-                    href={`/admin/payroll/ledger?period=${selectedPeriod.id}`}
-                    title="Every worker's payslip for the month on one sheet: hours, rate, bonus, costs and FX."
-                    className="btn-primary text-xs py-2 px-3 inline-flex items-center gap-1.5"
-                  >
-                    <Table2 size={13} /> Payroll ledger
-                  </Link>
-                  {!summariesLocked && (
-                    <button
-                      type="button"
-                      onClick={() => setApplyOpen(true)}
-                      title="Set the same rate, bonus, or currency on many workers at once."
-                      className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5"
-                    >
-                      <Users size={13} /> Apply to many
-                    </button>
-                  )}
-                  {monthActions.filter((item) => item.action === 'calculate' || item.action === 'approve').map(({ action, label, icon: Icon, enabled, primary, title }) => (
-                    <button key={action} type="button" onClick={() => requestAction(action)}
-                      disabled={!enabled || actionBusy !== null}
-                      title={title}
-                      className={`${primary ? 'btn-primary' : 'btn-secondary'} text-xs py-2 px-3.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}>
-                      {actionBusy === action ? <SpinningDots size="sm" /> : <Icon size={13} />}
-                      {label}
-                    </button>
-                  ))}
-
-
-{monthActions.filter((item) => item.action !== 'calculate' && item.action !== 'approve').map(({ action, label, icon: Icon, enabled, primary, title }) => (
-                    <button key={action} type="button" onClick={() => requestAction(action)}
-                      disabled={!enabled || actionBusy !== null}
-                      title={title}
-                      className={`${primary ? 'btn-primary' : 'btn-secondary'} text-xs py-2 px-3.5 flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed`}>
-                      {actionBusy === action ? <SpinningDots size="sm" /> : <Icon size={13} />}
-                      {label}
-                    </button>
-                  ))}
-<Link href="/admin/payroll/export" className="btn-secondary text-xs py-2 px-3 inline-flex items-center gap-1.5">Export</Link><div className="ml-auto"><PeriodNameEditor iconOnly
-                      period={selectedPeriod}
-                      onRenamed={(label) => setPeriods((prev) =>
-                        prev.map((p) => (p.id === selectedPeriod.id ? { ...p, label } : p)))}
-                      onDeleted={() => {
-                        const idx = periods.findIndex((p) => p.id === selectedPeriod.id);
-                        const fallback = periods[idx + 1] ?? periods[idx - 1];
-                        void loadPeriods(fallback?.id);
-                      }}
-                    /></div>
-                </div>
-                <div className="flex flex-wrap gap-4 text-[11px] text-theme-muted">
-                  {selectedPeriod.approved_by && <span>Approved by: {selectedPeriod.approved_by}</span>}
-                  {selectedPeriod.wallet_pushed_at && <span>Wallets pushed: {new Date(selectedPeriod.wallet_pushed_at).toLocaleString()}</span>}
-                  {selectedPeriod.paid_at && <span>Paid: {new Date(selectedPeriod.paid_at).toLocaleString()}</span>}
-                </div>
-                  </div>
-
-                  {actionMessage && (
-                    <Banner kind={actionMessage.kind} onDismiss={() => setActionMessage(null)}>{actionMessage.text}</Banner>
-                  )}
-                </>
-              )}
-
-              {/* ── KPI cards ── */}
-              {/* One card: the month's total net pay in USD. */}
-              <PayTotalsCards rows={visibleRows} />
-
+              {isAllPeriods ? (
+              <>
               {/* ── Audience filter + search ── */}
                   <div className="flex flex-wrap items-center gap-3 mb-4">
                     <div className="flex items-center gap-1 bg-white/[0.04] border border-white/10 rounded-xl p-1">
@@ -875,7 +722,7 @@ export default function PayrollWorkbenchPage() {
                               ))}
                             </tr>
                             <tr className="border-b border-white/5">
-                              <th className="sticky top-[30px] left-0 z-30 px-3 py-2.5 w-9" style={{ background: 'var(--surface-container)' }}>
+                              <th className="sticky top-[30px] z-40 px-3 py-2.5 w-11 min-w-11" style={{ background: 'var(--surface-container)', left: 0 }}>
                                 {!isAllPeriods && (
                                   <input type="checkbox" checked={allVisibleSelected} onChange={toggleAllVisible}
                                     aria-label="Select all visible workers" className="accent-emerald-400" />
@@ -885,8 +732,8 @@ export default function PayrollWorkbenchPage() {
                                 <th key={c.label || `col-${i}`} title={c.hint}
                                   className={`sticky top-[30px] px-3 py-2.5 text-[10px] font-bold uppercase tracking-wider text-theme-muted whitespace-nowrap ${
                                     c.align === 'right' ? 'text-right' : 'text-left'
-                                  } ${c.label === 'Worker' ? 'left-9 z-30 min-w-[11rem]' : 'z-20'}`}
-                                  style={{ background: 'var(--surface-container)' }}>
+                                  } ${c.label === 'Worker' ? 'z-40 min-w-[11rem]' : 'z-20'}`}
+                                  style={{ background: 'var(--surface-container)', ...(c.label === 'Worker' ? { position: 'sticky' as const, left: '44px', zIndex: 40 } : {}) }}>
                                   {c.label}
                                 </th>
                               ))}
@@ -906,20 +753,18 @@ export default function PayrollWorkbenchPage() {
                               const rowPeriod = isAllPeriods
                                 ? periods.find((p) => p.id === r.period_id) ?? null
                                 : selectedPeriod;
+                              const rowLocked = isAllPeriods || summariesLocked;
                               return (
                                 <tr key={isAllPeriods ? `${r.period_id}:${r.worker_id}` : r.worker_id} className="border-b border-white/[0.03] hover:bg-white/[0.02] transition-colors">
-                                  <td className="sticky left-0 z-10 px-3 py-2.5" style={{ background: 'var(--surface-container)' }}>
+                                  <td className="sticky z-30 w-11 min-w-11 px-3 py-2.5" style={{ background: 'var(--surface-container)', left: 0 }}>
                                     {!isAllPeriods && (
                                       <input type="checkbox" checked={selectedIds.has(r.worker_id)}
                                         onChange={() => toggleRow(r.worker_id)}
                                         aria-label={`Select ${r.worker_display_name}`} className="accent-emerald-400" />
                                     )}
                                   </td>
-                                  <td className="sticky left-9 z-10 px-3 py-2.5 min-w-[11rem] border-r border-white/[0.06]" style={{ background: 'var(--surface-container)' }}>
+                                  <td className="sticky z-30 px-3 py-2.5 min-w-[11rem] border-r border-white/[0.06]" style={{ background: 'var(--surface-container)', left: '44px' }}>
                                     <p className="font-medium text-theme-heading whitespace-nowrap">{r.worker_display_name}</p>
-                                    <p className="text-[11px] text-theme-muted whitespace-nowrap">
-                                      {r.worker_type === 'partner_worker' ? 'Partner' : 'GS'}
-                                    </p>
                                   </td>
                                   {/* Worker details */}
                                   <td className="px-3 py-2.5 whitespace-nowrap">
@@ -929,33 +774,59 @@ export default function PayrollWorkbenchPage() {
                                   </td>
                                   <td className="px-3 py-2.5 whitespace-nowrap text-theme-heading">{r.worker_country || '—'}</td>
                                   <td className="px-3 py-2.5 whitespace-nowrap text-theme-heading">{r.worker_pay_tier || '—'}</td>
-                                  {/* Work dates */}
-                                  <td className="px-3 py-2.5 whitespace-nowrap text-theme-heading">{rowPeriod?.label ?? '—'}</td>
-                                  <td className="px-3 py-2.5 whitespace-nowrap text-theme-muted">{sheetDate(rowPeriod?.start_date)}</td>
-                                  <td className="px-3 py-2.5 whitespace-nowrap text-theme-muted">{sheetDate(rowPeriod?.end_date)}</td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap text-theme-heading">{rowPeriod?.start_date ? new Date(`${rowPeriod.start_date.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: 'numeric' }) : rowPeriod?.label ?? '—'}</td>
                                   {s ? (
                                     <>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading">
-                                        {Number(s.hours_logged ?? r.suggested_hours ?? 0).toFixed(2)}
+                                        <EditableCell label="hours" locked={rowLocked} inputWidth="w-20"
+                                          hint="Edit hours (typed hours replace the session hours in the Hours Log)"
+                                          value={String(Number(s.hours_logged ?? r.suggested_hours ?? 0))}
+                                          onSave={(v) => patchSummary(s.id, { admin_locked: Boolean(s.admin_locked), hours_logged: v === '' ? null : Number(v) })}
+                                          display={Number(s.hours_logged ?? r.suggested_hours ?? 0).toFixed(2)} />
                                         {(r.session_count ?? 0) > 0 && (
                                           <span className="block text-[10px] font-normal text-theme-muted">
                                             {r.session_count} session{r.session_count === 1 ? '' : 's'}
                                           </span>
                                         )}
                                       </td>
-                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">{fmt(s.rate_per_hour, cur)}<span className="text-[10px] text-theme-muted">/hr</span></td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">
+                                        <EditableCell label="hourly rate" locked={rowLocked}
+                                          hint="Edit the hourly rate (this payslip stops following the tier)"
+                                          value={String(Number(s.rate_per_hour))}
+                                          onSave={(v) => patchSummary(s.id, { rate_per_hour: Number(v || 0) })}
+                                          display={<>{formatLocalAndUsd(s.rate_per_hour, cur)}<span className="text-[10px] text-theme-muted">/hr</span></>} />
+                                      </td>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">{fmt(s.base_pay, cur)}</td>
-                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">{fmt(s.bonus, cur)}</td>
-                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">{fmt(s.gross_earned, cur)}</td>
-                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">{fmt(s.transfer_cost, cur)}</td>
-                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">{fmt(s.external_cost, cur)}</td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-heading whitespace-nowrap">
+                                        <EditableCell label="bonus" locked={rowLocked} value={String(Number(s.bonus))}
+                                          onSave={(v) => patchSummary(s.id, { admin_locked: Boolean(s.admin_locked), bonus: Number(v || 0) })}
+                                          display={fmt(s.bonus, cur)} />
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">{fmt(s.calculated_gross ?? s.gross_earned, cur)}</td>
+                                      <td className="px-3 py-2.5 text-right whitespace-nowrap">
+                                        <FinalGrossCell summary={{ ...s, local_currency: cur }} locked={isAllPeriods || summariesLocked} onSaved={reloadRows} />
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right whitespace-nowrap"><GrossDifferenceCell summary={{ ...s, local_currency: cur }} /></td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">
+                                        <EditableCell label="transfer cost" locked={rowLocked} value={String(Number(s.transfer_cost))}
+                                          onSave={(v) => patchSummary(s.id, { admin_locked: Boolean(s.admin_locked), transfer_cost: Number(v || 0) })}
+                                          display={fmt(s.transfer_cost, cur)} />
+                                      </td>
+                                      <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">
+                                        <EditableCell label="external cost" locked={rowLocked} value={String(Number(s.external_cost))}
+                                          onSave={(v) => patchSummary(s.id, { admin_locked: Boolean(s.admin_locked), external_cost: Number(v || 0) })}
+                                          display={fmt(s.external_cost, cur)} />
+                                      </td>
                                       <td className="px-3 py-2.5 text-right tabular-nums text-theme-muted whitespace-nowrap">{fmt(s.total_deductions, cur)}</td>
                                       <td className={`px-3 py-2.5 text-right tabular-nums font-bold whitespace-nowrap ${
                                         Number(s.final_net) < 0 ? 'text-danger' : 'text-emerald-accent'
                                       }`}>
-                                        {fmt(s.final_net, cur)}
+                                        {formatLocalAndUsd(s.final_net, cur)}
                                       </td>
                                       <td className="px-3 py-2.5 text-left font-mono text-[11px] text-theme-muted">{displayCurrencyFor(cur) || cur}</td>
+                                      <td className="px-3 py-2.5 whitespace-nowrap">
+                                        <ConfirmFinalCell summary={{ ...s, local_currency: cur }} locked={isAllPeriods || summariesLocked} onSaved={reloadRows} />
+                                      </td>
                                       {showFlags && (
                                         <td className="px-3 py-2.5"><FlagChips flags={s.exception_flags ?? []} /></td>
                                       )}
@@ -973,7 +844,15 @@ export default function PayrollWorkbenchPage() {
                                   </td>
                                   <td className="px-3 py-2.5 whitespace-nowrap text-theme-muted">{sheetDate(rowPeriod?.wallet_pushed_at)}</td>
                                   <td className="px-3 py-2.5 whitespace-nowrap text-theme-muted">{sheetDate(rowPeriod?.paid_at)}</td>
-                                  <td className="px-3 py-2.5 whitespace-nowrap text-[12px] text-theme-muted">{sheetNotes(r)}</td>
+                                  <td className="px-3 py-2.5 whitespace-nowrap text-[12px] text-theme-muted">
+                                    {s ? (
+                                      <EditableCell label="notes" type="text" align="left" inputWidth="w-48" locked={rowLocked}
+                                        hint="Edit the note (leave blank to show the work month)"
+                                        value={s.notes ?? ''}
+                                        onSave={(v) => patchSummary(s.id, { notes: v || null })}
+                                        display={sheetNotes(r, rowPeriod?.label)} />
+                                    ) : sheetNotes(r, rowPeriod?.label)}
+                                  </td>
                                   <td className="px-3 py-2.5 text-right">
                                     {!isAllPeriods && (
                                       <button type="button" onClick={() => setDetailRow(r)}
@@ -997,6 +876,10 @@ export default function PayrollWorkbenchPage() {
                       )}
                     </div>
                   )}
+              </>
+              ) : selectedPeriod ? (
+                <PayrollControlPanel periodId={selectedPeriod.id} />
+              ) : null}
             </>
           )}
         </>
@@ -1034,36 +917,6 @@ export default function PayrollWorkbenchPage() {
           disabled={status === 'open' && ledger.every((r) => !r.summary)}
           open={payslipsOpen}
           onOpenChange={setPayslipsOpen}
-        />
-      )}
-      {applyOpen && !summariesLocked && selectedPeriod && (
-        <ApplyToManyPanel
-          open={applyOpen}
-          onClose={() => setApplyOpen(false)}
-          periodId={selectedPeriod.id}
-          periodLabel={selectedPeriod.label}
-          periodCurrency={selectedPeriod.currency}
-          rows={visibleRows}
-          selectedIds={selectedIds}
-          onApplied={(count) => {
-            setActionMessage({ kind: 'success', text: `Applied to ${count} worker${count === 1 ? '' : 's'}.` });
-            loadSummaries(selectedPeriod.id);
-            loadPeriods(selectedPeriod.id);
-          }}
-          onError={(text) => setActionMessage({ kind: 'error', text })}
-        />
-      )}
-      {confirmAction && selectedPeriod && confirmMeta && (
-        <ConfirmModal
-          open
-          title={confirmMeta.title}
-          body={confirmBody}
-          confirmLabel={confirmMeta.confirmLabel}
-          tone={confirmMeta.tone}
-          icon={confirmMeta.icon}
-          busy={actionBusy === confirmAction}
-          onCancel={() => { if (actionBusy !== confirmAction) setConfirmAction(null); }}
-          onConfirm={() => void executeAction(confirmAction)}
         />
       )}
     </div>

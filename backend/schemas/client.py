@@ -3,7 +3,7 @@ from decimal import Decimal
 from typing import Any, Optional
 from uuid import UUID
 
-from pydantic import ConfigDict, field_validator
+from pydantic import ConfigDict, Field, field_validator
 from sqlmodel import SQLModel
 
 from models.enums import ClientContractStatusEnum, ClientOwnerTypeEnum
@@ -12,6 +12,7 @@ from models.enums import ClientContractStatusEnum, ClientOwnerTypeEnum
 class ClientBase(SQLModel):
     name:                    str
     platform:                str
+    account_holder:          Optional[str] = None
     billing_rate_usd:        Optional[Decimal] = None
     account_email:           Optional[str] = None
     account_id:              Optional[str] = None
@@ -23,7 +24,7 @@ class ClientBase(SQLModel):
     notes:                   Optional[str] = None
     document_urls:           list[Any] = []
     payment_tier_id:         Optional[UUID] = None
-    hours_from_desktops:     bool = False
+    hours_from_desktops:     bool = True
     payout_currency:         Optional[str] = None
     payout_email:            Optional[str] = None
     payout_method:           Optional[str] = None
@@ -37,6 +38,7 @@ class ClientCreate(ClientBase):
 class ClientUpdate(SQLModel):
     name:                    Optional[str] = None
     platform:                Optional[str] = None
+    account_holder:          Optional[str] = None
     billing_rate_usd:        Optional[Decimal] = None
     account_email:           Optional[str] = None
     account_id:              Optional[str] = None
@@ -62,6 +64,7 @@ class ClientResponse(ClientBase):
     updated_at: datetime
     owner_name: Optional[str] = None
     rdp_count:  Optional[int] = None
+    linked_workers: list[str] = Field(default_factory=list)
     gs_pct:     Optional[Decimal] = None
     owner_pct:  Optional[Decimal] = None
     tier_name:  Optional[str] = None
@@ -124,6 +127,8 @@ class ClientRevenueAgreementResponse(ClientRevenueAgreementBase):
     model_config = ConfigDict(from_attributes=True)
     id:         UUID
     created_at: datetime
+    third_party_name: Optional[str] = None
+    third_party_pct:  Decimal = Decimal("0")
 
 
 # ── ClientPeriodEarning ───────────────────────────────────────────────────────

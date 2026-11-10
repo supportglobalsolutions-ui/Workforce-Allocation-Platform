@@ -8,6 +8,7 @@ import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import SpinningDots from '@/components/shared/SpinningDots';
 import { api } from '@/lib/api';
+import { useAuth } from '@/lib/auth/AuthProvider';
 import { formatMoney, formatMoneyTotals, moneyTotalsList, useMoneyDisplay } from '@/lib/money';
 
 // ── Types ──────────────────────────────────────────────────────────────────────
@@ -278,6 +279,8 @@ function totalsByCurrency(rows: PayoutRow[]) {
 }
 
 function SendPayModal({ onClose, onDone }: { onClose: () => void; onDone: (message: string) => void }) {
+  const { session } = useAuth();
+  const isSuper = session?.authRole === 'super_admin';
   const [periods, setPeriods] = useState<PayoutPeriod[] | null>(null);
   const [periodId, setPeriodId] = useState('');
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -373,7 +376,9 @@ function SendPayModal({ onClose, onDone }: { onClose: () => void; onDone: (messa
                 {period && (
                   <p className="text-[11px] text-theme-muted mt-1.5">
                     Work dates {fmtDay(period.start_date)} – {fmtDay(period.end_date)}
-                    {period.status === 'calculated' && ' · not approved yet — sending will approve it and lock exchange rates'}
+                    {period.status === 'calculated' && (isSuper
+                      ? ' · not approved yet — sending will approve it and lock exchange rates'
+                      : ' · not approved yet — a Super Admin must approve it before pay is sent')}
                   </p>
                 )}
               </div>
@@ -434,7 +439,7 @@ function SendPayModal({ onClose, onDone }: { onClose: () => void; onDone: (messa
 
         <div className="flex gap-3 justify-end p-5 border-t border-white/[0.06] shrink-0">
           <button type="button" onClick={onClose} className="btn-secondary text-sm py-2 px-4">Cancel</button>
-          <button type="button" onClick={send} disabled={sending || chosen.length === 0}
+          <button type="button" onClick={send} disabled={sending || chosen.length === 0 || (period?.status === 'calculated' && !isSuper)}
             className="btn-primary text-sm py-2 px-4 flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed">
             {sending ? <SpinningDots size="sm" className="text-emerald-accent" /> : <Send size={14} />}
             {period?.status === 'calculated' ? 'Approve & send' : 'Send'} to {chosen.length} wallet{chosen.length === 1 ? '' : 's'}

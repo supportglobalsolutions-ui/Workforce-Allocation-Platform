@@ -16,11 +16,18 @@ interface AppShellProps {
 
 export default function AppShell({ children, role }: AppShellProps) {
   const pathname = usePathname();
+  const spreadsheetTables = true;
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => {
     if (typeof window === 'undefined') return false;
     return localStorage.getItem(SIDEBAR_STORAGE_KEY) === 'true';
   });
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+
+  // Keep every platform table consistent, including dialogs rendered through a portal.
+  useEffect(() => {
+    document.body.classList.toggle('finance-table-design', spreadsheetTables);
+    return () => document.body.classList.remove('finance-table-design');
+  }, [spreadsheetTables]);
 
   useEffect(() => {
     setMobileSidebarOpen(false);
@@ -62,7 +69,7 @@ export default function AppShell({ children, role }: AppShellProps) {
   const effectiveCollapsed = mobileSidebarOpen ? false : sidebarCollapsed;
 
   return (
-    <div className="min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-clip">
+    <div className={`min-h-screen bg-brand-background text-brand-on-surface flex font-sans overflow-x-clip ${spreadsheetTables ? 'finance-table-design' : ''}`}>
       {mobileSidebarOpen && (
         <button
           type="button"

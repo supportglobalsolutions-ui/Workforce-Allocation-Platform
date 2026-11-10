@@ -548,7 +548,7 @@ def resume_existing_claim(
             session_type=SessionTypeEnum.gs_rdp,
             allocation_id=allocation.id,
             rdp_resource_id=resource.id,
-            client_id=resource.client_id,
+            client_id=None,
             start_time=now,
             type_specific_fields={},
         )

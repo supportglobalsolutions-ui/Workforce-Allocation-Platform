@@ -1,11 +1,12 @@
 """
 Shared-cost ledger and monthly member approvals.
 
-A ledger entry is one cost (or bonus) for a work month, entered once in the
-month's reporting currency and split across workers and/or clients. Each
-recipient's share is an allocation row; worker shares are added to the chosen
-payslip field, client shares are deducted from that client's earnings before
-the GS / account-owner split.
+A ledger entry is one cost for a work month, entered once in the month's
+reporting currency with a category and a description. It is distributed later
+across workers, clients and Global Solutions. Each worker or client share is an
+allocation row; worker shares are added to the payslip field the category maps
+to, client shares are deducted from that client's earnings before the
+GS / account-owner split, and the Global Solutions share is a GS expense.
 """
 import uuid
 from datetime import datetime
@@ -34,6 +35,10 @@ class CostLedgerEntry(SQLModel, table=True):
         ),
         CheckConstraint("worker_mode IN ('equal', 'percent')", name="ck_cost_ledger_entries_worker_mode"),
         CheckConstraint("client_mode IN ('equal', 'percent')", name="ck_cost_ledger_entries_client_mode"),
+        CheckConstraint(
+            "gs_pool_pct >= 0 AND worker_pool_pct + gs_pool_pct <= 100",
+            name="ck_cost_ledger_entries_gs_pool_pct",
+        ),
     )
 
     id: uuid.UUID = Field(
@@ -45,14 +50,28 @@ class CostLedgerEntry(SQLModel, table=True):
             PGUUID(as_uuid=True), ForeignKey("payroll_periods.id", ondelete="CASCADE"), nullable=False, index=True,
         ),
     )
+    # e.g. "Transfer cost", "External cost" or one the admin typed.
+    category: str = Field(sa_column=Column(String(64), nullable=False))
+    # The description.
     title: str = Field(sa_column=Column(String(255), nullable=False))
     notes: Optional[str] = Field(default=None, sa_column=Column(Text, nullable=True))
     # In the period's reporting currency.
     total_amount: Decimal = Field(sa_column=Column(Numeric(14, 2), nullable=False))
     currency: str = Field(sa_column=Column(String(3), nullable=False))
     target_field: str = Field(sa_column=Column(String(32), nullable=False))
-    # Share of the total that goes to workers; the rest goes to clients.
+    # Shares of the total for workers and Global Solutions; the rest goes to clients.
     worker_pool_pct: Decimal = Field(sa_column=Column(Numeric(5, 2), nullable=False))
+    gs_pool_pct: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(5, 2), nullable=False, server_default="0"),
+    )
+    # What Global Solutions bears, in the reporting currency.
+    gs_amount: Decimal = Field(
+        default=Decimal("0"), sa_column=Column(Numeric(14, 2), nullable=False, server_default="0"),
+    )
+    # Null until the cost is distributed; an undistributed cost touches no payslip or client.
+    distributed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True),
+    )
     worker_mode: str = Field(default="equal", sa_column=Column(String(16), nullable=False, server_default="equal"))
     client_mode: str = Field(default="equal", sa_column=Column(String(16), nullable=False, server_default="equal"))
     created_by: Optional[uuid.UUID] = Field(

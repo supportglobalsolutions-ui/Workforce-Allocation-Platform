@@ -3,7 +3,7 @@ Destructive-action confirmation codes.
 
 A work-period delete (and any later action that uses the same path) cannot
 complete until a 6-digit code sent to the ops alert inbox is entered. Codes
-expire in three minutes. After the alert email is changed, codes keep going to
+expire in five minutes. After the alert email is changed, codes keep going to
 the previous inbox for 24 hours so swapping the address cannot immediately
 authorize a delete.
 """
@@ -32,7 +32,7 @@ from services.email_resend import send_email
 
 logger = logging.getLogger(__name__)
 
-OTP_TTL = timedelta(minutes=3)
+OTP_TTL = timedelta(minutes=5)
 OTP_COOLDOWN = timedelta(hours=24)
 OTP_MAX_ATTEMPTS = 5
 OTP_RESEND_SECONDS = 30

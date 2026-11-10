@@ -660,7 +660,7 @@ def render_otp_html(*, title: str, intro: str, warning: str) -> str:
           </tr>
         </table>
         <p style="margin:0 0 8px; font-size:13px; color:{_MUTED};">
-          This code expires in 3 minutes and can be used only once.
+          This code expires in 5 minutes and can be used only once.
         </p>
         <p style="margin:0; font-size:13px; color:{_GOLD};">{warning}</p>
     """
@@ -675,7 +675,7 @@ def render_otp_html(*, title: str, intro: str, warning: str) -> str:
 def render_otp_text(*, title: str, intro: str, warning: str) -> str:
     return (
         f"{title}\n\n{intro}\n\nCode: {{{{CODE}}}}\n\n"
-        f"Expires in 3 minutes. {warning}\n"
+        f"Expires in 5 minutes. {warning}\n"
         "If you did not start this, ignore the email."
     )
 
@@ -700,7 +700,7 @@ def render_login_otp_html(*, title: str, intro: str) -> str:
           </tr>
         </table>
         <p style="margin:0 0 8px; font-size:13px; color:{_MUTED};">
-          This code expires in 3 minutes and can be used only once.
+          This code expires in 5 minutes and can be used only once.
         </p>
         <p style="margin:0; font-size:13px; color:{_GOLD};">
           If you did not try to sign in, ignore this email and contact your administrator.
@@ -789,6 +789,50 @@ def render_account_invite_text(*, name: str, setup_url: str, role_label: str) ->
     )
 
 
+def render_password_recovery_html(*, name: str, setup_url: str) -> str:
+    """Forgot-password email: one-time link to choose a new password."""
+    safe_name = html.escape((name or "there").replace("\n", " ").strip()[:80] or "there")
+    safe_url = html.escape(setup_url, quote=True)
+    body = f"""
+        <h2 style="margin:0 0 12px; font-size:18px; font-weight:700; color:{_HEADING};">Reset your password</h2>
+        <p style="margin:0 0 18px; font-size:14px; line-height:1.6; color:{_TEXT};">
+          Hello {safe_name}, we received a request to reset your GlobalSolutions password.
+          Use the button below to choose a new one. If you did not ask for this, you can ignore the email.
+        </p>
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" style="margin:0 0 18px;">
+          <tr>
+            <td bgcolor="{_EMERALD}" style="background-color:{_EMERALD}; border-radius:10px;">
+              <a href="{safe_url}" style="display:inline-block; padding:14px 28px; font-size:14px;
+                 font-weight:700; color:#01241c; text-decoration:none;">Choose a new password</a>
+            </td>
+          </tr>
+        </table>
+        <p style="margin:0 0 10px; font-size:13px; color:{_MUTED};">
+          Or open this link: <a href="{safe_url}" style="color:{_EMERALD};">{safe_url}</a>
+        </p>
+        <p style="margin:0; font-size:13px; color:{_MUTED};">
+          This link can only be used once and expires soon.
+        </p>
+    """
+    return _email_shell(
+        eyebrow="GlobalSolutions · Security",
+        heading="Password reset",
+        body=body,
+        footer="If you did not request a password reset, you can ignore this email.",
+    )
+
+
+def render_password_recovery_text(*, name: str, setup_url: str) -> str:
+    return (
+        f"Hello {name or 'there'},\n\n"
+        "We received a request to reset your GlobalSolutions password.\n"
+        "Choose a new password here:\n"
+        f"{setup_url}\n\n"
+        "This link can only be used once. If you did not request it, ignore this email.\n\n"
+        "— GlobalSolutions Workforce Platform"
+    )
+
+
 def render_account_approved_text(*, name: str, login_url: str) -> str:
     return (
         f"Hello {name or 'there'},\n\n"
@@ -823,6 +867,6 @@ def send_account_approved_email(to_email: str, display_name: str) -> None:
 def render_login_otp_text(*, title: str, intro: str) -> str:
     return (
         f"{title}\n\n{intro}\n\nSign-in code: {{{{CODE}}}}\n\n"
-        "Expires in 3 minutes. If you did not try to sign in, ignore this email.\n"
+        "Expires in 5 minutes. If you did not try to sign in, ignore this email.\n"
         "— GlobalSolutions Workforce Platform"
     )

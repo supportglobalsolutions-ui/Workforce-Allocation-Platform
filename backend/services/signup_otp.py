@@ -44,7 +44,7 @@ def deliver_signup_otp_email(*, to_email: str, code: str) -> None:
     title = "Confirm your email"
     intro = (
         "Use this code to confirm your email before your GlobalSolutions account is created. "
-        "It expires in 3 minutes."
+        "It expires in 5 minutes."
     )
     html = render_login_otp_html(title=title, intro=intro).replace("{{CODE}}", code)
     text = render_login_otp_text(title=title, intro=intro).replace("{{CODE}}", code)

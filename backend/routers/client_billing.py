@@ -1,9 +1,9 @@
 """
 Client ledger (/client-billing): each client's month in one row.
 
-Billed hours, rate, expected and received income, client % and costs, and the
-split worked out from them (services.client_billing). Edits apply to one
-client or to many at once.
+Billed hours, rate, expected and received income, costs, and the client split
+between recipients (services.client_billing). Edits apply to one client or to
+many at once.
 """
 from datetime import date
 from decimal import Decimal
@@ -25,6 +25,14 @@ from .deps import get_admin_user
 router = APIRouter()
 
 
+class Recipient(BaseModel):
+    payee_id: Optional[UUID] = None
+    name: Optional[str] = Field(default=None, max_length=120)
+    pct: Decimal = Field(default=Decimal("0"), ge=0, le=100)
+    # Typed USD amount for this month; null uses net distributable × pct.
+    amount_override: Optional[Decimal] = None
+
+
 class MonthEdit(BaseModel):
     """Only the fields sent are changed; send null to clear a figure."""
     actual: Optional[Decimal] = Field(default=None, ge=0)
@@ -33,8 +41,9 @@ class MonthEdit(BaseModel):
     client_costs: Optional[Decimal] = Field(default=None, ge=0)
     notes: Optional[str] = None
     hours_from_desktops: Optional[bool] = None
-    client_pct: Optional[Decimal] = Field(default=None, ge=0, le=100)
     rate: Optional[Decimal] = Field(default=None, ge=0)
+    # Client split: this month's recipients, in order (replaces them all).
+    recipients: Optional[list[Recipient]] = Field(default=None)
 
 
 class BulkEdit(MonthEdit):
@@ -48,13 +57,21 @@ def _period(db: Session, period_id: UUID) -> PayrollPeriod:
     return period
 
 
-def _sheet(db: Session, period: PayrollPeriod) -> dict:
+def _sheet(db: Session, period: PayrollPeriod, local: str = "UGX") -> dict:
+    from services.fx import ensure_rate
+
     months = client_billing.build(db, period)
+    local = (local or "UGX").strip().upper()[:3]
+    local_rate = ensure_rate(db, client_billing.BILLING_CURRENCY, local)
     return {
         "period_id": str(period.id),
         "period_label": period.label,
         "status": period.status.value if hasattr(period.status, "value") else str(period.status),
         "currency": client_billing.BILLING_CURRENCY,
+        # Client splits header: worker pay and transfer costs are also shown in this currency.
+        "local_currency": local,
+        "local_per_usd": str(local_rate) if local_rate else None,
+        "payroll_date": period.end_date.isoformat(),
         "rows": [m.to_dict() for m in months],
         "totals": client_billing.totals(months),
     }
@@ -63,10 +80,11 @@ def _sheet(db: Session, period: PayrollPeriod) -> dict:
 @router.get("/periods/{period_id}")
 def get_client_ledger(
     period_id: UUID,
+    local: str = "UGX",
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    return _sheet(db, _period(db, period_id))
+    return _sheet(db, _period(db, period_id), local)
 
 
 @router.get("/periods/{period_id}/overview")
@@ -75,7 +93,7 @@ def get_month_overview(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """The month-end checklist, money KPIs and per-client figures for one month."""
+    """Shared finance dashboard KPIs, checks and per-client figures for one period."""
     return month_overview.build(db, _period(db, period_id))
 
 
@@ -111,14 +129,23 @@ def _apply(db: Session, period: PayrollPeriod, edits: dict[UUID, dict], actor_id
         ) from exc
     after = client_billing.build(db, period, client_ids)
     client_billing.snapshot(db, period, after)
+    def _summary(m) -> dict:
+        return {
+            "revenue": str(m.billing), "net_distributable": str(m.net_distributable),
+            "recipients": [f"{r['name']}: {r['pct']}% = {r['amount']}" for r in m.recipients],
+        }
+
     for m in after:
         old = before.get(m.client_id)
+        changes = {
+            k: ([r.model_dump(mode="json") if hasattr(r, "model_dump") else r for r in v] if k == "recipients"
+                else str(v))
+            for k, v in edits[m.client_id].items()
+        }
         record_audit(
             db, actor_id=actor_id, action="client_billing.updated", target_type="client", target_id=m.client_id,
-            previous_value={"period": period.label, "basis": str(old.basis), "client_share": str(old.client_share)}
-            if old else None,
-            new_value={"period": period.label, **{k: str(v) for k, v in edits[m.client_id].items()},
-                       "basis": str(m.basis), "client_share": str(m.client_share)},
+            previous_value={"period": period.label, **_summary(old)} if old else None,
+            new_value={"period": period.label, **changes, **_summary(m)},
         )
     db.commit()
 
@@ -128,19 +155,21 @@ def update_client_month(
     period_id: UUID,
     client_id: UUID,
     body: MonthEdit,
+    local: str = "UGX",
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
     period = _period(db, period_id)
     admin = get_admin_user(db, current_user)
     _apply(db, period, {client_id: _fields(body)}, admin.id)
-    return _sheet(db, period)
+    return _sheet(db, period, local)
 
 
 @router.put("/periods/{period_id}/rows")
 def save_rows(
     period_id: UUID,
     body: RowsEdit,
+    local: str = "UGX",
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
@@ -148,7 +177,7 @@ def save_rows(
     period = _period(db, period_id)
     admin = get_admin_user(db, current_user)
     _apply(db, period, {row.client_id: _fields(row) for row in body.rows}, admin.id)
-    return _sheet(db, period)
+    return _sheet(db, period, local)
 
 
 @router.post("/periods/{period_id}/bulk")

@@ -1,0 +1,65 @@
+name: Deploy backend to VPS
+
+# Matches docs/deployment.md "Routine Maintenance & Updating Code".
+# Frontend stays on Vercel (auto-deploys on push to main).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "backend/**"
+      - "infrastructure/**"
+      - ".github/workflows/deploy-vps.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-vps-production
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_PORT || 22 }}
+          script_stop: true
+          command_timeout: 15m
+          script: |
+            set -euo pipefail
+
+            REPO="${{ secrets.VPS_APP_PATH }}"
+            if [ -z "$REPO" ]; then
+              REPO="/home/deployer/app/Workforce-Allocation-Platform"
+            fi
+            cd "$REPO"
+
+            echo "==> Pulling main"
+            git fetch origin main
+            git checkout main
+            git pull --ff-only origin main
+
+            echo "==> Backend deps + migrations"
+            cd "$REPO/backend"
+            # shellcheck disable=SC1091
+            source venv/bin/activate
+            pip install -r requirements.txt
+            alembic upgrade head
+
+            echo "==> Restart API"
+            sudo systemctl restart workforce-backend
+            # Coordinator unit is optional until enabled on the host.
+            sudo systemctl try-restart workforce-rdp-coordinator || true
+
+            echo "==> Health checks"
+            sleep 3
+            alembic current
+            curl -sf http://127.0.0.1:8000/health
+            echo
+            sudo systemctl is-active workforce-backend
+            echo "==> Deploy finished"

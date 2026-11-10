@@ -215,6 +215,41 @@ def find_period_for_session(db: Session, session: WorkSession) -> Optional[Payro
     ).first()
 
 
+def rate_override_adjustment(sessions: Iterable[WorkSession], rate: Optional[Decimal]) -> Decimal:
+    """Extra pay (payout currency) for sessions with their own rate, on top of hours × the worker's rate."""
+    base = Decimal(rate) if rate is not None else Decimal("0")
+    extra = Decimal("0")
+    for s in sessions:
+        if s.rate_override is None or s.session_type != SessionTypeEnum.gs_rdp:
+            continue
+        hours = Decimal(effective_duration_minutes(s)) / Decimal(60)
+        extra += hours * (Decimal(s.rate_override) - base)
+    return _q(extra)
+
+
+def override_sessions(db: Session, period_id: UUID, worker_id: UUID) -> list[WorkSession]:
+    """The worker's sessions this month that carry their own rate."""
+    return list(db.exec(
+        select(WorkSession).where(
+            WorkSession.payroll_period_id == period_id,
+            WorkSession.worker_id == worker_id,
+            WorkSession.rate_override.is_not(None),
+            WorkSession.payroll_approval_state != PayrollSessionEnum.excluded,
+            WorkSession.payroll_approval_state != PayrollSessionEnum.flagged,
+        )
+    ).all())
+
+
+def base_pay_for(db: Session, summary: PayrollWorkerSummary) -> Decimal:
+    """Hours × the payslip rate, plus the difference for sessions paid at their own rate."""
+    if summary.rate_per_hour is None:
+        return summary.base_pay
+    extra = rate_override_adjustment(
+        override_sessions(db, summary.payroll_period_id, summary.worker_id), summary.rate_per_hour,
+    )
+    return _q(Decimal(summary.hours_logged) * Decimal(summary.rate_per_hour) + extra)
+
+
 def sync_hours_from_sessions(
     db: Session,
     worker_id: UUID,
@@ -311,11 +346,16 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         # Hours typed into the Hours Log beyond what sessions show are paid at the rate.
         gs_hours = max(Decimal("0"), _q(Decimal(gs_minutes) / Decimal(60)) + log_deltas.get(worker_id, Decimal("0")))
         gs_local = Decimal("0")
+        # Admin-added sessions may carry their own rate instead of the tier rate.
+        override_extra = rate_override_adjustment(worker_sessions, terms.rate_local)
+        has_override = any(
+            s.rate_override is not None and s.session_type == SessionTypeEnum.gs_rdp for s in worker_sessions
+        )
         if gs_hours > 0:
             if terms.rate_local is None:
                 flags.append("no_rate")
-            else:
-                gs_local = _q(gs_hours * terms.rate_local)
+            if terms.rate_local is not None or has_override:
+                gs_local = _q(gs_hours * (terms.rate_local or Decimal("0")) + override_extra)
                 if terms.fx is None:
                     flags.append("no_fx_rate")
 
@@ -323,8 +363,9 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         for s in worker_sessions:
             if s.session_type == SessionTypeEnum.gs_rdp:
                 minutes = effective_duration_minutes(s)
-                if terms.rate_local is not None and minutes:
-                    gross_local = Decimal(minutes) / Decimal(60) * terms.rate_local
+                session_rate = Decimal(s.rate_override) if s.rate_override is not None else terms.rate_local
+                if session_rate is not None and minutes:
+                    gross_local = Decimal(minutes) / Decimal(60) * session_rate
                     # Line items feed base-currency client reports.
                     gross = _q(gross_local / terms.fx) if terms.fx else _q(gross_local)
                     db.add(PayrollLineItem(
@@ -417,16 +458,14 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         bonus = summary.bonus if summary else Decimal("0")
         # Locked rows keep admin rate/bonus/costs, but hours always follow the Hours Log.
         if summary and getattr(summary, "admin_locked", False):
+            summary.fx_rate = _fx_to_local(db, period, summary.local_currency)
             summary.hours_logged = data["hours"]
-            summary.base_pay = (
-                _q(summary.hours_logged * summary.rate_per_hour)
-                if summary.rate_per_hour is not None else summary.base_pay
-            )
-            summary.gross_earned = _q(summary.base_pay + bonus)
-            summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
-            summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+            summary.base_pay = base_pay_for(db, summary)
+            settle_gross(summary)
             if summary.fx_rate and summary.fx_rate > 0:
                 summary.base_equivalent = _q(summary.final_net / summary.fx_rate)
+            else:
+                summary.base_equivalent = None
             summary.exception_flags = list({*(summary.exception_flags or []), *flags})
             summary.updated_at = datetime.now(timezone.utc)
             db.add(summary)
@@ -456,6 +495,12 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
         summary.base_currency = period.currency
         summary.base_equivalent = base_equiv
         summary.exception_flags = flags
+        # Apply the admin's final gross (if any) and recompute net / USD equivalent.
+        settle_gross(summary)
+        summary.base_equivalent = _q(summary.final_net / fx) if fx else None
+        summary.exception_flags = [f for f in flags if f != "negative_net"] + (
+            ["negative_net"] if summary.final_net < 0 else []
+        )
         summary.updated_at = datetime.now(timezone.utc)
         db.add(summary)
 
@@ -472,17 +517,27 @@ def calculate_period(db: Session, period_id: UUID) -> dict:
     return {"workers": len(calc), "sessions": len(sessions), "status": period.status}
 
 
+def settle_gross(summary: PayrollWorkerSummary) -> None:
+    """Calculated gross = base pay + bonus; the admin's final gross wins when set.
+
+    Deductions always come off the gross actually used, giving the net.
+    """
+    summary.calculated_gross = _q(Decimal(summary.base_pay or 0) + Decimal(summary.bonus or 0))
+    override = getattr(summary, "gross_override", None)
+    summary.gross_earned = _q(Decimal(override)) if override is not None else summary.calculated_gross
+    summary.total_deductions = _q(Decimal(summary.transfer_cost or 0) + Decimal(summary.external_cost or 0))
+    summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+
+
 def recompute_summary(
     db: Session, summary: PayrollWorkerSummary, *, commit: bool = True,
 ) -> PayrollWorkerSummary:
     """Recompute derived fields after an admin cost-evaluation edit."""
     period = db.get(PayrollPeriod, summary.payroll_period_id)
-    summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour) if summary.rate_per_hour is not None else summary.base_pay
-    summary.gross_earned = _q(summary.base_pay + summary.bonus)
-    summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
-    summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+    summary.base_pay = base_pay_for(db, summary)
+    settle_gross(summary)
     if period:
-        if summary.admin_locked and summary.fx_rate and summary.fx_rate > 0:
+        if period.status in (PayrollPeriodStatusEnum.approved, PayrollPeriodStatusEnum.paid) and summary.fx_rate and summary.fx_rate > 0:
             fx = summary.fx_rate
         else:
             fx = _fx_to_local(db, period, summary.local_currency)
@@ -544,10 +599,8 @@ def refresh_open_summaries_for_workers(db: Session, worker_ids: Iterable[UUID]) 
         if terms.rate_local is not None:
             summary.rate_per_hour = _q(terms.rate_local)
         summary.fx_rate = terms.fx
-        summary.base_pay = _q(summary.hours_logged * summary.rate_per_hour)
-        summary.gross_earned = _q(summary.base_pay + summary.bonus)
-        summary.total_deductions = _q(summary.transfer_cost + summary.external_cost)
-        summary.final_net = _q(summary.gross_earned - summary.total_deductions)
+        summary.base_pay = base_pay_for(db, summary)
+        settle_gross(summary)
         summary.base_currency = period.currency
         summary.base_equivalent = _q(summary.final_net / terms.fx) if terms.fx else None
         summary.updated_at = datetime.now(timezone.utc)
@@ -563,16 +616,23 @@ def approve_period(db: Session, period_id: UUID, admin_user_id: UUID) -> Payroll
         raise ValueError("Payroll period not found")
     if period.status != PayrollPeriodStatusEnum.calculated:
         raise ValueError("Period must be calculated before it can be approved")
+    from services import month_checks
+
+    open_issues = month_checks.issues(db, period)
+    blocking = month_checks.blocking_issues(open_issues)
+    if blocking and not month_checks.is_bypassed(period, blocking):
+        raise ValueError(
+            f"{len(blocking)} month check(s) are open: resolve them, or a Super Admin can approve with a reason."
+        )
 
     summaries = db.exec(
         select(PayrollWorkerSummary).where(PayrollWorkerSummary.payroll_period_id == period_id)
     ).all()
     for summary in summaries:
-        if summary.admin_locked and summary.fx_rate and summary.fx_rate > 0:
-            fx = summary.fx_rate
-        else:
-            fx = _fx_to_local(db, period, summary.local_currency)
-            summary.fx_rate = fx
+        fx = _fx_to_local(db, period, summary.local_currency)
+        if fx is None or fx <= 0:
+            raise ValueError("Live FX unavailable; payroll approval must wait for API rates.")
+        summary.fx_rate = fx
         summary.base_currency = period.currency
         summary.base_equivalent = _q(summary.final_net / fx) if fx and fx > 0 else None
         db.add(summary)
@@ -766,11 +826,11 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     """
     Per-client income and split for a period, in the period's currency.
 
-    The split is taken from gross (see services.client_billing): income is
-    what was received, else hours × rate; the client gets their % of it less
-    any costs charged to them, GS keeps the rest. Worker cost is shown for
-    information. ``distributable`` is the gross being split and ``owner_share``
-    is the client's share, kept under their old names for existing reports.
+    See services.client_billing: revenue is income received, else hours × rate;
+    the net distributable (revenue less worker, transfer and other costs) is
+    split between the recipients. ``owner_share`` is what the payees other
+    than Global Solutions get and ``gs_share`` / ``gs_margin`` what GS keeps,
+    under their old names for existing reports.
     """
     from services import client_billing
 
@@ -778,10 +838,12 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
     if not period:
         raise ValueError("Payroll period not found")
 
-    months = [m for m in client_billing.build(db, period) if m.basis or m.client_costs or m.worker_cost]
+    months = [m for m in client_billing.build(db, period) if m.billing or m.client_costs or m.worker_cost]
     usd_to_period = Decimal("1")
     if period.currency.upper() != client_billing.BILLING_CURRENCY:
-        usd_to_period = ensure_rate(db, client_billing.BILLING_CURRENCY, period.currency) or Decimal("1")
+        usd_to_period = ensure_rate(db, client_billing.BILLING_CURRENCY, period.currency)
+        if usd_to_period is None:
+            raise ValueError("Live FX unavailable; client report cannot convert USD to the period currency.")
 
     def conv(value: Optional[Decimal]) -> str:
         return str(_q((value or Decimal("0")) * usd_to_period))
@@ -792,18 +854,18 @@ def client_revenue_report(db: Session, period_id: UUID) -> list[dict]:
             "client_id": str(m.client_id),
             "client_name": m.client_name,
             "platform": m.platform,
-            "earnings": conv(m.basis),
+            "earnings": conv(m.billing),
             "expected": conv(m.expected),
             "actual": conv(m.actual) if m.actual is not None else None,
             "worker_cost": conv(m.worker_cost),
-            "shared_cost": conv(m.client_costs),
-            "distributable": conv(m.basis),
-            "gs_pct": str(m.gs_pct),
-            "owner_pct": str(m.client_pct),
-            "gs_share": conv(m.gs_share),
-            "owner_share": conv(m.client_share),
-            "gs_margin": conv(m.gs_margin),
-            "earnings_source": "entered" if m.basis_source == "actual" else "calculated",
+            "shared_cost": conv(m.client_costs + m.transfer_cost),
+            "distributable": conv(m.net_distributable),
+            "gs_pct": str(sum((r["pct"] for r in m.recipients if r["is_gs"]), Decimal("0"))),
+            "owner_pct": str(sum((r["pct"] for r in m.recipients if not r["is_gs"]), Decimal("0"))),
+            "gs_share": conv(m.gs_amount),
+            "owner_share": conv(m.payout_amount),
+            "gs_margin": conv(m.gs_amount),
+            "earnings_source": "entered" if m.billing_source == "actual" else "calculated",
         })
     rows.sort(key=lambda r: Decimal(r["earnings"]), reverse=True)
     return rows

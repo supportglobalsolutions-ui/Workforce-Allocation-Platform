@@ -72,17 +72,17 @@ export const QUALITY_TABS: SectionTab[] = [
 /** Finance hub: payroll, tiers, wallets / FX / reports. */
 export const PAYROLL_TABS: SectionTab[] = [
   { label: 'Payroll', href: '/admin/payroll' },
+  { label: 'Add month data', href: '/admin/payroll/month-data' },
+  { label: 'Ledger', href: '/admin/payroll/ledger' },
+  { label: 'Payslips', href: '/admin/payroll/payslips' },
   { label: 'Tiers', href: '/admin/payroll/tiers' },
-  { label: 'Monthly approvals', href: '/admin/payroll/approvals' },
   { label: 'Calendar', href: '/admin/calendar' },
   { label: 'Calculate', href: '/admin/payroll/calculate' },
   { label: 'Export', href: '/admin/payroll/export' },
   { label: 'Wallets', href: '/admin/wallets' },
   { label: 'Currencies', href: '/admin/currencies' },
   { label: 'Reports', href: '/admin/reports' },
-  { label: 'Hours', href: '/admin/payroll/hours' },
-  { label: 'Month', href: '/admin/payroll/month' },
-  { label: 'Client payouts', href: '/admin/payroll/client-payouts' },
+  { label: 'Recipients', href: '/admin/clients/recipients' },
 ];
 
 /** @deprecated use PAYROLL_TABS */

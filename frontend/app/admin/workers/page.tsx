@@ -1,11 +1,15 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
-  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Settings2, Star,
-  Search, ShieldOff, Trash2, X,
+  AlertCircle, Ban, CheckCircle, ChevronDown, Eye, Plus, Settings2, Star,
+  Search, ShieldCheck, ShieldOff, Trash2, X,
 } from 'lucide-react';
+import AddSessionModal from '@/components/admin/AddSessionModal';
+import AdminAddedBadge from '@/components/rdp/AdminAddedBadge';
 import PageHeader from '@/components/platform/PageHeader';
+import PeriodFilter from '@/components/platform/PeriodFilter';
+import { pickCurrentPeriod } from '@/lib/periods';
 import DataTable from '@/components/platform/DataTable';
 import StatusBadge from '@/components/platform/StatusBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
@@ -74,6 +78,22 @@ interface Worker {
   assigned_rdp_nickname?: string | null;
 }
 
+interface WorkMonth {
+  id: string;
+  label: string;
+  start_date: string;
+  end_date: string;
+  status: string;
+  is_current?: boolean;
+}
+
+interface MonthApprovals {
+  period_label: string;
+  is_current: boolean;
+  member_approval_required: boolean;
+  members: { worker_id: string; approved: boolean }[];
+}
+
 interface WorkSession {
   id: string;
   session_type: string;
@@ -82,12 +102,20 @@ interface WorkSession {
   duration_minutes: number | null;
   close_status: string | null;
   rdp_resource_id: string | null;
+  client_id?: string | null;
   start_image_url: string | null;
   image_urls?: string[] | null;
   end_image_url: string | null;
   image_start_at?: string | null;
   image_end_at?: string | null;
   suspicious?: boolean;
+  title?: string | null;
+  added_by_admin?: boolean;
+}
+
+interface ClientOption {
+  id: string;
+  name: string;
 }
 
 interface RDPResource {
@@ -326,22 +354,28 @@ function WorkerDetailModal({
     finally { setBanLoading(false); }
   }
 
+  const [sessionsLoaded, setSessionsLoaded] = useState(0);
+  const [addingSession, setAddingSession] = useState(false);
+  const [loadedFor, setLoadedFor] = useState(-1);
+
   useEffect(() => {
-    if (tab !== 'sessions' || sessions.length > 0) return;
+    if (tab !== 'sessions' || loadedFor === sessionsLoaded) return;
     setSessionsLoading(true);
     setSessionsError(null);
     Promise.all([
       fetchAllSessions<WorkSession>({ workerId: worker.id, includeImages: true }),
       api.get<RDPResource[]>('/rdp'),
     ])
-      .then(([s, m]) => { setSessions(s); setMachines(m); })
+      .then(([s, m]) => { setSessions(s); setMachines(m); setLoadedFor(sessionsLoaded); })
       .catch((e) => setSessionsError(e instanceof Error ? e.message : 'Failed to load sessions'))
       .finally(() => setSessionsLoading(false));
-  }, [tab, worker.id, sessions.length]);
+  }, [tab, worker.id, sessionsLoaded, loadedFor]);
 
   const machineName = (id: string | null) => {
     if (!id) return '—';
-    return machines.find((m) => m.id === id)?.nickname ?? id.slice(0, 8) + '…';
+    const m = machines.find((x) => x.id === id);
+    if (!m) return id ? `${id.slice(0, 8)}…` : '—';
+    return m.client_name ? `${m.nickname} · ${m.client_name}` : m.nickname;
   };
 
   const sessionRows = sessions.map((s) => {
@@ -358,6 +392,8 @@ function WorkerDetailModal({
       work_time: s.image_start_at && s.image_end_at ? formatDuration(workMins) : 'Not entered',
       rdp_minutes: rdpMins,
       type: TYPE_LABELS[s.session_type] ?? s.session_type,
+      title: s.title ?? null,
+      added_by_admin: Boolean(s.added_by_admin),
       status: s.close_status ?? (s.end_time ? 'completed' : 'active'),
       start_image_url: s.start_image_url,
       image_urls: s.image_urls,
@@ -798,6 +834,12 @@ function WorkerDetailModal({
 
             {tab === 'sessions' && (
               <div className="px-5 py-4">
+                <div className="flex justify-end mb-3">
+                  <button type="button" onClick={() => setAddingSession(true)}
+                    className="btn-secondary text-[11px] py-1.5 px-2.5 flex items-center gap-1.5">
+                    <Plus size={11} /> Add session
+                  </button>
+                </div>
                 {sessionsLoading ? (
                   <p className="text-theme-muted text-sm">Loading sessions…</p>
                 ) : sessionsError ? (
@@ -813,7 +855,15 @@ function WorkerDetailModal({
                         { key: 'machine', header: 'Machine' },
                         { key: 'rdp_time', header: 'RDP uptime' },
                         { key: 'work_time', header: 'Work hours' },
-                        { key: 'type', header: 'Type' },
+                        {
+                          key: 'type', header: 'Type',
+                          render: (r) => (
+                            <span className="inline-flex items-center gap-1.5">
+                              <span>{r.title ? String(r.title) : String(r.type)}</span>
+                              {Boolean(r.added_by_admin) && <AdminAddedBadge />}
+                            </span>
+                          ),
+                        },
                         { key: 'status', header: 'Status', render: (r) => <StatusBadge status={r.status as string} /> },
                         {
                           key: 'id', header: '',
@@ -849,6 +899,11 @@ function WorkerDetailModal({
         allowEvidenceEdit={false}
         allowSuspiciousFlag
       />
+      {addingSession && (
+        <AddSessionModal workerId={worker.id} workerName={worker.display_name}
+          onClose={() => setAddingSession(false)}
+          onAdded={() => { setAddingSession(false); setSessionsLoaded((k) => k + 1); }} />
+      )}
       {showRate && (
         <RateWorkerModal
           workers={[{ id: worker.id, display_name: worker.display_name, country: worker.country }]}
@@ -877,6 +932,12 @@ export default function WorkersPage() {
   const [deleteIds, setDeleteIds] = useState<string[]>([]);
   const [actionNote, setActionNote] = useState<string | null>(null);
   const [bulkStatusSaving, setBulkStatusSaving] = useState(false);
+  const [months, setMonths] = useState<WorkMonth[]>([]);
+  const [monthId, setMonthId] = useState('');
+  const [approvals, setApprovals] = useState<MonthApprovals | null>(null);
+  const [approvalFilter, setApprovalFilter] = useState<'' | 'approved' | 'unapproved'>('');
+  const [approvalBusy, setApprovalBusy] = useState(false);
+  const [approvalError, setApprovalError] = useState<string | null>(null);
 
   async function loadWorkers() {
     setWorkersLoading(true);
@@ -891,6 +952,62 @@ export default function WorkersPage() {
   }
 
   useEffect(() => { loadWorkers(); }, []);
+
+  useEffect(() => {
+    api.get<WorkMonth[]>('/payroll/periods')
+      .then((list) => {
+        setMonths(list);
+        const pick = pickCurrentPeriod(list) ?? list[0];
+        if (pick) setMonthId(pick.id);
+      })
+      .catch((e) => setApprovalError(e instanceof Error ? e.message : 'Failed to load working months.'));
+  }, []);
+
+  const loadApprovals = useCallback(() => {
+    if (!monthId) return;
+    api.get<MonthApprovals>(`/member-approvals/periods/${monthId}`)
+      .then((d) => { setApprovals(d); setApprovalError(null); })
+      .catch((e) => setApprovalError(e instanceof Error ? e.message : 'Failed to load monthly approvals.'));
+  }, [monthId]);
+
+  useEffect(() => { loadApprovals(); }, [loadApprovals]);
+
+  const approvedIds = useMemo(
+    () => new Set((approvals?.members ?? []).filter((m) => m.approved).map((m) => m.worker_id)),
+    [approvals],
+  );
+
+  async function setMonthApproval(body: { worker_ids?: string[]; approved: boolean; all_members?: boolean }) {
+    if (!monthId) return;
+    setApprovalBusy(true);
+    setApprovalError(null);
+    try {
+      const res = await api.post<{ changed: number }>(`/member-approvals/periods/${monthId}`, body);
+      const verb = body.approved ? 'Approved' : 'Unapproved';
+      setActionNote(`${verb} ${res.changed} worker${res.changed === 1 ? '' : 's'} for ${approvals?.period_label ?? 'this month'}.`);
+      loadApprovals();
+    } catch (e) {
+      setApprovalError(e instanceof Error ? e.message : 'Approval update failed.');
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
+
+  async function toggleApprovalRequired() {
+    if (!approvals || !monthId) return;
+    setApprovalBusy(true);
+    setApprovalError(null);
+    try {
+      await api.patch(`/member-approvals/periods/${monthId}/settings`, {
+        member_approval_required: !approvals.member_approval_required,
+      });
+      loadApprovals();
+    } catch (e) {
+      setApprovalError(e instanceof Error ? e.message : 'Update failed.');
+    } finally {
+      setApprovalBusy(false);
+    }
+  }
 
   const [linkedWorkerId, setLinkedWorkerId] = useState<string | null>(() =>
     typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('worker'),
@@ -920,6 +1037,8 @@ export default function WorkersPage() {
       if (statusFilter && w.status !== statusFilter.toLowerCase()) return false;
       if (accountFilter === 'banned' && !w.account_banned) return false;
       if (accountFilter === 'active' && w.account_banned) return false;
+      if (approvalFilter === 'approved' && !approvedIds.has(w.id)) return false;
+      if (approvalFilter === 'unapproved' && approvedIds.has(w.id)) return false;
       if (!q) return true;
       return (
         w.public_code?.toLowerCase().includes(q) ||
@@ -932,7 +1051,7 @@ export default function WorkersPage() {
         `${w.first_name || ''} ${w.last_name || ''}`.toLowerCase().includes(q)
       );
     });
-  }, [workers, workerSearch, typeFilter, statusFilter, accountFilter]);
+  }, [workers, workerSearch, typeFilter, statusFilter, accountFilter, approvalFilter, approvedIds]);
 
   const workerRows = filteredWorkers.map((w) => ({
     id: w.id,
@@ -1066,6 +1185,60 @@ export default function WorkersPage() {
         </div>
       )}
 
+      <div className="glass-panel p-4 mb-4 flex flex-wrap items-center gap-3">
+        <span className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">Monthly approval</span>
+        <PeriodFilter periods={months} value={monthId} onChange={setMonthId} variant="inline" label="Working month" />
+        {approvals && (
+          <>
+            <span className="text-sm text-theme-muted">
+              <span className="text-theme-heading font-semibold">{approvedIds.size}</span> of {approvals.members.length} approved
+            </span>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={approvals.member_approval_required} disabled={approvalBusy}
+                onChange={() => void toggleApprovalRequired()} className="accent-emerald-400" />
+              Require approval
+            </label>
+          </>
+        )}
+        <div className="flex-1" />
+        {selectedIds.size > 0 && (
+          <>
+            <button type="button" disabled={approvalBusy || !approvals}
+              onClick={() => void setMonthApproval({ worker_ids: Array.from(selectedIds), approved: true })}
+              className="btn-secondary text-xs py-2 px-3 disabled:opacity-50">
+              Approve selected ({selectedIds.size})
+            </button>
+            <button type="button" disabled={approvalBusy || !approvals}
+              onClick={() => void setMonthApproval({ worker_ids: Array.from(selectedIds), approved: false })}
+              className="btn-secondary text-xs py-2 px-3 disabled:opacity-50">
+              Unapprove selected
+            </button>
+          </>
+        )}
+        <button type="button"
+          disabled={approvalBusy || !approvals || approvedIds.size === approvals.members.length}
+          onClick={() => void setMonthApproval({ approved: true, all_members: true })}
+          className="btn-primary text-sm py-2 px-4 inline-flex items-center gap-2 disabled:opacity-50">
+          <ShieldCheck size={14} /> Approve all
+        </button>
+      </div>
+
+      {approvals && !approvals.member_approval_required && (
+        <p className="mb-4 text-xs text-theme-muted flex items-center gap-1.5">
+          <AlertCircle size={12} /> Approval is off for {approvals.period_label}, so every active worker has access. Approvals set now apply once it is switched on.
+        </p>
+      )}
+      {approvals && approvals.member_approval_required && !approvals.is_current && (
+        <p className="mb-4 text-xs text-theme-muted flex items-center gap-1.5">
+          <AlertCircle size={12} /> {approvals.period_label} is not the current working month, so these approvals only control access once it becomes current.
+        </p>
+      )}
+      {approvalError && (
+        <div className="mb-4 flex items-center gap-2 p-3 rounded-xl bg-danger/10 border border-danger/30 text-danger text-xs">
+          <AlertCircle size={13} /> {approvalError}
+        </div>
+      )}
+
       <div className="flex flex-wrap items-center gap-2 mb-4">
         <div className="relative w-full sm:w-auto">
           <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-brand-on-surface-variant" />
@@ -1101,6 +1274,15 @@ export default function WorkersPage() {
           <option value="all">Account: All</option>
           <option value="active">Account: Active</option>
           <option value="banned">Account: Banned / deleted</option>
+        </select>
+        <select
+          value={approvalFilter}
+          onChange={(e) => setApprovalFilter(e.target.value as '' | 'approved' | 'unapproved')}
+          className="px-3 py-2 bg-brand-surface-container/60 border border-white/10 rounded-xl text-sm text-white focus:outline-none focus:border-emerald-accent/40 w-full sm:w-auto"
+        >
+          <option value="">This month: All</option>
+          <option value="approved">This month: Approved</option>
+          <option value="unapproved">This month: Unapproved</option>
         </select>
         <span className="text-xs text-theme-muted ml-1">{filteredWorkers.length} worker{filteredWorkers.length !== 1 ? 's' : ''}</span>
         {selectedIds.size > 0 && (
@@ -1175,6 +1357,31 @@ export default function WorkersPage() {
                   )}
                 </span>
               ),
+            },
+            {
+              key: 'month_approval', header: 'This month',
+              render: (r) => {
+                if (!approvals) return <span className="text-theme-muted text-xs">—</span>;
+                const workerId = String(r.id);
+                const approved = approvedIds.has(workerId);
+                return (
+                  <button
+                    type="button"
+                    disabled={approvalBusy}
+                    onClick={() => void setMonthApproval({ worker_ids: [workerId], approved: !approved })}
+                    title={`${approved ? 'Unapprove' : 'Approve'} ${String(r.name)} for ${approvals.period_label}`}
+                    aria-label={`${approved ? 'Unapprove' : 'Approve'} ${String(r.name)} for this month`}
+                    className={`group inline-flex items-center gap-1.5 text-[10px] font-bold uppercase px-2 py-0.5 rounded-full border transition-colors disabled:opacity-50 ${
+                      approved
+                        ? 'text-emerald-accent border-emerald-accent/30 bg-emerald-accent/10 hover:border-amber-400/50 hover:bg-amber-400/10 hover:text-amber-400'
+                        : 'text-amber-400 border-amber-400/30 bg-amber-400/10 hover:border-emerald-accent/50 hover:bg-emerald-accent/10 hover:text-emerald-accent'
+                    }`}
+                  >
+                    <span>{approved ? 'Approved' : 'Unapproved'}</span>
+                    <span className="hidden group-hover:inline normal-case">· {approved ? 'undo' : 'approve'}</span>
+                  </button>
+                );
+              },
             },
             {
               key: 'actions', header: '',

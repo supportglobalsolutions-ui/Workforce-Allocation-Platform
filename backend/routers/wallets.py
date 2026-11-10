@@ -237,6 +237,10 @@ def send_payouts(
 
     approved = False
     if period.status == PayrollPeriodStatusEnum.calculated:
+        if current_user.get("role") != "super_admin":
+            raise HTTPException(
+                status_code=403, detail="Only a Super Admin can approve the month. Ask one to approve it first.",
+            )
         try:
             payroll_engine.approve_period(db, period.id, admin.id)
         except ValueError as exc:

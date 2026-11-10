@@ -1,13 +1,15 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Calendar, CheckCircle, ChevronDown, Clock, Download, Eye, Flag, RefreshCw, Server, TimerOff, Trash2, Users, X } from 'lucide-react';
+import Link from 'next/link';
+import { ArrowRight, Calendar, CheckCircle, ChevronDown, Clock, Download, Eye, Flag, RefreshCw, Server, TimerOff, Trash2, Users, X } from 'lucide-react';
 
 import BulkDeleteModal from '@/components/admin/BulkDeleteModal';
 import DataTable from '@/components/platform/DataTable';
 import KpiCard from '@/components/platform/KpiCard';
 import PageHeader from '@/components/platform/PageHeader';
 import StatusBadge from '@/components/platform/StatusBadge';
+import AdminAddedBadge from '@/components/rdp/AdminAddedBadge';
 import SessionDetailPanel from '@/components/rdp/SessionDetailPanel';
 import { api } from '@/lib/api';
 import { enteredPayMinutes, formatLoggedHours } from '@/lib/hours';
@@ -23,6 +25,7 @@ interface WorkSession {
   duration_minutes: number | null;
   close_status: string | null;
   rdp_resource_id: string | null;
+  client_id?: string | null;
   start_image_url: string | null;
   end_image_url: string | null;
   image_urls?: string[] | null;
@@ -32,6 +35,13 @@ interface WorkSession {
   type_specific_fields?: Record<string, unknown> | null;
   payroll_period_id?: string | null;
   suspicious?: boolean;
+  title?: string | null;
+  added_by_admin?: boolean;
+}
+
+interface ClientOption {
+  id: string;
+  name: string;
 }
 
 interface Worker {
@@ -77,6 +87,10 @@ interface SessionRow {
   evidence_complete?: boolean | null;
   period: string;
   suspicious: boolean;
+  title: string | null;
+  added_by_admin: boolean;
+  client_id: string | null;
+  client: string;
 }
 
 const TYPE_LABELS: Record<string, string> = {
@@ -106,11 +120,6 @@ type SessionView = 'all' | 'live' | 'history';
 
 // Live rows tick their elapsed time and get refetched on this cadence.
 const LIVE_REFRESH_MS = 30_000;
-
-function formatDuration(minutes: number | null): string {
-  if (minutes == null) return '—';
-  return `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
-}
 
 /** Open sessions have no duration yet, so it is derived from the clock. */
 function formatElapsed(startTime: string, now: number): string {
@@ -310,6 +319,7 @@ export default function AdminSessionsPage() {
   const [sessions, setSessions] = useState<WorkSession[]>([]);
   const [workers, setWorkers] = useState<Worker[]>([]);
   const [rdpResources, setRdpResources] = useState<RDPResource[]>([]);
+  const [clients, setClients] = useState<ClientOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -340,14 +350,18 @@ export default function AdminSessionsPage() {
   async function load(opts: { silent?: boolean } = {}) {
     if (opts.silent) setRefreshing(true); else setLoading(true);
     try {
-      const [sessionRes, workerRes, rdpRes] = await Promise.allSettled([
+      const [sessionRes, workerRes, rdpRes, clientRes] = await Promise.allSettled([
         fetchAllSessions<WorkSession>({ includeImages: false }),
         api.get<Worker[]>('/workers'),
         api.get<RDPResource[]>('/rdp'),
+        api.get<ClientOption[]>('/clients'),
       ]);
       if (sessionRes.status === 'rejected') throw sessionRes.reason;
       setSessions(sessionRes.value);
       if (workerRes.status === 'fulfilled') setWorkers(workerRes.value);
+      if (clientRes.status === 'fulfilled') {
+        setClients([...clientRes.value].sort((a, b) => a.name.localeCompare(b.name)));
+      }
       if (rdpRes.status === 'fulfilled') setRdpResources(rdpRes.value);
       setNow(Date.now());
       setError(null);
@@ -387,6 +401,10 @@ export default function AdminSessionsPage() {
     () => Object.fromEntries(rdpResources.map((r) => [r.id, r])),
     [rdpResources],
   );
+  const clientMap = useMemo(
+    () => Object.fromEntries(clients.map((c) => [c.id, c])),
+    [clients],
+  );
 
   const allRows = useMemo<SessionRow[]>(() => {
     return [...sessions]
@@ -400,6 +418,7 @@ export default function AdminSessionsPage() {
         const covering = periodForSessionDay(s.start_time, periods, s.payroll_period_id);
         const rdpMinutes = rdpUptimeMinutes(s, now);
         const workerMinutes = enteredPayMinutes(s);
+        const clientName = s.client_id ? (clientMap[s.client_id]?.name ?? 'Unknown client') : '—';
         return {
           id: s.id,
           date: new Date(s.start_time).toLocaleString(),
@@ -412,10 +431,10 @@ export default function AdminSessionsPage() {
             : `Worker ${s.worker_id.slice(0, 8)}…`,
           email: worker?.email ?? '—',
           machine,
-          duration: live ? formatElapsed(s.start_time, now) : formatDuration(rdpMinutes),
+          duration: live ? formatElapsed(s.start_time, now) : `${formatLoggedHours(rdpMinutes)} h`,
           rdp_minutes: rdpMinutes,
           worker_minutes: workerMinutes,
-          logged_hours: workerMinutes > 0 ? formatLoggedHours(workerMinutes) : '—',
+          logged_hours: workerMinutes > 0 ? `${formatLoggedHours(workerMinutes)} h` : '—',
           logged_minutes: workerMinutes,
           type: TYPE_LABELS[s.session_type] ?? s.session_type,
           status: s.close_status ?? (live ? 'active' : 'completed'),
@@ -432,9 +451,13 @@ export default function AdminSessionsPage() {
           evidence_complete: s.evidence_complete,
           period: covering ? shortPeriodLabel(covering.label ?? '') : '—',
           suspicious: Boolean(s.suspicious),
+          title: s.title ?? null,
+          added_by_admin: Boolean(s.added_by_admin),
+          client_id: s.client_id ?? null,
+          client: clientName,
         };
       });
-  }, [sessions, workerMap, rdpMap, now, periods]);
+  }, [sessions, workerMap, rdpMap, clientMap, now, periods]);
 
   const liveCount = useMemo(() => allRows.filter((r) => r.live).length, [allRows]);
 
@@ -494,6 +517,20 @@ export default function AdminSessionsPage() {
     };
   }, [filteredRows]);
 
+  /** Work hours per worker for the rows the filters show, most hours first. */
+  const workerTotals = useMemo(() => {
+    const byWorker = new Map<string, { workerId: string; name: string; sessions: number; workMinutes: number; rdpMinutes: number }>();
+    for (const r of filteredRows) {
+      const t = byWorker.get(r.worker_id)
+        ?? { workerId: r.worker_id, name: r.worker, sessions: 0, workMinutes: 0, rdpMinutes: 0 };
+      t.sessions += 1;
+      t.workMinutes += r.worker_minutes;
+      t.rdpMinutes += r.rdp_minutes;
+      byWorker.set(r.worker_id, t);
+    }
+    return [...byWorker.values()].sort((a, b) => b.workMinutes - a.workMinutes);
+  }, [filteredRows]);
+
   const handleEyeClick = (rowId: string) => {
     const row = filteredRows.find((r) => r.id === rowId);
     if (!row) return;
@@ -514,6 +551,10 @@ export default function AdminSessionsPage() {
               start_time: full.start_time,
               end_time: full.end_time,
               rdp_minutes: rdpUptimeMinutes(full, Date.now()),
+              client_id: full.client_id ?? null,
+              client: full.client_id
+                ? (clientMap[full.client_id]?.name ?? prev.client)
+                : '—',
             }
           : prev,
       );
@@ -540,13 +581,25 @@ export default function AdminSessionsPage() {
     );
   };
 
+  const handleClientLinked = (sessionId: string, clientId: string | null, clientName: string | null) => {
+    setSessions((prev) =>
+      prev.map((s) => (s.id === sessionId ? { ...s, client_id: clientId } : s)),
+    );
+    setSelectedSession((prev) =>
+      prev?.id === sessionId
+        ? { ...prev, client_id: clientId, client: clientName ?? '—' }
+        : prev,
+    );
+  };
+
   const handleExportCsv = () => {
-    const headers = ['Date', 'Worker', 'Email', 'RDP / Platform', 'RDP hours', 'Worker hours', 'Idle gap', 'Type', 'Period', 'Status'];
+    const headers = ['Date', 'Worker', 'Email', 'Client', 'RDP / Platform', 'RDP hours', 'Worker hours', 'Idle gap', 'Type', 'Period', 'Status'];
     const csvRows = filteredRows.map((r) =>
       [
         r.date,
         r.worker,
         r.email,
+        r.client,
         r.machine,
         formatLoggedHours(r.rdp_minutes),
         r.worker_minutes > 0 ? formatLoggedHours(r.worker_minutes) : '',
@@ -640,13 +693,13 @@ export default function AdminSessionsPage() {
         {!loading && !error && (
           <div className="grid grid-cols-3 gap-2 min-w-[18rem] flex-1 max-w-xl">
             <div title="Time the RDP was claimed and connected">
-              <KpiCard compact label="RDP uptime" value={formatLoggedHours(hourTotals.rdp)} icon={Server} accent="blue" />
+              <KpiCard compact label="RDP uptime (hrs)" value={`${formatLoggedHours(hourTotals.rdp)} h`} icon={Server} accent="blue" />
             </div>
             <div title="Screenshot start/end times entered by the worker">
-              <KpiCard compact label="Work hours" value={formatLoggedHours(hourTotals.worker)} icon={Clock} accent="emerald" highlight />
+              <KpiCard compact label="Work hours (hrs)" value={`${formatLoggedHours(hourTotals.worker)} h`} icon={Clock} accent="emerald" highlight />
             </div>
-            <div title="RDP connected time minus worker hours — idle machine while claimed">
-              <KpiCard compact label="Idle gap" value={formatLoggedHours(hourTotals.idle)} icon={TimerOff} accent="gold" />
+            <div title="Idle gap = RDP uptime − work hours: time the machine was claimed but not worked">
+              <KpiCard compact label="Idle gap (uptime − work)" value={`${formatLoggedHours(hourTotals.idle)} h`} icon={TimerOff} accent="gold" />
             </div>
           </div>
         )}
@@ -769,6 +822,58 @@ export default function AdminSessionsPage() {
         )}
       </div>
 
+      {/* ── Work hours per worker ── */}
+      {!loading && !error && workerTotals.length > 0 && (
+        <details open className="glass-panel rounded-xl mb-6 overflow-hidden">
+          <summary className="flex flex-wrap items-center gap-2 px-4 py-3 cursor-pointer text-sm font-semibold text-theme-heading">
+            <Users size={14} className="text-emerald-accent" />
+            Work hours per worker
+            <span className="text-xs font-normal text-theme-muted">
+              · {workerTotals.length} worker{workerTotals.length !== 1 ? 's' : ''}, following the filters above
+            </span>
+            <Link
+              href="/admin/payroll"
+              onClick={(e) => e.stopPropagation()}
+              title="Pay is these work hours × each worker’s hourly rate. Review and approve it in Finance."
+              className="ml-auto inline-flex items-center gap-1.5 text-xs font-semibold text-emerald-accent hover:underline"
+            >
+              Open in Finance <ArrowRight size={13} />
+            </Link>
+          </summary>
+          <div className="overflow-x-auto border-t border-white/[0.06]">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-[10px] font-bold uppercase tracking-wider text-theme-muted">
+                  <th className="px-4 py-2 text-left">Worker</th>
+                  <th className="px-4 py-2 text-right">Sessions</th>
+                  <th className="px-4 py-2 text-right" title="Screenshot start/end times entered by the worker; this is what pay uses">Work hours</th>
+                  <th className="px-4 py-2 text-right" title="Time the RDP was claimed and connected">RDP uptime</th>
+                </tr>
+              </thead>
+              <tbody>
+                {workerTotals.map((t) => (
+                  <tr key={t.workerId} className="border-t border-white/[0.03] hover:bg-white/[0.02]">
+                    <td className="px-4 py-2">
+                      <button
+                        type="button"
+                        onClick={() => setSelectedWorkerId(selectedWorkerId === t.workerId ? null : t.workerId)}
+                        title="Show only this worker’s sessions"
+                        className={`text-left hover:underline ${selectedWorkerId === t.workerId ? 'text-emerald-400' : 'text-theme-heading'}`}
+                      >
+                        {t.name}
+                      </button>
+                    </td>
+                    <td className="px-4 py-2 text-right tabular-nums text-theme-muted">{t.sessions}</td>
+                    <td className="px-4 py-2 text-right tabular-nums font-semibold text-theme-heading">{formatLoggedHours(t.workMinutes)} h</td>
+                    <td className="px-4 py-2 text-right tabular-nums text-theme-muted">{formatLoggedHours(t.rdpMinutes)} h</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </details>
+      )}
+
       {/* ── Table ── */}
       {actionNote && (
         <div className="mb-4 flex items-center gap-2 p-3 rounded-xl border border-emerald-accent/30 bg-emerald-accent/10 text-emerald-accent text-xs">
@@ -859,6 +964,15 @@ export default function AdminSessionsPage() {
                   </div>
                 ),
               },
+              {
+                key: 'client',
+                header: 'Client',
+                render: (r) => (
+                  <span className={(r.client_id as string | null) ? 'text-theme-heading' : 'text-amber-400'}>
+                    {(r.client as string) || '—'}
+                  </span>
+                ),
+              },
               { key: 'machine', header: 'RDP / Platform' },
               {
                 key: 'duration',
@@ -884,12 +998,21 @@ export default function AdminSessionsPage() {
                   const idle = Math.max(0, (r.rdp_minutes as number) - (r.worker_minutes as number));
                   return (
                     <span className={`tabular-nums ${idle > 0 ? 'text-gold-accent font-medium' : 'text-theme-muted'}`}>
-                      {idle > 0 ? formatLoggedHours(idle) : '—'}
+                      {idle > 0 ? `${formatLoggedHours(idle)} h` : '—'}
                     </span>
                   );
                 },
               },
-              { key: 'type', header: 'Type' },
+              {
+                key: 'type',
+                header: 'Type',
+                render: (r) => (
+                  <span className="inline-flex items-center gap-1.5">
+                    <span>{r.title ? String(r.title) : String(r.type)}</span>
+                    {Boolean(r.added_by_admin) && <AdminAddedBadge />}
+                  </span>
+                ),
+              },
               {
                 key: 'period',
                 header: 'Period',
@@ -941,14 +1064,20 @@ export default function AdminSessionsPage() {
       )}
 
       <SessionDetailPanel
-        session={selectedSession}
+        session={selectedSession ? {
+          ...selectedSession,
+          client_name: selectedSession.client === '—' ? null : selectedSession.client,
+        } : null}
         onClose={() => setSelectedSession(null)}
         onImagesChanged={handleImagesChanged}
         onSuspiciousChanged={handleSuspiciousChanged}
+        onClientLinked={handleClientLinked}
         workerLabel={workerLabel}
         allowUpload={false}
         allowEvidenceEdit={false}
         allowSuspiciousFlag
+        allowClientLink
+        clients={clients}
       />
 
       {deleteOpen && selectedIds.size > 0 && (

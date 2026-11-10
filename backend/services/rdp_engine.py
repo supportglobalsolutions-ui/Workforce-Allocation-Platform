@@ -418,12 +418,14 @@ def claim(
         resource.status_changed_at = now
         resource.version = int(resource.version or 1) + 1
 
+        # Client is not inherited from the RDP — many accounts share few machines.
+        # An admin links each session to a client before it counts as client income.
         work_session = WorkSession(
             worker_id=worker.id,
             session_type=SessionTypeEnum.gs_rdp,
             allocation_id=None,
             rdp_resource_id=resource.id,
-            client_id=resource.client_id,
+            client_id=None,
             start_time=now,
             type_specific_fields={"restore_assignment": restore_assignment},
         )

@@ -158,3 +158,31 @@ export function moneyTotalsList(
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([cur, value]) => (cur ? `${cur} ${formatNumber(value)}` : formatNumber(value)));
 }
+
+/**
+ * Admin finance helper: show an amount in its recorded (local) currency and,
+ * when rates allow, the USD equivalent. Does not follow the top-bar display
+ * switch — admins always see local + USD for worker pay.
+ */
+export function localAndUsd(
+  amount: string | number | null | undefined,
+  currency: string | null | undefined,
+): { local: string; usd: string | null } {
+  const n = Number(amount ?? 0);
+  const value = Number.isFinite(n) ? n : 0;
+  const cur = (currency || '').toUpperCase();
+  const local = cur ? `${cur} ${formatNumber(value)}` : formatNumber(value);
+  if (!cur || cur === 'USD') return { local, usd: null };
+  const perUsd = state.usdRates[cur];
+  if (!perUsd || perUsd <= 0) return { local, usd: null };
+  return { local, usd: `USD ${formatNumber(value / perUsd)}` };
+}
+
+/** One-line label: "KES 1,000.00 · USD 10.00" (or local only if no USD rate). */
+export function formatLocalAndUsd(
+  amount: string | number | null | undefined,
+  currency: string | null | undefined,
+): string {
+  const { local, usd } = localAndUsd(amount, currency);
+  return usd ? `${local} · ${usd}` : local;
+}

@@ -44,8 +44,8 @@ export default function ResetPasswordPage() {
     setLoading(true);
 
     try {
-      // Accepts a username or an email; the server resolves it and sends
-      // nothing at all when no account matches.
+      // Accepts a username or an email. The server only sends when the account
+      // exists; otherwise it returns a clear "no account" error.
       await api.post('/auth/password-recovery', { identifier: email.trim() });
       setStage('sent');
     } catch (err) {
@@ -53,7 +53,9 @@ export default function ResetPasswordPage() {
       setError(
         /too many requests/i.test(message)
           ? 'You have made three recovery requests. Please try again in 6 hours.'
-          : 'We could not send a recovery link right now. Please try again later.',
+          : /don'?t have an account|not found|404/i.test(message)
+            ? "You don't have an account with that username or email."
+            : message || 'We could not send a recovery link right now. Please try again later.',
       );
     } finally {
       setLoading(false);

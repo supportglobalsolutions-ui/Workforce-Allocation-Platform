@@ -18,6 +18,7 @@ from core.sandbox import (
     TEST_MODE_ROLES,
     is_ready as sandbox_is_ready,
     load_test_mode_emails,
+    sync_all_sandboxes,
     reset_request_test_mode,
     schema_for as sandbox_schema_for,
     set_request_test_mode,
@@ -27,8 +28,8 @@ from core.security_validation import validate_production_settings
 from routers import (
     absence_reports,
     assessments, audit, auth, chat, client_billing, client_payouts, clients, communications, contact, cost_ledger, currencies, intelligence,
-    hours_log, leaderboard,
-    notifications, partners, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
+    hours_log, income, leaderboard,
+    notifications, partners, payees, payroll, payment_tiers, quality, rates, rdp, sessions, shifts,
     settings as platform_settings, task_assessments, test_mode, training, uptime_kuma, wallets,
     workers,
 )
@@ -68,6 +69,9 @@ async def lifespan(app: FastAPI):
     # costs several seconds; paying it during startup means no user ever waits
     # for it, and the pool keeps the socket warm from then on.
     asyncio.create_task(asyncio.to_thread(warm_connection_pool))
+    # Test mode runs this same code on a copy of the tables; keep that copy's
+    # structure in step with the live tables after every code change / migration.
+    asyncio.create_task(asyncio.to_thread(sync_all_sandboxes))
 
     background_tasks = [
         asyncio.create_task(run_period_lifecycle_loop()),
@@ -336,6 +340,8 @@ app.include_router(cost_ledger.router, prefix="/cost-ledger", tags=["cost-ledger
 app.include_router(hours_log.router, prefix="/hours-log", tags=["hours-log"])
 app.include_router(client_billing.router, prefix="/client-billing", tags=["client-billing"])
 app.include_router(client_payouts.router, prefix="/client-payouts", tags=["client-payouts"])
+app.include_router(payees.router, prefix="/payees", tags=["payees"])
+app.include_router(income.router, prefix="/income", tags=["income"])
 app.include_router(cost_ledger.approvals_router, prefix="/member-approvals", tags=["member-approvals"])
 app.include_router(intelligence.router, prefix="/intelligence", tags=["intelligence"])
 app.include_router(quality.router, prefix="/quality", tags=["quality"])

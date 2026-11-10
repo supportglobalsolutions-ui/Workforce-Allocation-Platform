@@ -10,6 +10,7 @@ export interface CurrencyOption {
   symbol: string | null;
   is_active: boolean;
   usd_rate: number | null;
+  usd_rate_source?: 'api' | 'identity' | 'manual' | 'derived' | null;
   gbp_rate: number | null;
 }
 

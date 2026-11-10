@@ -3,6 +3,8 @@
 
 > **Topology:** production runs on **one Hetzner VPS** (API + Redis + Guacamole + coordinator + Kuma). A separate media host is **not** planned. **No numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`). See [rdp-architecture.md](rdp-architecture.md) §3 (single-VPS; cancelled second-host work).
 >
+> **Live production VPS:** `204.168.131.11` — SSH as `ssh deployer@204.168.131.11`. Repo path: `/home/deployer/app/Workforce-Allocation-Platform`. Public API: `api.gsdeck.com` · Guacamole: `guac.gsdeck.com`.
+>
 > **Multi-host redundancy** templates remain in [rdp-architecture.md](rdp-architecture.md) §4 / `scripts/rdp_acceptance.py` for optional future use; live ops stay single-host.
 
 This is the single, complete, step-by-step production deployment manual for the platform. It walks you through deploying the **Backend & Infrastructure** (FastAPI, Redis, Apache Guacamole, Uptime Kuma) on a **Hetzner Cloud VPS**, connecting to **Supabase** for PostgreSQL and Authentication, and hosting the **Frontend** (Next.js 14) on **Vercel**.
@@ -838,12 +840,12 @@ Run through these checks to verify 100% operational status:
 ### Updating the Backend (Hetzner)
 
 This is the command sequence to use every time the VPS is behind `main`.
-Live repo path on the current host:
 
-`/home/deployer/app/Workforce-Allocation-Platform`
+- **SSH:** `ssh deployer@204.168.131.11`
+- **Repo:** `/home/deployer/app/Workforce-Allocation-Platform`
 
 ```bash
-ssh deployer@<YOUR_SERVER_IP>
+ssh deployer@204.168.131.11
 
 cd /home/deployer/app/Workforce-Allocation-Platform
 git pull origin main
@@ -862,6 +864,36 @@ curl -s http://127.0.0.1:8000/health
 ```
 
 Expect `alembic current` to print a revision ending in `(head)`, and health to return `{"status":"ok"}`.
+
+For GitHub Actions auto-deploy, set secret `VPS_HOST` to `204.168.131.11`.
+
+### Automatic deploy via GitHub Actions
+
+Pushing to `main` (when `backend/` or `infrastructure/` changed) runs
+[`.github/workflows/deploy-vps.yml`](../.github/workflows/deploy-vps.yml), which SSHs
+into the VPS and runs the same update sequence as above. You can also trigger it
+manually from the Actions tab (**Deploy backend to VPS** → **Run workflow**).
+
+**GitHub repository secrets** (Settings → Secrets and variables → Actions):
+
+| Secret | Purpose |
+| :--- | :--- |
+| `VPS_HOST` | VPS IPv4 or hostname |
+| `VPS_USER` | SSH user (`deployer`) |
+| `VPS_SSH_KEY` | Private key whose public half is in `~/.ssh/authorized_keys` on the VPS |
+| `VPS_PORT` | Optional. SSH port (default `22`) |
+| `VPS_APP_PATH` | Optional. Repo path (default `/home/deployer/app/Workforce-Allocation-Platform`) |
+
+**Passwordless sudo for restarts** (on the VPS, as root):
+
+```bash
+echo 'deployer ALL=(root) NOPASSWD: /bin/systemctl restart workforce-backend, /bin/systemctl try-restart workforce-rdp-coordinator, /bin/systemctl is-active workforce-backend, /bin/systemctl status workforce-backend' \
+  > /etc/sudoers.d/workforce-deploy
+chmod 440 /etc/sudoers.d/workforce-deploy
+visudo -cf /etc/sudoers.d/workforce-deploy
+```
+
+The VPS clone must track `origin/main` over SSH or HTTPS with credentials that can `git pull`.
 
 ### Updating the Frontend (Vercel)
 Any git push to your `main` branch automatically triggers Vercel to build and deploy the `frontend/` directory with zero downtime.
@@ -899,6 +931,16 @@ docker compose logs -f redis
 ### 3. Immediate Redirect Back to `/login`
 - `SESSION_COOKIE_SECRET` in `backend/.env` on Hetzner does not match `SESSION_COOKIE_SECRET` in Vercel environment variables.
 - They must be identical byte-for-byte strings.
+
+### 3b. Password-reset email never arrives
+Forgot-password emails are sent through **Resend** (same path as account invites), not Supabase’s built-in mailer.
+
+Checklist:
+1. On the VPS `.env`: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and `APP_BASE_URL` must be set. `APP_BASE_URL` must be the live frontend origin (e.g. `https://app.yourdomain.com`) — the reset link redirects there.
+2. In **Supabase → Authentication → URL configuration**, allow `https://app.yourdomain.com/reset-password` (and the site URL). The recovery action link will not work if that redirect is missing.
+3. If the username/email is unknown, the page says **You don't have an account** and no email is sent. Use the exact login email or username.
+4. Rate limit: 3 recovery requests per IP / identifier every 6 hours.
+5. Confirm delivery in **Admin → Email History** (template `password_recovery`) and in the Resend dashboard.
 
 ### 4. Guacamole Desktop Screen is Black or Disconnects
 - Verify port 3389 on the target Windows machine is reachable from your Hetzner VPS:

@@ -2,14 +2,18 @@
 Shared-cost ledger: split one amount across workers and clients, and the
 monthly member approval that gates RDP / shift access.
 
-Rules (agreed with the client, 2026-10-07):
-- The total is entered in the work month's reporting currency.
-- worker_pool_pct of it goes to the selected workers, the rest to the selected
-  clients. Inside each pool the split is equal per head or a custom % each.
-- A worker's share is added to the chosen payslip field (bonus, transfer cost or
-  external cost), converted to the payslip currency at the month's FX rate.
+Rules (agreed with the client, 2026-10-07 and 2026-10-14):
+- A cost is recorded first (category, description, amount in the work month's
+  reporting currency) and distributed later; until then it touches no payslip.
+- On distributing, worker_pool_pct goes to the selected workers, gs_pool_pct to
+  Global Solutions and the rest to the selected clients. Inside the worker and
+  client pools the split is equal per head or a custom % each.
+- A worker's share is added to the payslip field its category maps to
+  (transfer cost, else external cost), converted to the payslip currency at the
+  month's FX rate, so it comes off the worker's final net.
 - A client's share is deducted from that client's earnings before the
   GS / account-owner revenue split (see payroll_engine.client_revenue_report).
+- The Global Solutions share is a GS expense on the month overview.
 - Members of a month with member_approval_required start unapproved; only
   approved members may claim / see RDPs and see shifts.
 """
@@ -64,8 +68,8 @@ def split_by_weights(total: Decimal, weights: list[Decimal]) -> list[Decimal]:
 
 @dataclass
 class Share:
-    kind: str  # "worker" | "client"
-    recipient_id: UUID
+    kind: str  # "worker" | "client" | "gs"
+    recipient_id: Optional[UUID]  # None for the Global Solutions share
     pool_pct: Decimal
     amount_base: Decimal
 
@@ -116,19 +120,29 @@ def compute_shares(
     client_ids: list[UUID],
     client_mode: str = "equal",
     client_pcts: Optional[dict[UUID, Decimal]] = None,
+    gs_pool_pct: Decimal = Decimal(0),
 ) -> list[Share]:
     total = Decimal(total).quantize(CENT)
     if total <= 0:
         raise CostLedgerError("The amount must be greater than zero.")
+    worker_pool_pct, gs_pool_pct = Decimal(worker_pool_pct), Decimal(gs_pool_pct)
     if not (Decimal(0) <= worker_pool_pct <= Decimal(100)):
         raise CostLedgerError("The worker share must be between 0% and 100%.")
-    worker_total, client_total = split_by_weights(
-        total, [Decimal(worker_pool_pct), Decimal(100) - Decimal(worker_pool_pct)],
+    if not (Decimal(0) <= gs_pool_pct <= Decimal(100)):
+        raise CostLedgerError("The Global Solutions share must be between 0% and 100%.")
+    if worker_pool_pct + gs_pool_pct > Decimal(100):
+        raise CostLedgerError("The workers' and Global Solutions' shares add up to more than 100%.")
+    client_pool_pct = Decimal(100) - worker_pool_pct - gs_pool_pct
+    worker_total, client_total, gs_total = split_by_weights(
+        total, [worker_pool_pct, client_pool_pct, gs_pool_pct],
     )
-    return [
+    shares = [
         *_pool_shares("worker", worker_total, worker_ids, worker_mode, worker_pcts),
         *_pool_shares("client", client_total, client_ids, client_mode, client_pcts),
     ]
+    if gs_total > 0:
+        shares.append(Share("gs", None, Decimal(100), gs_total))
+    return shares
 
 
 # ── Applying to payslips ───────────────────────────────────────────────────────
@@ -143,8 +157,6 @@ def _require_editable(period: PayrollPeriod) -> None:
 def _summary_fx(db: Session, summary: PayrollWorkerSummary, period: PayrollPeriod) -> Optional[Decimal]:
     from services.payroll_engine import _fx_to_local
 
-    if summary.admin_locked and summary.fx_rate and summary.fx_rate > 0:
-        return summary.fx_rate
     return _fx_to_local(db, period, (summary.local_currency or period.currency).upper())
 
 
@@ -173,35 +185,93 @@ def _get_or_create_summary(db: Session, period: PayrollPeriod, worker: Worker) -
     return summary
 
 
-def create_entry(
+CATEGORY_FIELDS = {"transfer cost": "transfer_cost", "bonus": "bonus"}
+
+
+def target_field_for(category: str) -> str:
+    """The payslip field a category's worker shares land on: transfer cost, else external cost."""
+    return CATEGORY_FIELDS.get((category or "").strip().lower(), "external_cost")
+
+
+def record_cost(
     db: Session,
     *,
     period: PayrollPeriod,
-    title: str,
+    category: str,
+    description: str,
     notes: Optional[str],
     total: Decimal,
-    target_field: str,
+    admin_user_id: Optional[UUID],
+    currency: Optional[str] = None,
+) -> CostLedgerEntry:
+    """Record a cost for the month without distributing it. Caller commits."""
+    _require_editable(period)
+    category = " ".join((category or "").split())
+    if not category:
+        raise CostLedgerError("Pick a category, or type one.")
+    if len(category) > 64:
+        raise CostLedgerError("Keep the category under 64 characters.")
+    description = (description or "").strip()
+    if not description:
+        raise CostLedgerError("Describe the cost (e.g. 'Mobile money fees – October').")
+    source = (currency or period.currency).strip().upper()
+    if len(source) != 3 or not source.isalpha():
+        raise CostLedgerError("Currency must be a 3-letter code.")
+    original = Decimal(total)
+    if source != period.currency.upper():
+        from services.fx import convert_amount
+        converted, rate, _ = convert_amount(db, original, source, period.currency)
+        if converted is None or rate is None or rate <= 0:
+            raise CostLedgerError(f"No exchange rate from {source} to {period.currency}. Add a rate in Currencies first.")
+        total = converted
+        conversion_note = f"Entered: {original} {source}; rate: 1 {source} = {rate} {period.currency}."
+        notes = f"{notes.strip()}\n{conversion_note}" if notes and notes.strip() else conversion_note
+    total = Decimal(total).quantize(CENT)
+    if total <= 0:
+        raise CostLedgerError("The amount must be greater than zero.")
+    entry = CostLedgerEntry(
+        payroll_period_id=period.id,
+        category=category,
+        title=description,
+        notes=(notes or "").strip() or None,
+        total_amount=total,
+        currency=period.currency,
+        target_field=target_field_for(category),
+        worker_pool_pct=Decimal(0),
+        created_by=admin_user_id,
+    )
+    db.add(entry)
+    db.flush()
+    return entry
+
+
+def distribute(
+    db: Session,
+    entry: CostLedgerEntry,
+    *,
     worker_pool_pct: Decimal,
+    gs_pool_pct: Decimal,
     worker_ids: list[UUID],
     worker_mode: str,
     worker_pcts: Optional[dict[UUID, Decimal]],
     client_ids: list[UUID],
     client_mode: str,
     client_pcts: Optional[dict[UUID, Decimal]],
-    admin_user_id: Optional[UUID],
-) -> CostLedgerEntry:
-    """Record the entry, its allocations, and write worker shares to payslips. Caller commits."""
+) -> list[Share]:
+    """Split a recorded cost and write worker shares to payslips. Caller commits."""
+    from datetime import datetime, timezone
+
     from services.payroll_engine import _q, recompute_summary
 
+    period = db.get(PayrollPeriod, entry.payroll_period_id)
+    if period is None:
+        raise CostLedgerError("This cost's work month no longer exists.")
     _require_editable(period)
-    title = (title or "").strip()
-    if not title:
-        raise CostLedgerError("Give the cost a name (e.g. 'Internet – October').")
-    if target_field not in COST_TARGET_FIELDS:
-        raise CostLedgerError("Choose bonus, transfer cost or external cost.")
+    if entry.distributed_at is not None:
+        raise CostLedgerError(f"“{entry.title}” is already distributed — undo it first to change the split.")
 
     shares = compute_shares(
-        total=total,
+        total=entry.total_amount,
         worker_pool_pct=worker_pool_pct,
         worker_ids=worker_ids,
         worker_mode=worker_mode,
@@ -209,37 +279,26 @@ def create_entry(
         client_ids=client_ids,
         client_mode=client_mode,
         client_pcts=client_pcts,
+        gs_pool_pct=gs_pool_pct,
     )
 
     workers = {w.id: w for w in db.exec(select(Worker).where(Worker.id.in_(worker_ids or []))).all()}
-    missing_workers = [wid for wid in worker_ids if wid not in workers]
-    if missing_workers:
+    if any(wid not in workers for wid in worker_ids):
         raise CostLedgerError("One of the selected workers no longer exists — reload and try again.")
     known_clients = set(db.exec(select(Client.id).where(Client.id.in_(client_ids or []))).all())
     if any(cid not in known_clients for cid in client_ids):
         raise CostLedgerError("One of the selected clients no longer exists — reload and try again.")
 
-    entry = CostLedgerEntry(
-        payroll_period_id=period.id,
-        title=title,
-        notes=(notes or "").strip() or None,
-        total_amount=Decimal(total).quantize(CENT),
-        currency=period.currency,
-        target_field=target_field,
-        worker_pool_pct=Decimal(worker_pool_pct),
-        worker_mode=worker_mode,
-        client_mode=client_mode,
-        created_by=admin_user_id,
-    )
-    db.add(entry)
-    db.flush()
-
+    entry.worker_pool_pct = Decimal(worker_pool_pct)
+    entry.gs_pool_pct = Decimal(gs_pool_pct)
+    entry.worker_mode = worker_mode
+    entry.client_mode = client_mode
+    entry.gs_amount = Decimal(0)
     for share in shares:
-        alloc = CostLedgerAllocation(
-            entry_id=entry.id,
-            pool_pct=share.pool_pct,
-            amount_base=share.amount_base,
-        )
+        if share.kind == "gs":
+            entry.gs_amount = share.amount_base
+            continue
+        alloc = CostLedgerAllocation(entry_id=entry.id, pool_pct=share.pool_pct, amount_base=share.amount_base)
         if share.kind == "client":
             alloc.client_id = share.recipient_id
         else:
@@ -255,14 +314,17 @@ def create_entry(
             amount_local = _q(share.amount_base * fx)
             alloc.amount_local = amount_local
             alloc.local_currency = summary.local_currency
-            setattr(summary, target_field, _q(getattr(summary, target_field) + amount_local))
+            field = entry.target_field
+            setattr(summary, field, _q(getattr(summary, field) + amount_local))
             recompute_summary(db, summary, commit=False)
         db.add(alloc)
-    return entry
+    entry.distributed_at = datetime.now(timezone.utc)
+    db.add(entry)
+    return shares
 
 
-def delete_entry(db: Session, entry: CostLedgerEntry) -> None:
-    """Take every worker share back off the payslips, then drop the entry. Caller commits."""
+def undistribute(db: Session, entry: CostLedgerEntry) -> None:
+    """Take every worker share back off the payslips and drop the split; the cost stays recorded. Caller commits."""
     from services.payroll_engine import _q, recompute_summary
 
     period = db.get(PayrollPeriod, entry.payroll_period_id)
@@ -298,7 +360,29 @@ def delete_entry(db: Session, entry: CostLedgerEntry) -> None:
                 else:
                     recompute_summary(db, summary, commit=False)
         db.delete(alloc)
+    entry.distributed_at = None
+    entry.gs_amount = Decimal(0)
+    entry.gs_pool_pct = Decimal(0)
+    entry.worker_pool_pct = Decimal(0)
+    db.add(entry)
+
+
+def delete_entry(db: Session, entry: CostLedgerEntry) -> None:
+    """Undo the split if there is one, then drop the cost. Caller commits."""
+    undistribute(db, entry)
+    db.flush()
     db.delete(entry)
+
+
+def gs_shared_costs(db: Session, period_id: UUID) -> Decimal:
+    """What Global Solutions bears of the month's distributed costs, in the reporting currency."""
+    rows = db.exec(
+        select(CostLedgerEntry.gs_amount).where(
+            CostLedgerEntry.payroll_period_id == period_id,
+            CostLedgerEntry.distributed_at.is_not(None),
+        )
+    ).all()
+    return sum((Decimal(r or 0) for r in rows), Decimal("0"))
 
 
 def client_shared_costs(db: Session, period_id: UUID) -> dict[UUID, Decimal]:
@@ -325,8 +409,14 @@ def set_client_earnings(
     period: PayrollPeriod,
     amounts: dict[UUID, Decimal],
 ) -> int:
-    """Upsert one earnings amount per client for the period. Caller commits."""
+    """
+    Set what each client paid this month, in USD. It is saved as the client's
+    Income tab entry (client account payout), which is the client's revenue on
+    the ledger. Caller commits.
+    """
     from datetime import datetime, timezone
+
+    from services import income
 
     known = set(db.exec(select(Client.id).where(Client.id.in_(list(amounts)))).all())
     if any(cid not in known for cid in amounts):
@@ -351,6 +441,10 @@ def set_client_earnings(
             row.amount = amount
             row.updated_at = datetime.now(timezone.utc)
         db.add(row)
+        try:
+            income.set_client_received(db, period, client_id, amount=amount)
+        except income.IncomeError as exc:
+            raise CostLedgerError(str(exc)) from exc
     return len(amounts)
 
 

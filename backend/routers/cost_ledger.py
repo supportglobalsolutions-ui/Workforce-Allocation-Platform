@@ -12,7 +12,7 @@ from sqlmodel import Session, select
 
 from core.database import get_db
 from core.permissions import STAFF_ROLES, require_admin, require_user
-from models.client import Client, ClientPeriodEarning
+from models.client import Client
 from models.cost_ledger import CostLedgerAllocation, CostLedgerEntry
 from models.payroll import PayrollPeriod, PayrollWorkerSummary
 from models.worker import Worker
@@ -25,8 +25,9 @@ from .deps import get_admin_user, get_worker_for_user
 router = APIRouter()
 approvals_router = APIRouter()
 
-TargetField = Literal["bonus", "transfer_cost", "external_cost"]
 SplitMode = Literal["equal", "percent"]
+
+GS_NAME = "Global Solutions"
 
 
 def _period_or_404(db: Session, period_id: UUID) -> PayrollPeriod:
@@ -36,15 +37,30 @@ def _period_or_404(db: Session, period_id: UUID) -> PayrollPeriod:
     return period
 
 
+def _entry_or_404(db: Session, entry_id: UUID) -> CostLedgerEntry:
+    entry = db.get(CostLedgerEntry, entry_id)
+    if not entry:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cost not found")
+    return entry
+
+
 def _bad_request(exc: cost_ledger.CostLedgerError) -> HTTPException:
     return HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
 
 
 # ── Ledger entries ─────────────────────────────────────────────────────────────
 
-class SplitBody(BaseModel):
+class EntryCreate(BaseModel):
+    currency: Optional[str] = Field(default=None, min_length=3, max_length=3)
+    category: str = Field(min_length=1, max_length=64)
+    description: str = Field(min_length=1, max_length=255)
     total_amount: Decimal = Field(gt=0)
+    notes: Optional[str] = None
+
+
+class DistributeBody(BaseModel):
     worker_pool_pct: Decimal = Field(ge=0, le=100)
+    gs_pool_pct: Decimal = Field(default=Decimal(0), ge=0, le=100)
     worker_ids: list[UUID] = []
     worker_mode: SplitMode = "equal"
     worker_pcts: Optional[dict[UUID, Decimal]] = None
@@ -53,15 +69,9 @@ class SplitBody(BaseModel):
     client_pcts: Optional[dict[UUID, Decimal]] = None
 
 
-class EntryCreate(SplitBody):
-    title: str = Field(min_length=1, max_length=255)
-    notes: Optional[str] = None
-    target_field: TargetField = "external_cost"
-
-
 class ShareOut(BaseModel):
-    kind: str
-    recipient_id: UUID
+    kind: str  # worker | client | gs
+    recipient_id: Optional[UUID]
     name: str
     pool_pct: Decimal
     amount_base: Decimal
@@ -71,12 +81,17 @@ class ShareOut(BaseModel):
 
 class EntryOut(BaseModel):
     id: UUID
+    category: str
     title: str
     notes: Optional[str]
     total_amount: Decimal
     currency: str
     target_field: str
+    distributed: bool
+    distributed_at: Optional[datetime]
     worker_pool_pct: Decimal
+    gs_pool_pct: Decimal
+    gs_amount: Decimal
     worker_mode: str
     client_mode: str
     created_at: Optional[datetime]
@@ -108,19 +123,40 @@ def _entry_out(entry: CostLedgerEntry, allocations: list[CostLedgerAllocation], 
             local_currency=a.local_currency,
         ))
     shares.sort(key=lambda s: (s.kind != "worker", s.name.lower()))
+    if entry.distributed_at is not None and entry.gs_amount and entry.gs_amount > 0:
+        shares.append(ShareOut(
+            kind="gs", recipient_id=None, name=GS_NAME, pool_pct=Decimal(100), amount_base=entry.gs_amount,
+        ))
     return EntryOut(
         id=entry.id,
+        category=entry.category,
         title=entry.title,
         notes=entry.notes,
         total_amount=entry.total_amount,
         currency=entry.currency,
         target_field=entry.target_field,
+        distributed=entry.distributed_at is not None,
+        distributed_at=entry.distributed_at,
         worker_pool_pct=entry.worker_pool_pct,
+        gs_pool_pct=entry.gs_pool_pct,
+        gs_amount=entry.gs_amount,
         worker_mode=entry.worker_mode,
         client_mode=entry.client_mode,
         created_at=entry.created_at,
         shares=shares,
     )
+
+
+def _entry_with_shares(db: Session, entry: CostLedgerEntry) -> EntryOut:
+    allocations = list(db.exec(
+        select(CostLedgerAllocation).where(CostLedgerAllocation.entry_id == entry.id)
+    ).all())
+    names = _names(
+        db,
+        {a.worker_id for a in allocations if a.worker_id},
+        {a.client_id for a in allocations if a.client_id},
+    )
+    return _entry_out(entry, allocations, names)
 
 
 @router.get("/periods/{period_id}/entries", response_model=list[EntryOut])
@@ -153,36 +189,18 @@ def list_entries(
     return [_entry_out(e, by_entry.get(e.id, []), names) for e in entries]
 
 
-@router.post("/periods/{period_id}/preview", response_model=list[ShareOut])
-def preview_split(
+@router.get("/periods/{period_id}/categories", response_model=list[str])
+def list_categories(
     period_id: UUID,
-    body: SplitBody,
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
-    """Who pays what, without saving anything (amounts in the month's currency)."""
+    """Categories to offer: the two standard ones, then any typed before (any month)."""
     _period_or_404(db, period_id)
-    try:
-        shares = cost_ledger.compute_shares(
-            total=body.total_amount,
-            worker_pool_pct=body.worker_pool_pct,
-            worker_ids=body.worker_ids,
-            worker_mode=body.worker_mode,
-            worker_pcts=body.worker_pcts,
-            client_ids=body.client_ids,
-            client_mode=body.client_mode,
-            client_pcts=body.client_pcts,
-        )
-    except cost_ledger.CostLedgerError as exc:
-        raise _bad_request(exc)
-    names = _names(db, set(body.worker_ids), set(body.client_ids))
-    return [
-        ShareOut(
-            kind=s.kind, recipient_id=s.recipient_id, name=names.get(s.recipient_id, "Unknown"),
-            pool_pct=s.pool_pct, amount_base=s.amount_base,
-        )
-        for s in shares
-    ]
+    used = db.exec(select(CostLedgerEntry.category).distinct()).all()
+    standard = ["Transfer cost", "External cost"]
+    extra = sorted({c for c in used if c and c not in standard and c != "Bonus"}, key=str.lower)
+    return standard + extra
 
 
 @router.post("/periods/{period_id}/entries", response_model=EntryOut, status_code=status.HTTP_201_CREATED)
@@ -192,23 +210,18 @@ def create_entry(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
+    """Record a cost for the month. It is distributed later."""
     period = _period_or_404(db, period_id)
     admin = get_admin_user(db, current_user)
     try:
-        entry = cost_ledger.create_entry(
+        entry = cost_ledger.record_cost(
             db,
             period=period,
-            title=body.title,
+            category=body.category,
+            description=body.description,
             notes=body.notes,
             total=body.total_amount,
-            target_field=body.target_field,
-            worker_pool_pct=body.worker_pool_pct,
-            worker_ids=body.worker_ids,
-            worker_mode=body.worker_mode,
-            worker_pcts=body.worker_pcts,
-            client_ids=body.client_ids,
-            client_mode=body.client_mode,
-            client_pcts=body.client_pcts,
+            currency=body.currency,
             admin_user_id=admin.id,
         )
     except cost_ledger.CostLedgerError as exc:
@@ -222,21 +235,122 @@ def create_entry(
         target_id=entry.id,
         new_value={
             "period": period.label,
-            "title": entry.title,
+            "category": entry.category,
+            "description": entry.title,
             "total": str(entry.total_amount),
             "currency": entry.currency,
-            "target_field": entry.target_field,
+        },
+    )
+    db.commit()
+    db.refresh(entry)
+    return _entry_out(entry, [], {})
+
+
+@router.post("/entries/{entry_id}/preview", response_model=list[ShareOut])
+def preview_distribution(
+    entry_id: UUID,
+    body: DistributeBody,
+    db: Session = Depends(get_db),
+    _: dict = Depends(require_admin),
+):
+    """Who bears what, without saving anything (amounts in the month's currency)."""
+    entry = _entry_or_404(db, entry_id)
+    try:
+        shares = cost_ledger.compute_shares(
+            total=entry.total_amount,
+            worker_pool_pct=body.worker_pool_pct,
+            gs_pool_pct=body.gs_pool_pct,
+            worker_ids=body.worker_ids,
+            worker_mode=body.worker_mode,
+            worker_pcts=body.worker_pcts,
+            client_ids=body.client_ids,
+            client_mode=body.client_mode,
+            client_pcts=body.client_pcts,
+        )
+    except cost_ledger.CostLedgerError as exc:
+        raise _bad_request(exc)
+    names = _names(db, set(body.worker_ids), set(body.client_ids))
+    return [
+        ShareOut(
+            kind=s.kind, recipient_id=s.recipient_id,
+            name=GS_NAME if s.kind == "gs" else names.get(s.recipient_id, "Unknown"),
+            pool_pct=s.pool_pct, amount_base=s.amount_base,
+        )
+        for s in shares
+    ]
+
+
+@router.post("/entries/{entry_id}/distribute", response_model=EntryOut)
+def distribute_entry(
+    entry_id: UUID,
+    body: DistributeBody,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Split a recorded cost across workers, clients and Global Solutions."""
+    entry = _entry_or_404(db, entry_id)
+    admin = get_admin_user(db, current_user)
+    try:
+        cost_ledger.distribute(
+            db,
+            entry,
+            worker_pool_pct=body.worker_pool_pct,
+            gs_pool_pct=body.gs_pool_pct,
+            worker_ids=body.worker_ids,
+            worker_mode=body.worker_mode,
+            worker_pcts=body.worker_pcts,
+            client_ids=body.client_ids,
+            client_mode=body.client_mode,
+            client_pcts=body.client_pcts,
+        )
+    except cost_ledger.CostLedgerError as exc:
+        db.rollback()
+        raise _bad_request(exc)
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="cost_ledger.entry_distributed",
+        target_type="cost_ledger_entry",
+        target_id=entry.id,
+        new_value={
+            "description": entry.title,
+            "total": str(entry.total_amount),
             "worker_pool_pct": str(entry.worker_pool_pct),
+            "gs_pool_pct": str(entry.gs_pool_pct),
             "workers": len(body.worker_ids),
             "clients": len(body.client_ids),
         },
     )
     db.commit()
     db.refresh(entry)
-    allocations = db.exec(
-        select(CostLedgerAllocation).where(CostLedgerAllocation.entry_id == entry.id)
-    ).all()
-    return _entry_out(entry, list(allocations), _names(db, set(body.worker_ids), set(body.client_ids)))
+    return _entry_with_shares(db, entry)
+
+
+@router.post("/entries/{entry_id}/undistribute", response_model=EntryOut)
+def undistribute_entry(
+    entry_id: UUID,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_admin),
+):
+    """Take the split back off payslips and clients; the cost stays recorded."""
+    entry = _entry_or_404(db, entry_id)
+    admin = get_admin_user(db, current_user)
+    try:
+        cost_ledger.undistribute(db, entry)
+    except cost_ledger.CostLedgerError as exc:
+        db.rollback()
+        raise _bad_request(exc)
+    record_audit(
+        db,
+        actor_id=admin.id,
+        action="cost_ledger.entry_undistributed",
+        target_type="cost_ledger_entry",
+        target_id=entry.id,
+        previous_value={"description": entry.title, "total": str(entry.total_amount)},
+    )
+    db.commit()
+    db.refresh(entry)
+    return _entry_out(entry, [], {})
 
 
 @router.delete("/entries/{entry_id}")
@@ -245,15 +359,14 @@ def delete_entry(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_admin),
 ):
-    entry = db.get(CostLedgerEntry, entry_id)
-    if not entry:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Ledger entry not found")
+    entry = _entry_or_404(db, entry_id)
     admin = get_admin_user(db, current_user)
     snapshot = {
-        "title": entry.title,
+        "category": entry.category,
+        "description": entry.title,
         "total": str(entry.total_amount),
         "currency": entry.currency,
-        "target_field": entry.target_field,
+        "distributed": entry.distributed_at is not None,
     }
     try:
         cost_ledger.delete_entry(db, entry)
@@ -289,13 +402,10 @@ def list_client_earnings(
     db: Session = Depends(get_db),
     _: dict = Depends(require_admin),
 ):
+    from services import income
+
     _period_or_404(db, period_id)
-    earnings = {
-        row.client_id: row.amount
-        for row in db.exec(
-            select(ClientPeriodEarning).where(ClientPeriodEarning.payroll_period_id == period_id)
-        ).all()
-    }
+    earnings = {cid: total for cid, (total, _count, _latest) in income.client_income(db, period_id).items()}
     shared = cost_ledger.client_shared_costs(db, period_id)
     clients = db.exec(select(Client).order_by(Client.name)).all()
     return [

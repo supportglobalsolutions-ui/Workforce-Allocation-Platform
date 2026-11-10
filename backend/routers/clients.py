@@ -7,7 +7,7 @@ from sqlmodel import Session, func, select
 
 from core.database import get_db
 from core.permissions import require_admin
-from models.client import Client, ClientPeriodEarning, ClientRevenueAgreement
+from models.client import ClientWorkerLink, Client, ClientPeriodEarning, ClientRevenueAgreement
 from models.payment_tier import PaymentTier
 from models.payroll import PayrollPeriod
 from models.rdp_machine import RDPResource
@@ -58,11 +58,20 @@ def _check_client_tier(db: Session, tier_id: UUID | None) -> None:
         raise HTTPException(status_code=400, detail=f"{tier.name} is a worker tier. Set it to apply to clients first.")
 
 
-def _to_response(db: Session, client: Client, rdp_counts: dict | None = None, splits: dict | None = None) -> ClientResponse:
+def _to_response(
+    db: Session,
+    client: Client,
+    rdp_counts: dict | None = None,
+    splits: dict | None = None,
+    linked_workers: dict | None = None,
+) -> ClientResponse:
     resp = ClientResponse.model_validate(client)
+    resp.account_holder = client.account_holder or client.name
     resp.owner_name = client_owner_name(db, client)
     if rdp_counts is not None:
         resp.rdp_count = rdp_counts.get(client.id, 0)
+    if linked_workers is not None:
+        resp.linked_workers = linked_workers.get(client.id, [])
     if splits is not None and client.id in splits:
         resp.gs_pct, resp.owner_pct = splits[client.id]
     if client.payment_tier_id:
@@ -84,6 +93,24 @@ def list_clients(
         .where(RDPResource.client_id.is_not(None))
         .group_by(RDPResource.client_id)
     ).all())
+    linked_workers: dict[UUID, list[str]] = {}
+    for client_id, worker_name in db.exec(
+        select(RDPResource.client_id, Worker.display_name)
+        .join(Worker, Worker.id == RDPResource.assigned_worker_id)
+        .where(RDPResource.client_id.is_not(None), RDPResource.assigned_worker_id.is_not(None))
+        .order_by(Worker.display_name)
+    ).all():
+        linked_workers.setdefault(client_id, [])
+        if worker_name not in linked_workers[client_id]:
+            linked_workers[client_id].append(worker_name)
+    for client_id, worker_name in db.exec(
+        select(ClientWorkerLink.client_id, Worker.display_name)
+        .join(Worker, Worker.id == ClientWorkerLink.worker_id)
+        .order_by(Worker.display_name)
+    ).all():
+        names = linked_workers.setdefault(client_id, [])
+        if worker_name not in names:
+            names.append(worker_name)
     agreements = db.exec(
         select(ClientRevenueAgreement).order_by(ClientRevenueAgreement.effective_from.desc())
     ).all()
@@ -91,7 +118,7 @@ def list_clients(
     for agreement in agreements:
         if agreement.client_id not in splits:
             splits[agreement.client_id] = (agreement.gs_pct, agreement.owner_pct)
-    return [_to_response(db, c, rdp_counts, splits) for c in clients]
+    return [_to_response(db, c, rdp_counts, splits, linked_workers) for c in clients]
 
 
 @router.post("", response_model=ClientResponse, status_code=status.HTTP_201_CREATED)
@@ -331,9 +358,41 @@ def update_agreement(
     if not agreement:
         raise HTTPException(status_code=404, detail="Agreement not found")
     apply_update(agreement, body)
-    if round(agreement.gs_pct + agreement.owner_pct, 2) != 100:
-        raise HTTPException(status_code=400, detail="GS + owner percentages must equal 100.")
+    if round(agreement.gs_pct + agreement.owner_pct + (agreement.third_party_pct or 0), 2) != 100:
+        raise HTTPException(status_code=400, detail="GS + owner + third-party percentages must equal 100.")
     db.add(agreement)
     db.commit()
     db.refresh(agreement)
     return agreement
+
+
+@router.get("/{client_id}/workers")
+def linked_client_workers(client_id: UUID, db: Session = Depends(get_db), _: dict = Depends(require_admin)):
+    if db.get(Client, client_id) is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    direct = set(db.exec(select(ClientWorkerLink.worker_id).where(ClientWorkerLink.client_id == client_id)).all())
+    desktops = set(db.exec(select(RDPResource.assigned_worker_id).where(
+        RDPResource.client_id == client_id, RDPResource.assigned_worker_id.is_not(None),
+    )).all())
+    workers = db.exec(select(Worker).where(Worker.id.in_(direct | desktops)).order_by(Worker.display_name)).all()
+    return [{"id": str(w.id), "display_name": w.display_name, "direct": w.id in direct, "via_desktop": w.id in desktops} for w in workers]
+
+
+@router.put("/{client_id}/workers/{worker_id}")
+def link_client_worker(client_id: UUID, worker_id: UUID, db: Session = Depends(get_db), _: dict = Depends(require_admin)):
+    if db.get(Client, client_id) is None or db.get(Worker, worker_id) is None:
+        raise HTTPException(status_code=404, detail="Client or worker not found")
+    if db.get(ClientWorkerLink, (client_id, worker_id)) is None:
+        db.add(ClientWorkerLink(client_id=client_id, worker_id=worker_id))
+        db.commit()
+    return {"linked": True}
+
+
+@router.delete("/{client_id}/workers/{worker_id}", status_code=204)
+def unlink_client_worker(client_id: UUID, worker_id: UUID, db: Session = Depends(get_db), _: dict = Depends(require_admin)):
+    if db.get(Client, client_id) is None:
+        raise HTTPException(status_code=404, detail="Client not found")
+    link = db.get(ClientWorkerLink, (client_id, worker_id))
+    if link is not None:
+        db.delete(link)
+        db.commit()
