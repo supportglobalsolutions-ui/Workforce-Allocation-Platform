@@ -3,7 +3,7 @@
 
 > **Topology:** production runs on **one Hetzner VPS** (API + Redis + Guacamole + coordinator + Kuma). A separate media host is **not** planned. **No numeric max-session cap** (`RDP_MAX_LIVE_SESSIONS=0`). See [rdp-architecture.md](rdp-architecture.md) §3 (single-VPS; cancelled second-host work).
 >
-> **Live production VPS:** `204.168.131.11` — SSH as `ssh deployer@204.168.131.11`. Repo path: `/home/deployer/app/Workforce-Allocation-Platform`. Public API: `api.gsdeck.com` · Guacamole: `guac.gsdeck.com`.
+> **Live production VPS:** `204.168.131.11` — SSH as `ssh deployer@204.168.131.11`. Repo path: `/home/deployer/app/Workforce-Allocation-Platform`. Frontend / `APP_BASE_URL`: `https://gsdeck.com` · API: `api.gsdeck.com` · Guacamole: `guac.gsdeck.com`.
 >
 > **Multi-host redundancy** templates remain in [rdp-architecture.md](rdp-architecture.md) §4 / `scripts/rdp_acceptance.py` for optional future use; live ops stay single-host.
 
@@ -936,8 +936,8 @@ docker compose logs -f redis
 Forgot-password emails are sent through **Resend** (same path as account invites), not Supabase’s built-in mailer.
 
 Checklist:
-1. On the VPS `.env`: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and `APP_BASE_URL` must be set. `APP_BASE_URL` must be the live frontend origin (e.g. `https://app.yourdomain.com`) — the reset link redirects there.
-2. In **Supabase → Authentication → URL configuration**, allow `https://app.yourdomain.com/reset-password` (and the site URL). The recovery action link will not work if that redirect is missing.
+1. On the VPS `.env`: `RESEND_API_KEY`, `RESEND_FROM_EMAIL`, and `APP_BASE_URL=https://gsdeck.com`. Reset / invite links redirect there.
+2. In **Supabase → Authentication → URL configuration**, allow `https://gsdeck.com/reset-password` (and Site URL `https://gsdeck.com`). The recovery action link will not work if that redirect is missing.
 3. If the username/email is unknown, the page says **You don't have an account** and no email is sent. Use the exact login email or username.
 4. Rate limit: 3 recovery requests per IP / identifier every 6 hours.
 5. Confirm delivery in **Admin → Email History** (template `password_recovery`) and in the Resend dashboard.
